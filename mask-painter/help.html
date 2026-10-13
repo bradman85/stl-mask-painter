@@ -636,6 +636,9 @@ Panels within 3.2 units of the click; click one to select it instead:
         reports how many vertices went. One undo step, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings
         it all back. It does not ask with a browser dialog, because dialogs are silently blocked
         inside some embedded browser views.
+        <br><b>A built stencil stays where it is</b> — clearing the paint does not remove the
+        shell in the viewport. <b>Discard stencil</b> in the stencil panel is the button for
+        that; the status bar points at it whenever you clear with a build in hand.
       </td>
     </tr>
     <tr>
@@ -684,6 +687,18 @@ Panels within 3.2 units of the click; click one to select it instead:
         you can orbit around it and see the window. It is drawn <em>under</em> the paint layer,
         so painted areas keep their exact colours and you can keep painting and clearing with
         the preview on. With the preview off you are looking at the mask alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Discard stencil</td>
+      <td>
+        Throws the built shell away — the preview in the viewport, the result in the panel and
+        the <b>Export stencil STL</b> it enabled — so you can start over without reloading the
+        model. Enabled once a build has succeeded, disabled again afterwards.
+        <br><b>It does not touch the mask.</b> A build is a snapshot of the paint, so clearing
+        or repainting and keeping the old shell is a fair comparison — the panel warns when the
+        paint no longer matches the build. Use <b>Clear all</b> (in the Mask panel) for the
+        paint, this button for the shell.
       </td>
     </tr>
     <tr>

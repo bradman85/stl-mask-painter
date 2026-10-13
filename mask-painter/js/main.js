@@ -651,6 +651,7 @@ function resetStencil() {
   stencil.topology = null;
   stencil.topologyFor = '';
   el('stencilExportBtn').disabled = true;
+  el('stencilClearBtn').disabled = true;
   const defaults = stencilDefaultsForModel();
   el('stencilReach').value = String(Math.max(1, Math.round(defaults.coverRadius)));
   el('stencilWall').value = String(defaults.wall);
@@ -1031,6 +1032,32 @@ function showStencilPreview(res) {
   viewer.modelGroup.add(stencil.mesh);
 }
 
+/**
+ * Throws the built stencil away: the preview mesh, the result and the export.
+ *
+ * Before this existed the only way to get rid of a built shell was to load the model again —
+ * clearing the mask left the shell on screen with nothing to press, which reads as "the clear
+ * did not work". The mask is deliberately not touched: the build is a snapshot of a mask, so
+ * clearing paint and keeping the shell is a legitimate comparison (the panel says the part is
+ * stale when the count no longer matches).
+ */
+function discardStencil() {
+  if (!stencil.result && !stencil.mesh) {
+    setStatus('No stencil built yet — nothing to discard.');
+    return;
+  }
+  const triangles = stencil.result ? stencil.result.stats.solidTriangles : 0;
+  clearStencilPreview();
+  stencil.result = null;
+  el('stencilExportBtn').disabled = true;
+  el('stencilClearBtn').disabled = true;
+  updateStencilStats();
+  setStatus(
+    `Stencil discarded${triangles ? ` (${fmt(triangles)} triangles)` : ''}. The mask is untouched — ` +
+      'press “Build stencil” to make a new one.',
+  );
+}
+
 function updateStencilStats(paintedNow = null) {
   const node = el('stencilStats');
   if (!stencil.result) {
@@ -1056,7 +1083,7 @@ function updateStencilStats(paintedNow = null) {
   for (const w of res.warnings) lines.push(`⚠ ${w}`);
   const now = paintedNow === null ? (mask ? mask.stats().painted : null) : paintedNow;
   if (now !== null && now !== stencil.paintedCount) {
-    lines.push('⚠ the mask has been repainted since this was built — build again to match it.');
+    lines.push('⚠ the mask has been repainted since this was built — build again to match it, or “Discard stencil” to throw this one away.');
   }
   node.textContent = lines.join('\n');
 }
@@ -1069,6 +1096,7 @@ async function buildStencilClicked() {
       stencil.result = null;
       clearStencilPreview();
       el('stencilExportBtn').disabled = true;
+      el('stencilClearBtn').disabled = true;
       el('stencilStats').textContent = res.warnings.join('\n');
       setStatus(`No stencil: ${res.warnings[0]}`);
       return;
@@ -1076,6 +1104,7 @@ async function buildStencilClicked() {
     stencil.result = res;
     showStencilPreview(res);
     el('stencilExportBtn').disabled = false;
+    el('stencilClearBtn').disabled = false;
     updateStencilStats();
     const s = res.stats;
     setStatus(
@@ -1349,7 +1378,12 @@ el('clearAllBtn').addEventListener('click', () => {
   mask.clearAll();
   mask.flush();
   updateStats();
-  setStatus(`Mask cleared (${fmt(n)} vertices). Ctrl+Z brings it back.`);
+  setStatus(
+    `Mask cleared (${fmt(n)} vertices). Ctrl+Z brings it back.` +
+      (stencil.result
+        ? ' The built stencil is still in the viewport — “Discard stencil” removes it, or paint and build again.'
+        : ''),
+  );
 });
 el('hideAllBtn').addEventListener('click', () => {
   if (!requireModel()) return;
@@ -1367,6 +1401,7 @@ el('hideAllBtn').addEventListener('click', () => {
 el('invertBtn').addEventListener('click', invertPaint);
 
 el('stencilBuildBtn').addEventListener('click', buildStencilClicked);
+el('stencilClearBtn').addEventListener('click', discardStencil);
 el('stencilExportBtn').addEventListener('click', exportStencilSTL);
 el('stencilPreview').addEventListener('change', (e) => {
   if (stencil.mesh) stencil.mesh.visible = e.target.checked;

@@ -31,9 +31,33 @@ check(
   queried.join(' | '),
 );
 
-const stencilIds = ['stencilBuildBtn', 'stencilExportBtn', 'stencilPreview', 'stencilReach', 'stencilWall', 'stencilStandoff', 'stencilOverhang', 'stencilStats'];
+const stencilIds = ['stencilBuildBtn', 'stencilClearBtn', 'stencilExportBtn', 'stencilPreview', 'stencilReach', 'stencilWall', 'stencilStandoff', 'stencilOverhang', 'stencilStats'];
 const missingStencil = stencilIds.filter((id) => !declared.has(id));
 check('the stencil panel is complete', missingStencil.length === 0, missingStencil.join(', '));
+
+// The build has to be removable: clearing the mask used to leave the shell in the viewport with
+// no button to drop it, so the only way to get a clean slate was to load the model again.
+check(
+  'a built stencil can be discarded without reloading the model',
+  /el\('stencilClearBtn'\)\.addEventListener\('click', discardStencil\)/.test(js),
+);
+check(
+  'discard drops the preview, the result and the export it enabled',
+  /function discardStencil\(\)[\s\S]{0,600}?clearStencilPreview\(\)[\s\S]{0,200}?stencil\.result = null[\s\S]{0,200}?stencilExportBtn'\)\.disabled = true/.test(js),
+);
+check(
+  'the button follows the build: on after a success, off on a refusal, a discard or a new model',
+  (js.match(/stencilClearBtn'\)\.disabled = true/g) || []).length >= 3 &&
+    /stencilClearBtn'\)\.disabled = false/.test(js),
+);
+check(
+  'clearing the mask names the stencil it leaves behind',
+  /Mask cleared[\s\S]{0,200}?Discard stencil/.test(js),
+);
+check(
+  'a stale build points at both ways out',
+  /repainted since this was built[\s\S]{0,120}?Discard stencil/.test(js),
+);
 
 const exported = ['buildTopology', 'buildStencil', 'validateSolid', 'stencilDefaultsForDiagonal'];
 const stencilSrc = fs.readFileSync(path.resolve(here, '../js/stencil.js'), 'utf8');

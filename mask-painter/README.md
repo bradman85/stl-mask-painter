@@ -208,7 +208,10 @@ is what had made documented panel removal a no-op.
 
 Paint the area that must stay exposed, press **Build stencil**, and the painted region turns
 into a window cut out of a one-piece shell. The shell is printed, held on the figure, and the
-window is what gets painted.
+window is what gets painted. **Discard stencil** throws a built shell away (preview, result and
+the export it enabled) so a new one can be built without reloading the model; it leaves the
+mask alone, and **Clear all** in the Mask panel leaves the shell alone — the panel says when the
+paint no longer matches the build.
 
 The pipeline (all in `js/stencil.js`, dependency-free so the identical code runs in the
 browser and under Node):
@@ -295,7 +298,8 @@ that model; the welded topology is cached and reused by later builds.
   Blender, CloudCompare and friends.
 - **Stencil STL** — binary STL of the printable mask, from the painted area. Written
   straight from the built solid; a copy can be kept in the viewport as a preview
-  (double-sided, semi-transparent, toggled by **Preview**). The preview is drawn *under* the
+  (double-sided, semi-transparent, toggled by **Preview**, or removed with **Discard
+  stencil**). The preview is drawn *under* the
   paint layer, so painted areas stay in their exact colours while the shell reads clearly on
   everything else — you can keep painting and clearing with the preview on.
 - **Screenshot** — PNG of the viewport.

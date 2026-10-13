@@ -52,7 +52,7 @@ this document is about proving it works.
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P17 |
 | [Mask](help.html#mask) | M1–M7 |
-| [Paint stencil](help.html#stencil) | S1–S11 |
+| [Paint stencil](help.html#stencil) | S1–S12 |
 | [Model & view](help.html#view) | V1–V4 |
 | [Export / import](help.html#export) | X1–X10 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
@@ -587,14 +587,16 @@ click reports `Nothing painted for “Eyes” — nothing to clear`. One undo st
 
 **Steps**
 1. Paint several features.
-2. Press **Clear all** once and pause; press it again inside the four-second window.
+2. Press **Clear all** once and pause; press it again inside the four-second window. Do it with a
+   built stencil in hand as well as without one.
 3. `Ctrl`+`Z`.
 
 **Expected** The first click arms the button (**Click again to clear**); the second wipes the
 whole mask and the status bar reports the vertex count (`Mask cleared (4,633 vertices). Ctrl+Z
 brings it back.`). It never uses a browser confirm dialog — those are silently blocked inside
 some embedded browser views — so an armed-then-abandoned click just disarms. Undo restores the
-exact previous mask.
+exact previous mask. With a built stencil in hand the same message adds that the shell is still
+in the viewport and names **Discard stencil** (S12) — clearing the paint does not clear a build.
 **Guide** [Mask](help.html#mask)
 **Automated** `test/painting.test.mjs` — Clear all is one undoable step and redo re-clears.
 **Result** ☐ pass ☐ fail — notes:
@@ -641,10 +643,10 @@ honest warning. `test/app-path.test.mjs` builds with the panel's own defaults.
 1. Build a stencil.
 2. Paint somewhere else without rebuilding.
 
-**Expected** The panel says the mask has been repainted since this was built and asks you to
-build again — the app never hands you a silently stale part. Repainting does not invalidate the
-geometry you already have. Pressing **Build stencil** again reuses the cached weld, so the
-rebuild is fast.
+**Expected** The panel says the mask has been repainted since this was built and points at both
+ways out — build again, or **Discard stencil** — because the app never hands you a silently
+stale part. Repainting does not invalidate the geometry you already have. Pressing **Build
+stencil** again reuses the cached weld, so the rebuild is fast.
 **Guide** [Paint stencil](help.html#stencil)
 **Automated** `test/app-path.test.mjs` (a second build reuses the cached topology).
 **Result** ☐ pass ☐ fail — notes:
@@ -780,6 +782,25 @@ guide.
 **Guide** [Paint stencil → Clearance](help.html#stencil)
 **Automated** this *is* the tool; `test/app-path.test.mjs` checks the same numbers from the app
 path.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S12 · Discard a built stencil
+
+**Steps**
+1. Build a stencil, then press **Discard stencil**.
+2. Clear the mask with **Clear all** (Mask panel) while a build is in hand, and read the status
+   bar.
+
+**Expected** Discarding removes the shell from the viewport, clears the result panel back to
+"No stencil built yet.", disables **Export stencil STL** and says how many triangles went; the
+button is only enabled while a build exists (a refused build, a discarded one and a fresh model
+all leave it disabled). The mask keeps its paint — a build is a snapshot of the paint, so
+keeping the shell after clearing is allowed, and the status bar says the shell is still there
+and names this button. Before this control existed the only way to remove a shell was to load
+the model again.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/ui-wiring.test.mjs` — the button exists, its handler is `discardStencil`, and
+that function clears the preview, drops the result and disables the export.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1182,7 +1203,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 70 |
+| Items run | ___ of 71 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |
