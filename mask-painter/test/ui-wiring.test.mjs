@@ -126,6 +126,28 @@ check(
   /the detail you aimed at is probably Part/.test(js) && /finerPreset\(d\.seamAngleDeg\)/.test(js),
 );
 
+// ------------------------------------------------- picking: file order, not BVH order
+//
+// The Part tool reads parts.facePart[hit.faceIndex], so the index pick() reports has to be the
+// hit triangle in the file's own order — the order the mask, the welded topology and the panel
+// segmentation are built in. MeshBVH installs an index buffer of its own on a mesh that has
+// none and groups the triangles in BVH order, so the raw index names another panel entirely
+// (test/parts.test.mjs drives a real raycast to show that). These pin the translation and the
+// order it depends on.
+const viewerSrc = fs.readFileSync(path.resolve(here, '../js/viewer.js'), 'utf8');
+check('viewer exports the file-order triangle translation', /export function sourceTriangleIndex\(hit, soupSource/.test(viewerSrc));
+check(
+  'pick() reports that triangle instead of the BVH one',
+  /faceIndex: sourceTriangleIndex\(hit, this\.soupSource\)/.test(viewerSrc),
+);
+const soupRead = viewerSrc.indexOf('this.soupSource = !geometry.index');
+check(
+  'the mesh order is read before the BVH installs an index of its own',
+  soupRead > 0 && soupRead < viewerSrc.indexOf('new MeshBVH(geometry)'),
+  soupRead > 0 ? `at ${soupRead}, BVH at ${viewerSrc.indexOf('new MeshBVH(geometry)')}` : 'assignment missing',
+);
+check('main.js feeds the reported face to the panel lookup', /paintPartAt\(hit\.faceIndex/.test(js));
+
 check('the invert button exists', declared.has('invertBtn'));
 check('the invert button is wired', /el\('invertBtn'\)\.addEventListener\('click', invertPaint\)/.test(js));
 check('the invert uses the mask method', /mask\.invert\(id\)/.test(js));

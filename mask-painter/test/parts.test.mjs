@@ -15,6 +15,7 @@ import { MaskLayer } from '../js/mask.js';
 import { createFeatureList } from '../js/features.js';
 import { buildTopology, buildStencil, stencilDefaultsForDiagonal, geodesicField } from '../js/stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from '../js/parts.js';
+import { sourceTriangleIndex } from '../js/viewer.js';
 import { parseBinarySTL, fmt, TriGrid, InsideTester } from './helpers.mjs';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
 
@@ -233,6 +234,113 @@ check(
   raw.partCount > parts.partCount * 10,
   `${fmt(raw.partCount)} parts unmerged -> ${fmt(parts.partCount)} merged`,
 );
+
+// ------------------------------------------------- what a click actually reports
+//
+// The Part tool selects `parts.facePart[hit.faceIndex]`, so the face index a raycast reports has
+// to be the hit triangle in *file order* — the order the mask, the welded topology and this
+// segmentation are all built in. MeshBVH installs an index buffer of its own on a mesh that has
+// none and groups the triangles in BVH order, so its own `faceIndex` counts in that order:
+// every ray below then lands on an unrelated panel, with the index still in range, so nothing
+// throws — the Part tool just paints a panel from elsewhere in the model, at every seam angle.
+// This drives a real BVH raycast through a real camera, the way the viewer does, and holds the
+// picker to the contract: the face it reports is the triangle the ray hit, and the detail
+// panels a user can see on screen are panels they can click.
+{
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.raycast = acceleratedRaycast;
+  const group = new THREE.Group();
+  group.add(mesh);
+  group.rotation.set(-Math.PI / 2, 0, 0); // the app's 'z' up axis, as viewer.applyUpAxis sets it
+  group.updateMatrixWorld(true);
+  // Read before the BVH below installs an index of its own, as viewer.setGeometry does.
+  const soupSource = !geometry.index;
+  geometry.boundsTree = new MeshBVH(geometry);
+
+  const W = 1280;
+  const H = 800;
+  const camera = new THREE.PerspectiveCamera(35, W / H, 0.1, 10000);
+  const size = new THREE.Box3().setFromObject(group).getSize(new THREE.Vector3());
+  const centre = new THREE.Box3().setFromObject(group).getCenter(new THREE.Vector3());
+  const dist = (size.length() * 0.5 / Math.sin((35 * Math.PI) / 180 / 2)) * 1.08; // viewer.frameModel
+  camera.position.copy(centre).addScaledVector(new THREE.Vector3(0.35, 0.55, 0.78).normalize(), dist);
+  camera.near = Math.max(dist / 2000, 0.01);
+  camera.far = dist * 40;
+  camera.updateProjectionMatrix();
+  camera.lookAt(centre);
+  camera.updateMatrixWorld(true);
+
+  const raycaster = new THREE.Raycaster();
+  raycaster.firstHitOnly = true;
+  const ndc = new THREE.Vector2();
+  const pick = (px, py) => {
+    ndc.set((px / W) * 2 - 1, -(py / H) * 2 + 1);
+    raycaster.setFromCamera(ndc, camera);
+    const hit = raycaster.intersectObject(mesh, false)[0];
+    return hit ? { face: sourceTriangleIndex(hit, soupSource), raw: hit.faceIndex, local: mesh.worldToLocal(hit.point.clone()) } : null;
+  };
+
+  // Barycentric containment: is `tri` the file-order triangle the point sits on?
+  const contains = (tri, p) => {
+    const P = [0, 1, 2].map((k) => positions[tri * 9 + k]);
+    const B = [0, 1, 2].map((k) => positions[tri * 9 + 3 + k]);
+    const C = [0, 1, 2].map((k) => positions[tri * 9 + 6 + k]);
+    const sub = (u, v) => [u[0] - v[0], u[1] - v[1], u[2] - v[2]];
+    const dot = (u, v) => u[0] * v[0] + u[1] * v[1] + u[2] * v[2];
+    const v0 = sub(C, P);
+    const v1 = sub(B, P);
+    const v2 = [p.x - P[0], p.y - P[1], p.z - P[2]];
+    const d00 = dot(v0, v0);
+    const d01 = dot(v0, v1);
+    const d11 = dot(v1, v1);
+    const d20 = dot(v2, v0);
+    const d21 = dot(v2, v1);
+    const den = d00 * d11 - d01 * d01;
+    const v = (d11 * d20 - d01 * d21) / den;
+    const w = (d00 * d21 - d01 * d20) / den;
+    return Math.min(1 - v - w, v, w) >= -1e-4;
+  };
+
+  let rays = 0;
+  let resolvedOk = 0;
+  let rawOk = 0;
+  let outOfRange = 0;
+  const clickedPanels = new Map();
+  for (let py = 4; py < H; py += 8) {
+    for (let px = 4; px < W; px += 8) {
+      const hit = pick(px, py);
+      if (!hit) continue;
+      rays += 1;
+      const id = parts.facePart[hit.face];
+      if (id === undefined) outOfRange += 1;
+      else clickedPanels.set(id, (clickedPanels.get(id) || 0) + 1);
+      if (contains(hit.face, hit.local)) resolvedOk += 1;
+      if (contains(hit.raw, hit.local)) rawOk += 1;
+    }
+  }
+  check(
+    'every raycast reports the triangle it hit, in file order',
+    rays > 500 && resolvedOk === rays && outOfRange === 0,
+    `${resolvedOk}/${rays} hits resolve to the containing triangle (${outOfRange} out of range)`,
+  );
+  // The trap this pins: the raw BVH index is a different triangle, from its own ordering. If a
+  // future BVH returns file-order indices this fails loudly, and the translation can go.
+  check(
+    'the BVH face index alone would land on another panel, so the picker translates it',
+    rawOk / rays < 0.01,
+    `${rawOk}/${rays} raw indices point at the containing triangle`,
+  );
+  const detailOnScreen = [...clickedPanels.keys()].filter((id) => parts.partSizes[id] >= 1000 && parts.partSizes[id] < topo.faceCount * 0.05);
+  check(
+    'a click can reach the detail panels it can see (eyes, brows, mouth)',
+    detailOnScreen.length >= 6,
+    `${detailOnScreen.length} small panels reachable on screen: ${detailOnScreen.join(', ')}`,
+  );
+}
 
 // ---------------------------------------------------------------- painting a part
 

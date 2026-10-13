@@ -96,11 +96,18 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 
 ## Selecting a whole part instead of painting it by hand
 
-A click selects the panel its ray lands on, and on the bundled model that is a real limit: the
-opening panel is **43% of the mesh and most of the front view** while the face details are
-**0.8–2.4% of the mesh** — strips a few pixels wide. Missing one by two pixels paints the panel
-behind it and leaves the strip bare, which looks like the tool ran backward. It did not; it
-painted the face it hit. Three things make that recoverable:
+A click selects the panel its ray lands on — the triangle under the cursor, resolved back to the
+mesh's own face order (`viewer.sourceTriangleIndex`), which is the order the mask, the welded
+topology and the panels are all built in. That translation is not optional: three-mesh-bvh
+installs an index buffer of its own on a mesh that has none and groups the triangles in BVH
+order, so its `faceIndex` names an unrelated triangle — a panel from elsewhere in the model, at
+every seam angle — while still being in range, so nothing else complains.
+
+On the bundled model, selecting the panel you hit is still a real limit: the opening panel is
+**43% of the mesh and most of the front view** while the face details are **0.8–2.4% of the
+mesh** — strips a few pixels wide. Missing one by two pixels paints the panel behind it and
+leaves the strip bare, which looks like the tool ran backward. It did not; it painted the face it
+hit. Three things make that recoverable:
 
 - after every Part click the panel lists the panels with surface within a brush radius of the
   click, nearest first, each with its size and distance (`js/parts.js` → `partsNearPoint`, a
@@ -184,7 +191,10 @@ An STL has no UVs, so the mask is **per vertex** rather than a texture:
   only the changed slice of the colour buffer instead of the whole 20 MB attribute.
 
 Picking uses a three-mesh-bvh BVH built once per model (≈160 ms for 422k triangles), so a
-brush sample is a sub-millisecond raycast even while dragging.
+brush sample is a sub-millisecond raycast even while dragging. Because that BVH re-indexes a
+non-indexed mesh in its own order, `pick()` translates the hit triangle back to the loaded
+mesh's face order (`sourceTriangleIndex`) — the order every other part of the app uses: the
+mask, the welded topology, the exported mask JSON and the panel segmentation.
 
 The **Pick** tool's vote (`MaskLayer.featureUnderPoint`) is the same call the hover preview and
 the click use, so the ring cannot promise one feature and the click deliver another; it lives in
@@ -368,10 +378,15 @@ DOM events, pixel reads from the live WebGL canvas):
   away from the paint, prefers the feature painted on top, falls back to the paint underneath
   when the top patch is erased, and agrees with `Clear all`; a modifier click is proven not to
   be swallowed before the Part tool sees it;
+- the click path: a real BVH raycast through a real camera, sampled across the whole viewport,
+  reports the triangle it actually hit in the loaded mesh's face order every time (1,560/1,560
+  hits), and the detail panels a user can see (eyes, brows, mouth, feet) are panels those rays
+  select — while the BVH's own raw index fails that same test on all 1,560, which is the bug
+  that made the Part tool paint a panel from elsewhere in the model;
 - the guide: every panel heading's link resolves, every control in `index.html` is named in
   `help.html`, the four format sections exist, the embedded sample parses as valid JSON with
   the fields the importer reads, the quoted format constants match `js/io.js`, and the guide's
-  suite list matches the suites `npm test` actually runs (175 checks).
+  suite list matches the suites `npm test` actually runs (196 checks).
 
 Checked for the stencil (`npm test`: the generator suite's 131 checks on the bundled model, plus
 the app path and the wiring):

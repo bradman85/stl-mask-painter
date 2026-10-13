@@ -336,13 +336,19 @@ silently under-filling.
 1. Press `P`, click the figure's head.
 
 **Expected** The whole seam-bounded panel under the cursor is painted with the current feature,
-in one undo step. Nothing else changes. On the bundled model at the default 8° seam angle the
-biggest panel is 42.8% of the mesh, so a click that misses a small detail can still be a large
-part of the figure — the panel list under the seam controls (P10) is how you get the detail
-instead.
+in one undo step. Nothing else changes. "Under the cursor" is literal: the ray is resolved to the
+triangle the cursor is on, in the model's own face order (the order the panels are cut in), not
+the pick acceleration structure's own ordering — compare the panel named in the status bar with
+the one the seams around the click suggest. On the bundled model at the default 8° seam angle
+the biggest panel is 42.8% of the mesh, so a click that lands on a large panel is still a large
+part of the figure — the panel list under the seam controls (P10) is how you get a detail that
+is behind the surface instead.
 **Guide** [Paint → Seam parts](help.html#paint-parts)
 **Automated** `test/parts.test.mjs` — a clicked panel paints exactly its vertices (59,136 in
-that run) as one undo step.
+that run) as one undo step, and a real raycast through a real camera, sampled over the whole
+viewport, reports the triangle under the cursor every time (1,560/1,560 hits) while the picker's
+raw BVH index fails that test on all of them. `test/ui-wiring.test.mjs` pins the translation and
+that the mesh order is read before the BVH is built.
 **Result** ☐ pass ☐ fail — notes:
 
 #### P9 · Part modifiers
@@ -1114,11 +1120,13 @@ suites' own output.
 | Undercuts | Build a shell that wraps the whole figure | It builds, but cannot be placed on a rigid print | ☐ pass ☐ fail |
 | One piece is preferred, not guaranteed | Paint two far-apart areas with widening off | More than one shell, reported in plain words | ☐ pass ☐ fail |
 | A click selects the panel it hits | Click two pixels off a thin panel | The big panel is painted and the list appears (P10) | ☐ pass ☐ fail |
+| A hidden panel cannot be clicked | Aim at a detail that is behind another surface | The panel in front is painted; the hidden one is only reachable from the list (P10) | ☐ pass ☐ fail |
 
 **Guide** [How it works](help.html#howitworks)
 **Automated** `test/stencil.test.mjs` (the "must fail" cases — nothing painted, everything
-painted, a dot smaller than the inlay) and `test/parts.test.mjs` (panel sizes and the near-miss
-list).
+painted, a dot smaller than the inlay) and `test/parts.test.mjs` (panel sizes, the near-miss
+list, and that every raycast reports the triangle under the cursor in the model's face order,
+which is the order the panels are cut in).
 **Result** ☐ pass ☐ fail — notes:
 
 #### N4 · The automated suites
@@ -1129,7 +1137,7 @@ list).
 2. Confirm the exit status is 0 and read the per-suite summaries.
 
 **Expected** Six suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
-`painting.test.mjs`, `parts.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (175 checks).
+`painting.test.mjs`, `parts.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (196 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1151,8 +1159,10 @@ the guide. Record them under N3 instead:
   part.
 - A **sliver of painted area stays covered** by mask material: the window edge is smoothed and
   inset on purpose, and **Window inlay** is the deliberate part of that overlap.
-- A **click on a thin or hidden panel can select the big panel behind it**. The panel list and
-  `Alt`-click are the workaround; a two-pixel target cannot be made easy to hit.
+- A **click on a thin panel can select the big panel behind it** — the ray really did hit the
+  big panel, so that is the panel you get. The panel list and `Alt`-click are the workaround; a
+  two-pixel target cannot be made easy to hit. A panel that is *hidden behind* the surface is
+  only reachable from that list.
 - A **brush stamp is a sphere**, so it can paint the far side of a thin part. Use **Part** or
   **Region fill**.
 - A **hidden feature** still counts, still exports and still becomes part of the window — hiding

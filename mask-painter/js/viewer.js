@@ -12,6 +12,30 @@ const UP_ROTATIONS = {
 };
 
 /**
+ * The triangle of the file's own mesh that a raycast hit belongs to.
+ *
+ * three-mesh-bvh gives a mesh that has no index buffer one of its own, and orders the
+ * triangles in BVH order, so a hit's own `faceIndex` counts in that order — while the mask,
+ * the welded topology, the panel segmentation (`parts.facePart`) and the exported mask JSON
+ * all follow the file order of the clone the mask was built from, taken before the BVH
+ * existed. Every index stays in range either way, so nothing throws: a consumer of the raw
+ * index just reads the wrong triangle. That is what made the Part tool paint a panel from
+ * somewhere else in the model — "it never selects what I click on" — at every seam angle.
+ *
+ * `hit.face.a` is the first corner of the hit triangle in the original mesh (the BVH's own
+ * index buffer maps BVH triangle -> file vertex), so `a / 3` is the triangle index in file
+ * order — the one everything else in this app means by "face". An STL soup always starts a
+ * triangle on a multiple of 3; if it does not (an indexed source, which this app never
+ * loads), the mesh order already is the file order and the raw index is left alone.
+ */
+export function sourceTriangleIndex(hit, soupSource = true) {
+  if (!hit) return null;
+  const a = hit.face ? hit.face.a : null;
+  if (soupSource && Number.isInteger(a) && a >= 0 && a % 3 === 0) return a / 3;
+  return hit.faceIndex;
+}
+
+/**
  * Owns the WebGL scene: model + mask overlay, lights, orbit controls, brush cursor,
  * and the accelerated raycast used by every painting tool.
  */
@@ -57,6 +81,7 @@ export class Viewer {
     this.boundingBox = null;
     this.upAxis = 'z';
     this.fitDistance = 200;
+    this.soupSource = true;
 
     this.raycaster = new THREE.Raycaster();
     this.raycaster.firstHitOnly = true;
@@ -163,6 +188,9 @@ export class Viewer {
     this.disposeModel();
     if (!geometry.attributes.normal) geometry.computeVertexNormals();
 
+    // Read the mesh's order before the BVH below installs an index buffer of its own; the
+    // hit's triangle has to be translated back to it (see sourceTriangleIndex).
+    this.soupSource = !geometry.index;
     this.baseGeometry = geometry;
     this.overlayGeometry = overlayGeometry || geometry.clone();
     this.upAxis = upAxis;
@@ -295,7 +323,11 @@ export class Viewer {
 
   // ------------------------------------------------------------- picking
 
-  /** Raycasts the model. Returns world + model-local hits, or null. */
+  /**
+   * Raycasts the model. Returns world + model-local hits, or null. `faceIndex` is the hit
+   * triangle in the loaded file's own face order (see `sourceTriangleIndex`) — the order the
+   * mask, the welded topology and the panel segmentation are all built in.
+   */
   pick(clientX, clientY) {
     if (!this.baseMesh) return null;
     const rect = this.canvas.getBoundingClientRect();
@@ -320,7 +352,7 @@ export class Viewer {
     const localNormal = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 1, 0);
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.baseMesh.matrixWorld);
     const worldNormal = localNormal.clone().applyMatrix3(normalMatrix).normalize();
-    return { worldPoint, localPoint, worldNormal, localNormal, faceIndex: hit.faceIndex };
+    return { worldPoint, localPoint, worldNormal, localNormal, faceIndex: sourceTriangleIndex(hit, this.soupSource) };
   }
 
   // ------------------------------------------------------------- display

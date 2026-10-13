@@ -954,6 +954,10 @@ async function partClick(e) {
   if (!mask) return;
   const d = await ensureParts();
   if (!d) return;
+  // faceIndex is the hit triangle in the file's own face order — the order the panels were cut
+  // in. The BVH's own index counts in its internal order instead (see viewer.sourceTriangleIndex),
+  // and feeding that to facePart paints an unrelated panel, which reads as the tool ignoring
+  // your click.
   const hit = viewer.pick(e.clientX, e.clientY);
   if (!hit || hit.faceIndex == null) return;
   updateSeams();

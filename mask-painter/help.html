@@ -394,6 +394,13 @@
   </p>
   <ul>
     <li>
+      The <b>panel a click selects is the one under the cursor</b>: the ray is resolved to the
+      triangle the cursor is on, in the model's own face order — the order the panels were cut
+      in (<code>sourceTriangleIndex</code> in <code>js/viewer.js</code>). The pick acceleration
+      structure indexes the mesh in its own order, so that translation is what keeps a click on
+      an eyebrow from painting a panel somewhere else entirely.
+    </li>
+    <li>
       A <b>seam</b> is an edge whose two faces meet at more than the <b>seam angle</b> — a
       crease, not a smooth curve. Faces are flood-filled without crossing seams; each connected
       group is a part.
@@ -1176,7 +1183,10 @@ end_header
         The seam rule on a cube where the answer is known, then on the real model: every face in
         one part, sizes consistent, slivers merged, a part click painting exactly its vertices,
         shift-click composing two panels, and a clicked panel building a stencil whose window
-        opens over it.
+        opens over it. It also drives a real raycast through a real camera over the whole
+        viewport: every hit must report the triangle the cursor is on, in the model's own face
+        order — the order the panels are cut in — and the panels they can see (eyes, brows,
+        mouth) must be the panels those rays select.
       </td>
     </tr>
     <tr>
@@ -1211,8 +1221,12 @@ end_header
       <td class="k">test/ui-wiring.test.mjs</td>
       <td>
         That every element id the app looks up exists in the markup, that the stencil panel is
-        complete, and that the modules the app imports really export what it uses. This guide is
-        checked the same way: every panel heading's link must resolve to a section here.
+        complete, and that the modules the app imports really export what it uses. It also pins
+        the picking order: the raycast hit has to be translated back to the model's own face
+        order (read before the pick acceleration structure installs an index of its own) before
+        the Part tool turns it into a panel, and the Part tool has to use what the picker
+        reports. This guide is checked the same way: every panel heading's link must resolve to
+        a section here.
       </td>
     </tr>
   </table>
