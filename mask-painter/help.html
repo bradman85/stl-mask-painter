@@ -1,0 +1,1303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STL Mask Painter — guide</title>
+<style>
+  :root {
+    --bg: #14161a;
+    --panel: #1d2026;
+    --panel-2: #23272e;
+    --border: #2b2f36;
+    --text: #e8e8e8;
+    --dim: #9aa2ad;
+    --accent: #5b8cff;
+    --danger: #ff5d5d;
+    --warn: #ffd27d;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.65 "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, kbd, pre { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; }
+  code { background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; }
+  kbd {
+    display: inline-block; min-width: 20px; text-align: center;
+    background: var(--panel-2); border: 1px solid var(--border); border-bottom-width: 2px;
+    border-radius: 4px; padding: 1px 6px; font-size: 12px; color: var(--text);
+  }
+  pre {
+    background: #11131a; border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.55; margin: 12px 0;
+  }
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 22px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  header.top strong { font-size: 15px; }
+  header.top .tag {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dim);
+  }
+  header.top .spacer { flex: 1 1 auto; }
+  header.top .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 6px; padding: 6px 11px; font-size: 13px; cursor: pointer;
+  }
+  header.top .btn:hover { background: #2c313a; text-decoration: none; }
+  .wrap { display: flex; align-items: flex-start; gap: 0; }
+  nav.toc {
+    position: sticky; top: 57px; align-self: flex-start;
+    width: 262px; flex: 0 0 262px; max-height: calc(100vh - 57px); overflow-y: auto;
+    padding: 18px 14px 40px 22px; border-right: 1px solid var(--border);
+  }
+  nav.toc h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: #b9c0c9; margin: 0 0 8px; }
+  nav.toc input {
+    width: 100%; margin-bottom: 12px; padding: 6px 8px; font: inherit; font-size: 13px;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+  }
+  nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--dim); font-size: 13px; }
+  nav.toc a:hover { background: var(--panel-2); color: var(--text); text-decoration: none; }
+  nav.toc a.sub { padding-left: 20px; font-size: 12.5px; }
+  main { flex: 1 1 auto; min-width: 0; padding: 22px 34px 120px; max-width: 1080px; }
+  section.doc { padding: 26px 0 10px; border-top: 1px solid var(--border); }
+  section.doc:first-of-type { border-top: 0; padding-top: 8px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 0 0 4px; }
+  h2 .anchor { color: #4b525c; font-size: 14px; font-weight: 400; margin-left: 8px; }
+  h2 .anchor:hover { color: var(--accent); text-decoration: none; }
+  h3 { font-size: 14px; margin: 22px 0 6px; color: #cfd6df; }
+  h4 { font-size: 13px; margin: 18px 0 4px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+  p { margin: 8px 0; max-width: 78ch; }
+  ul { margin: 8px 0; padding-left: 22px; max-width: 78ch; }
+  li { margin: 4px 0; }
+  .lead { color: var(--dim); font-size: 14.5px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13px; }
+  th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: #b9c0c9; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td.k { white-space: nowrap; color: var(--text); font-weight: 600; }
+  td.k small { display: block; font-weight: 400; color: var(--dim); }
+  tr:hover td { background: #191c22; }
+  pre { position: relative; }
+  pre .copy {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--dim);
+    border-radius: 6px; padding: 3px 9px; font-size: 11.5px; cursor: pointer;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  pre .copy:hover { color: #08101f; background: var(--accent); border-color: var(--accent); }
+  h4 { scroll-margin-top: 70px; }
+  .note, .warn {
+    border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0;
+    padding: 10px 14px; margin: 14px 0; max-width: 82ch;
+  }
+  .warn { border-left-color: var(--warn); }
+  .note strong, .warn strong { color: var(--text); }
+  .pill {
+    display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--dim);
+  }
+  .pill.now { color: #08101f; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+  footer { padding: 30px 34px 60px 300px; color: var(--dim); font-size: 12.5px; }
+  @media (max-width: 900px) {
+    .wrap { flex-direction: column; }
+    nav.toc { position: static; width: auto; flex: none; max-height: none; border-right: 0; border-bottom: 1px solid var(--border); }
+    main { padding: 18px 20px 80px; }
+    footer { padding-left: 20px; }
+  }
+</style>
+</head>
+<body>
+<header class="top">
+  <strong>STL Mask Painter</strong>
+  <span class="tag">guide</span>
+  <span class="spacer"></span>
+  <a class="btn" href="index.html">&larr; Back to the app</a>
+</header>
+
+<div class="wrap">
+<nav class="toc">
+  <h3>Sections</h3>
+  <input id="filter" type="search" placeholder="filter…" aria-label="Filter sections">
+  <div id="tocLinks">
+    <a href="#start">Getting started</a>
+    <a href="#topbar">Top bar — loading &amp; screenshots</a>
+    <a href="#features">Features (the palette)</a>
+    <a href="#paint">Paint</a>
+    <a class="sub" href="#paint-tools">Tools</a>
+    <a class="sub" href="#paint-parts">Seam parts</a>
+    <a class="sub" href="#paint-radius">Radius, mirror</a>
+    <a class="sub" href="#paint-candidates">The panel list</a>
+    <a href="#mask">Mask</a>
+    <a href="#stencil">Paint stencil (STL)</a>
+    <a href="#view">Model &amp; view</a>
+    <a href="#export">Export / import</a>
+    <a class="sub" href="#mask-json">Mask JSON — the format</a>
+    <a class="sub" href="#import-json">Import mask JSON</a>
+    <a class="sub" href="#ply">Painted shell PLY — the format</a>
+    <a class="sub" href="#stl">Stencil STL — the format</a>
+    <a href="#shortcuts">Keyboard &amp; mouse</a>
+    <a href="#howitworks">How it works, and what it cannot do</a>
+    <a href="#tests">How it is verified</a>
+  </div>
+</nav>
+
+<main>
+<h1>What every control does</h1>
+<p class="lead">
+  One section here for each panel of the app, in the order the panel shows them, plus the
+  detail of the three file formats (mask JSON, the painted-shell PLY and the stencil STL) and
+  the honest limits of each step. Every heading in the app has a small
+  <span class="pill">?</span> that opens this page at that section.
+</p>
+
+<section class="doc" id="start">
+  <h2>Getting started <a class="anchor" href="#start">#</a></h2>
+  <p>
+    The mask painter runs entirely in the browser; nothing is uploaded anywhere and the model
+    never leaves the page. It needs to be served over HTTP (ES modules and <code>fetch</code>),
+    which is what <code>node serve.mjs</code> is for.
+  </p>
+  <ol>
+    <li>Load a model — <b>Open STL…</b>, <b>Load example model</b>, or drop an <code>.stl</code>
+      anywhere on the viewport.</li>
+    <li>Paint the areas that must stay exposed: brush, region fill, or click a whole
+      <b>Part</b> in one go.</li>
+    <li>Press <b>Build stencil</b> in the <a href="#stencil">Paint stencil</a> panel and check
+      the preview.</li>
+    <li><b>Export stencil STL</b> and print it. Hold the print on the figure; the painted
+      areas are the windows.</li>
+  </ol>
+  <p>
+    Along the way you can save and reload the painting itself as
+    <a href="#mask-json">mask JSON</a>, and export the painted shell as
+    <a href="#ply">PLY</a> for use in other tools.
+  </p>
+</section>
+
+<section class="doc" id="topbar">
+  <h2>Top bar — loading &amp; screenshots <a class="anchor" href="#topbar">#</a></h2>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Open STL…<small>file picker</small></td>
+      <td>
+        Loads any binary or ASCII <code>.stl</code> from disk. Parsing uses three.js'
+        STLLoader; normals in the file are ignored and recomputed from the triangles, because
+        STL normals are frequently wrong or zero. After loading, the camera frames the model,
+        a pick acceleration structure (BVH) is built, a fresh mask is created at the model's
+        vertex count and the brush radius is set from the model's size.
+        <br>Cost: about 0.3 s for the bundled 422,658-triangle model, most of it the BVH.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Load example model</td>
+      <td>
+        Fetches <code>Sprunki Mercuy.stl</code> from next to the app folder — the same file the
+        tests run against (422,658 triangles, 1,267,974 vertices). If it is missing, the status
+        bar reports the HTTP error and leaves whatever is loaded alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Screenshot</td>
+      <td>
+        Saves a PNG of the viewport exactly as rendered, including the paint overlay and, if it
+        is on, the stencil preview and seam lines. The filename is the model name plus
+        <code>-mask-view.png</code>.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Drag &amp; drop</td>
+      <td>
+        Dropping a file on the viewport loads it the same way <b>Open STL…</b> does. Anything
+        that is not an <code>.stl</code> is ignored; the current model stays.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Model name<small>top right</small></td>
+      <td>
+        Shows the loaded file, its triangle and vertex counts and its bounding box, e.g.
+        <code>60.1 × 103.4 × 53.0 units</code>. Those units are whatever the STL uses — the
+        guide says "mm" where a number is meant to be printed, because every STL that prints
+        well is in millimetres at final size.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Guide <span class="pill">?</span></td>
+      <td>Opens this page. Each panel heading has its own <span class="pill">?</span> that opens the matching section.</td>
+    </tr>
+  </table>
+  <div class="note">
+    <strong>Loading a second model replaces the mask.</strong> The painting is per vertex, so a
+    mask only means anything for the model it was painted on. <b>Import mask JSON</b> warns if
+    the vertex count differs, but it cannot map a mask onto different geometry.
+  </div>
+</section>
+
+<section class="doc" id="features">
+  <h2>Features (the palette) <a class="anchor" href="#features">#</a></h2>
+  <p>
+    A "feature" is a named colour. Painting assigns a feature id to vertices, and the id — not
+    the colour — is what the mask and the exports carry; the colour is how you see it.
+  </p>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Feature row</td>
+      <td>
+        Click to make it the current feature (what the brush, fill and Part tools paint with).
+        The number on the right is how many vertices currently carry that feature. The row
+        turns dim when the feature is hidden from view.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">◉ / ◌<small>mini button, left of ✕</small></td>
+      <td>
+        Hides or shows that feature's paint in the viewport. Hiding is a <em>view</em> setting:
+        it changes nothing about the mask, what gets exported, or what the stencil turns into a
+        window. Useful to see a small feature underneath a big one.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">✕</td>
+      <td>
+        Removes the feature from the palette and clears its paint from the mask. It asks first
+        when the feature has paint, and the whole thing is one undo step
+        (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings both the feature and its paint back if nothing else
+        was painted in between).
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Colour swatch</td>
+      <td>Colour used for the next feature you add. Changing it does not recolour existing features.</td>
+    </tr>
+    <tr>
+      <td class="k">New feature name</td>
+      <td>Name for the next feature; <kbd>Enter</kbd> adds it. Empty names become "Feature N".</td>
+    </tr>
+    <tr>
+      <td class="k">Add</td>
+      <td>
+        Appends the feature with the next free id (1…32,000; id 0 is reserved for "unpainted")
+        and selects it. Ids are never reused inside a session, so an exported JSON keeps
+        pointing at the right features.
+      </td>
+    </tr>
+  </table>
+  <h3>Default palette</h3>
+  <p>
+    Eyes <span class="pill" style="border-color:#4ea1ff">#4ea1ff</span>,
+    Pupils <span class="pill" style="border-color:#111820">#111820</span>,
+    Mouth <span class="pill" style="border-color:#ff4d6d">#ff4d6d</span>,
+    Cheeks <span class="pill" style="border-color:#ff8fb1">#ff8fb1</span>,
+    Ears <span class="pill" style="border-color:#b06bff">#b06bff</span>,
+    Head <span class="pill" style="border-color:#ffd23f">#ffd23f</span>,
+    Body <span class="pill" style="border-color:#3ddc84">#3ddc84</span>,
+    Arms <span class="pill" style="border-color:#2fd0c5">#2fd0c5</span>,
+    Legs <span class="pill" style="border-color:#ff9f45">#ff9f45</span>,
+    Markings <span class="pill" style="border-color:#ff6bd6">#ff6bd6</span>.
+    Press <kbd>1</kbd>…<kbd>9</kbd> to switch to the first nine.
+  </p>
+  <h3>What a feature does when the stencil is built</h3>
+  <p>
+    Nothing, directly: the window is <em>everything painted</em>, whatever feature it belongs
+    to. Features exist so you can paint several areas in different colours, see them apart,
+    count them, and clear them one at a time. Two features painted next to each other become a
+    single window, joined at the seam between them.
+  </p>
+</section>
+
+<section class="doc" id="paint">
+  <h2>Paint <a class="anchor" href="#paint">#</a></h2>
+  <p class="lead">
+    Five tools, all painting the current feature, all undoable, all one step per stroke or
+    click.
+  </p>
+
+  <h3 id="paint-tools">Tools</h3>
+  <table>
+    <tr><th>Tool</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Brush <small><kbd>B</kbd></small></td>
+      <td>
+        Left-drag stamps a sphere of the brush radius along the path: every vertex within the
+        radius of the hit point gets the feature. Stamps are sub-sampled while dragging (the
+        step tracks the on-screen size of the brush), so a fast stroke stays smooth and does
+        not paint the same vertices twenty times. The whole drag is one undo step.
+        <br>A brush stamp is a <em>sphere</em>, so on a thin part it can reach the far side —
+        use <b>Part</b> or <b>Region fill</b> when that matters.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Region fill <small><kbd>F</kbd></small></td>
+      <td>
+        Flood-fills the connected surface from the clicked point, walking vertex to vertex
+        over the mesh and refusing to cross a step where the surface turns by more than the
+        <b>seam angle</b>. It stops at creases, at the vertex budget, and (with mirroring on)
+        runs a second fill from the mirrored point. One click, one undo step.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Part <small><kbd>P</kbd></small></td>
+      <td>
+        Paints the whole panel of the model under the cursor — see
+        <a href="#paint-parts">seam parts</a> below. Click replaces the current feature's paint
+        with that panel, <kbd>Shift</kbd>-click adds a second panel, <kbd>Alt</kbd>-click (or
+        <kbd>Ctrl</kbd>-click) removes one — the only tool that reacts to a modifier click, so
+        the modifier is not treated as "not painting" while this tool is active. Every click
+        also lists <a href="#paint-candidates">the other panels near the cursor</a>, which is how
+        you select a thin or hidden one.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Erase <small><kbd>E</kbd></small></td>
+      <td>
+        The brush, painting "unpainted" instead of a feature. Use it to take back part of a bad
+        stroke without losing the rest, or to open a gap between two windows.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Pick <small><kbd>I</kbd></small></td>
+      <td>
+        Eyedropper: the painted vertices near the cursor vote (weighted by distance) and the
+        winning feature becomes current. The neighbourhood vote is deliberate — on a dense mesh
+        the single triangle under the cursor can be unpainted while the surface around it is
+        not.
+        <br><b>It previews before you click.</b> While the Pick tool is active the ring takes
+        the colour of the feature under the cursor and the cursor line reads
+        <code>Pick: Eyes (click to paint with it)</code> — or <code>nothing painted</code>, with
+        a grey ring. So a click that would do nothing is visible before you make it.
+        <br><b>A click hands control back</b> to whatever you were painting with, and the
+        status bar says which feature you picked and how many vertices carry it — picking the
+        feature you already had no longer looks like a no-op. Hold <kbd>Shift</kbd> while
+        clicking to stay on the Pick tool and sample several areas in a row.
+        <br>Both messages distinguish the two empty cases: <i>nothing painted here</i> (that
+        feature is painted elsewhere) versus <i>nothing painted anywhere nearby</i> (paint an
+        area first).
+      </td>
+    </tr>
+  </table>
+
+  <h3 id="paint-parts">Seam parts — clicking a whole panel</h3>
+  <p>
+    Hand-painting an eye or a shirt front exactly is fiddly. The Part tool cuts the model into
+    panels first and paints the one you click, so the window is exactly that panel.
+  </p>
+  <ul>
+    <li>
+      A <b>seam</b> is an edge whose two faces meet at more than the <b>seam angle</b> — a
+      crease, not a smooth curve. Faces are flood-filled without crossing seams; each connected
+      group is a part.
+    </li>
+    <li>
+      <b>Seam angle</b> (3°–60°, default 8°) is the only knob. Lower cuts finer (more, smaller
+      panels), higher merges them. The line under the slider reports how many parts that angle
+      produces, how many are worth clicking (1,000+ faces) and how many slivers were merged.
+    </li>
+    <li>
+      The <b>preset row</b> under the slider is the same control with the measured sweet spots
+      named — <b>Face details 5°</b>, <b>Portrait 8°</b> (the default), <b>Body parts 12°</b>,
+      <b>Broad shapes 25°</b>. One click moves the slider, re-cuts the model and lights the
+      button up, and the status bar reports the panel count and the size of the biggest panel so
+      you can see what the cut did before you click on the model.
+    </li>
+    <li>
+      <b>Show seams</b> draws the seams as yellow lines, so you can see where a click will stop
+      before you click. It needs the same segmentation, so the first time it is on you may wait
+      about half a second.
+    </li>
+    <li>
+      Panels smaller than 0.02% of the mesh are <em>merged</em> into the neighbour they share
+      the longest seam with. Without that, the default 8° cut of the bundled model gives 7,550
+      parts, most of them single triangles, and clicking one paints a speck. After merging:
+      26 panels.
+    </li>
+    <li>
+      Segmentation is cached per model and angle; everything else (painting, the stencil) uses
+      the same cached welded mesh, so it is a one-off cost of roughly 0.4 s on the bundled
+      model.
+    </li>
+  </ul>
+  <p>
+    Measured on the bundled figure (422,658 faces) — the same angle decides both how fine the
+    clicks are and how much of the model one click covers:
+  </p>
+  <table>
+    <tr><th>Seam angle</th><th>Parts</th><th>Largest panel</th><th>Character</th></tr>
+    <tr><td class="k">5° <span class="pill">Face details</span></td><td>35</td><td>87k faces (21%)</td><td>eyes, eyebrows and mouth each a panel of their own; the body splits into more pieces than one click should need</td></tr>
+    <tr><td class="k">8° <span class="pill now">default</span> <span class="pill">Portrait</span></td><td>26</td><td>181k faces (43%)</td><td>both eyebrows and both eyes separate; head, torso, legs, arms, feet, tail</td></tr>
+    <tr><td class="k">12° <span class="pill">Body parts</span></td><td>21</td><td>204k faces (48%)</td><td>head, torso, legs, two arms, feet, plus a short tail — but the eyebrows merge into the 48% panel</td></tr>
+    <tr><td class="k">25° <span class="pill">Broad shapes</span></td><td>14</td><td>221k (52%)</td><td>limbs merge into the body</td></tr>
+    <tr><td class="k">35°</td><td>12</td><td>226k (53%)</td><td>two blobs and slivers — too coarse to click</td></tr>
+  </table>
+  <p>
+    The default is the <em>coarsest</em> cut at which the small facial panels survive as panels
+    of their own, and it is still coarse enough that a whole torso or limb is one click. At 12°
+    a click aimed at an eyebrow selects the 48% panel behind it, which is why the Part tool
+    feels like it runs backward there; that is what the preset row is for.
+  </p>
+  <h4 id="paint-candidates">The panel list — when the click selects the wrong thing</h4>
+  <p>
+    A click can only ever select the panel the ray lands on. On the bundled model that is a
+    problem, because one panel covers <b>43% of the mesh and most of the front view</b> while
+    the face details are <b>0.8–2.4% of the mesh</b>: strips a few pixels wide. A click that
+    misses a strip by two pixels paints the panel behind it — nearly half the model — and the
+    strip stays bare. That looks like the tool ran backward; it did not, it selected the face it
+    hit.
+  </p>
+  <p>
+    So after every Part click the panel lists the panels with surface within a brush radius of
+    the click, nearest first, each labelled with its size and how far away it is:
+  </p>
+<pre>Panel 1 covers 42.8% of the mesh — a near-miss on a thin panel lands here.
+Panels within 3.2 units of the click; click one to select it instead:
+  Part 9   8,477 faces (2.01% of the mesh) · 0.1 away
+  Part 7   9,936 faces (2.35% of the mesh) · 0.1 away
+  Hide this list</pre>
+  <p class="lead">
+    Output of a click between an eye and its eyebrow on the bundled figure, with the defaults:
+    the ray landed on the 42.8% panel, and both details are on the list, one click away.
+  </p>
+  <p>
+    The status bar says the same thing in words, naming the smaller panel it thinks you were
+    aiming at and the preset that would cut it out on its own:
+  </p>
+<pre>Selected part 1 of 26 — 180,718 faces (42.8% of the mesh), 542,154 vertices painted as “Eyes” (seams at 8°). That is 43% of the model — the detail you aimed at is probably Part 9 (8,477 faces, 2.01% of the mesh, 0.1 away): click it in the list above or take the Face details cut (5°).</pre>
+  <p>
+    Clicking one selects it with the current feature, exactly as if you had hit it. There is no
+    pixel-hunting and no guessing: the list is a geometric query, so it also finds panels
+    <em>hidden behind</em> the surface you actually hit, which no amount of zooming would.
+  </p>
+
+  <div class="note">
+    <strong>A click can be a whole limb.</strong> If it selects more of the model than you
+    wanted, the status bar names the smaller panel it thinks you aimed at and the finer preset
+    that would cut it out; otherwise pick the panel you meant from the list above. If the panel
+    is bigger than the mask material around it, the shell around it will be a band rather than a
+    ring — see <a href="#stencil">Widen the reach</a>.
+  </div>
+  <div class="note">
+    <strong>The complement is one click away.</strong> If you wanted the opposite of what you
+    selected, <b>Invert mask</b> in the <a href="#mask">Mask</a> panel swaps painted for
+    unpainted in a single undoable step.
+  </div>
+
+  <h3 id="paint-radius">Radius, mirroring and the rest</h3>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Brush radius <small><kbd>[</kbd> <kbd>]</kbd></small></td>
+      <td>
+        Radius of the brush sphere in model units. The starting value is derived from the
+        model's diagonal, so a 10 cm figure gets a sensible brush without touching the slider.
+        The slider tops out at 16 units; <kbd>[</kbd> and <kbd>]</kbd> nudge it by 0.4.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Mirror across X plane <small><kbd>M</kbd></small></td>
+      <td>
+        Paints the mirrored point too, about the plane <code>x = </code> the number beside it
+        (defaults to the model's centre). Every tool honours it: the brush mirrors, region fill
+        runs a second fill from the mirrored point, the Part tool paints both parts. Turn
+        mirroring off when the model is not symmetric — the fill's mirrored run has no seed
+        normal to test against, so it can spread further than you expect on a asymmetric mesh.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Max vertices <small>Region fill</small></td>
+      <td>
+        Budget for one flood fill (default 200,000). The fill stops when it reaches it, and the
+        status bar says it was truncated. It exists because a 180° angle on a closed model
+        floods the entire shell, which is slow but rarely what you want.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Undo <small><kbd>Ctrl</kbd>+<kbd>Z</kbd></small></td>
+      <td>
+        Steps back one <em>edit</em>: a whole brush stroke (however many stamps), a fill, one
+        Part click, a clear, a palette removal. 40 steps are kept; older ones are dropped.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Redo <small><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></small></td>
+      <td>Re-applies what undo took back. Painting anything new clears the redo stack.</td>
+    </tr>
+    <tr>
+      <td class="k">Navigate: off <small><kbd>Space</kbd></small></td>
+      <td>
+        Painting owns the left mouse button, so orbiting needs the right button (or holding
+        <kbd>Space</kbd>). This button latches the left button into orbit mode for when that is
+        more comfortable; the status text flips to <b>Navigate: on</b>. Releasing
+        <kbd>Space</kbd> always returns to painting.
+      </td>
+    </tr>
+  </table>
+</section>
+
+<section class="doc" id="mask">
+  <h2>Mask <a class="anchor" href="#mask">#</a></h2>
+  <p class="lead">
+    How the painting is stored and how it is drawn — plus the three buttons that take paint
+    back.
+  </p>
+  <p>
+    An STL has no UVs, so there is nowhere to put a texture: the mask is <b>per vertex</b>.
+    Every vertex of the model carries a feature id (0 = unpainted) and a colour, and those
+    colours are drawn as a second copy of the model pulled slightly in front of the surface
+    with <code>polygonOffset</code>, which is why paint reads as a 3D shell hugging the figure
+    rather than a flat decal. Unpainted vertices carry alpha 0, so nothing shows through except
+    the paint.
+  </p>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Mask opacity</td>
+      <td>
+        Opacity of the paint layer. At 100% (default) the paint hides the model under it; lower
+        values let the figure's own shading show through the paint, which is useful on dark
+        colours. The layer's <em>colours</em> are unaffected — this is only how strongly the
+        overlay is blended.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Show mask layer</td>
+      <td>Hides the paint layer entirely without touching the mask. The fastest way to see what the bare model looks like.</td>
+    </tr>
+    <tr>
+      <td class="k">Ghost shell (dim unpainted area)</td>
+      <td>
+        Gives unpainted vertices a faint alpha so the whole surface reads as a translucent
+        shell and the painted regions stand out in context. Purely a view setting; it does not
+        change the mask or the exports.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Show base model</td>
+      <td>Shows or hides the original model mesh. Off is handy when you want to look at the mask alone (with the grid still on, for scale).</td>
+    </tr>
+    <tr>
+      <td class="k">Show ground grid</td>
+      <td>Ground plane grid, sized from the model's bounding box. Useful for judging how big a mask window is before building it.</td>
+    </tr>
+    <tr>
+      <td class="k">Wireframe</td>
+      <td>Draws the model's triangles as wireframe — the quickest way to see whether the mesh is fine enough for the mask edge you want. A coarse mesh gives a blocky window edge.</td>
+    </tr>
+    <tr>
+      <td class="k">Hide all paint</td>
+      <td>
+        Hides every feature at once (and a second click shows them again, since it checks
+        whether anything is visible). A view setting; the mask is untouched. With nothing
+        painted it says so instead of doing nothing.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Invert mask <small><kbd>Shift</kbd>+<kbd>I</kbd></small></td>
+      <td>
+        Swaps painted for unpainted: every painted vertex is released and every unpainted vertex
+        takes the <em>current</em> feature. One undo step, and it is the only action here that
+        can touch every vertex, so it reports both numbers in the status bar.
+        <br><b>It is the answer to "I meant everything except that".</b> A click — Part
+        especially — can only select what it lands on, and the complement is usually the thing
+        you wanted: paint the panel that got in the way, invert, and the window is everything
+        else. Note that it collapses a multi-feature mask onto the current feature, because
+        this is a single-selection invert rather than a per-feature one.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Clear feature</td>
+      <td>
+        Clears the paint of the <em>selected</em> feature only. Disabled — with a tooltip
+        telling you how many vertices it would clear — when that feature has no paint. One undo
+        step.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Clear all</td>
+      <td>
+        Wipes the whole mask. For safety it arms on the first click (the button becomes
+        <b>Click again to clear</b> for four seconds) and wipes on the second; the status bar
+        reports how many vertices went. One undo step, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings
+        it all back. It does not ask with a browser dialog, because dialogs are silently blocked
+        inside some embedded browser views.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Paint stats<small>bottom line</small></td>
+      <td>
+        "N of M vertices painted (x% of the mask)", where M is the model's vertex count (three
+        per triangle: 1,267,974 for the bundled model). This is the number the
+        <a href="#mask-json">mask JSON</a> and the <a href="#stencil">stencil build</a> start
+        from.
+      </td>
+    </tr>
+  </table>
+  <div class="note">
+    <strong>Picking is not an edit.</strong> The Pick tool changes which feature the tools draw
+    with; it does not change the mask, so it is not an undo step. Everything that <em>does</em>
+    change the mask is.
+  </div>
+  <div class="note">
+    <strong>Nothing about painting touches the model.</strong> No export, no clear and no undo
+    changes the loaded geometry, so the same model can be repainted any number of times.
+  </div>
+</section>
+
+<section class="doc" id="stencil">
+  <h2>Paint stencil (STL) <a class="anchor" href="#stencil">#</a></h2>
+  <p class="lead">
+    Turns the painted area into the <b>window</b> of a printable shell that conforms to the
+    model. Print it, hold it on the figure, and only the painted area is exposed to the brush.
+  </p>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Build stencil</td>
+      <td>
+        Runs the whole pipeline below and reports what came out. The first build also welds the
+        model into a shared-vertex mesh (a one-off cost, cached — the status text and the panel
+        say how long each part took). If you repaint afterwards, the panel says the part is
+        stale and you build again; repainting does not silently invalidate the geometry you
+        already have.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Preview</td>
+      <td>
+        Keeps a copy of the built shell in the viewport, semi-transparent and double-sided, so
+        you can orbit around it and see the window. It is drawn <em>under</em> the paint layer,
+        so painted areas keep their exact colours and you can keep painting and clearing with
+        the preview on. With the preview off you are looking at the mask alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Reach (mm)</td>
+      <td>
+        How far the mask material extends from the painted area's boundary, measured across the
+        surface (not through the air). Default is about 11.5% of the model's diagonal — 15 mm on
+        the bundled figure. It is the main "how much plastic" control: small reach = a band
+        around the window, large reach = a shell that wraps the figure.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Wall (mm)</td>
+      <td>
+        Sheet thickness away from the window: 1.19 mm by default (0.92% of the diagonal). The
+        window edge itself is deliberately thinner (~0.4 mm, derived as half the wall) so a
+        brush stroke meets a thin lip rather than a wall, and paint cannot wick under it.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Standoff (mm)</td>
+      <td>
+        The gap the mask leaves between the model surface and its inner face — the clearance it
+        needs to slide into place. Default 0.19 mm on the bundled figure (0.15% of the
+        diagonal). The build reports the gap it <em>achieved</em>, not just the one you asked
+        for; see the note below.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Window inlay (mm)</td>
+      <td>
+        Mask material that overlaps the <em>painted</em> side of the window boundary, so brush
+        strokes cannot creep under the window edge. 0.35 mm by default. Raising it makes the
+        window slightly smaller than the painted area and the edge more forgiving; setting it
+        to 0 puts the window exactly on the painted boundary.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Widen the reach until the mask is one piece</td>
+      <td>
+        On by default. If the shell comes out in more than one piece (because the painted areas
+        are far apart, or the band cannot close around a big window), the reach is grown
+        automatically — up to six times, in 25% steps — and the shell is rebuilt until it is a
+        single piece or the limit is reached. Each attempt is a full build, so this is the main
+        reason a build can take several seconds. Turn it off for a part-sized window: a band
+        around the panel is usually what you want there, it builds in one pass, and it uses a
+        fraction of the plastic.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Export stencil STL</td>
+      <td>
+        Writes the built shell as a binary STL (the
+        <a href="#stl">format is documented below</a>) named
+        <code>&lt;model&gt;-paint-stencil.stl</code>. Enabled once a build has succeeded; a
+        build that was refused leaves it disabled.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Result panel<small>under the buttons</small></td>
+      <td>
+        Triangle count, how many pieces the shell came out in, <b>how many windows</b> it has
+        (the openings a brush can reach — one per separate painted area), the reach used, the
+        wall thickness range it achieved, the standoff, the bounding box,
+        whether it is watertight, the measured clearance (see below), how long each stage took,
+        and every warning the build produced. Warnings are not decoration: they are the
+        conditions under which the part will not do what you expect.
+      </td>
+    </tr>
+  </table>
+
+  <h3>What the build actually does</h3>
+  <ol>
+    <li>
+      <b>Weld.</b> STL is a triangle soup with every vertex duplicated. The vertices are welded
+      into a shared mesh with adjacency and smooth normals (422,658 faces → 211,331 vertices on
+      the bundled model) and the mesh's orientation is checked so "outward" is known.
+    </li>
+    <li>
+      <b>Surface distance field.</b> A geodesic (across-the-surface) distance is computed from
+      the painted set. Geodesic matters: a straight-line distance would jump across the gap
+      between an arm and the body and start the window on the wrong limb.
+    </li>
+    <li>
+      <b>Smooth.</b> The field is smoothed — more passes inside the paint than outside — so the
+      window edge is a smooth curve instead of following the mesh's triangles. This is why the
+      window edge insets a little inside the painted area.
+    </li>
+    <li>
+      <b>Clip.</b> The surface is cut to the band <code>[−inlay, reach]</code>: everything
+      within the reach of the paint, minus the window itself.
+    </li>
+    <li>
+      <b>Offset and close.</b> The clipped sheet is pushed out along its normals to the standoff
+      height, a second copy is placed a wall thickness above it, and side walls stitch the
+      boundary loops — one closed solid.
+    </li>
+    <li>
+      <b>Repair and report.</b> A loose island of shell surrounded by the window is dropped (it
+      would print as a sliver), and point contacts in the clipped sheet are split so no edge is
+      shared by four triangles. Both are reported. Then the mesh is checked: every edge used by
+      exactly two triangles, consistent winding, positive volume.
+    </li>
+  </ol>
+
+  <h3>Clearance — does it fit onto the model?</h3>
+  <p>
+    The standoff is the gap you ask for; the clearance is the gap you get. Every build measures
+    the real distance from each inner-face vertex to the nearest surface triangle and reports
+    the median, the minimum and how many spots are tighter than half the standoff. Measured on
+    the bundled figure with two eyes painted and 71,206 inner-face vertices:
+  </p>
+  <table>
+    <tr><th>Standoff asked</th><th>Median</th><th>5th percentile</th><th>Minimum</th><th>Spots under 0.05 mm</th></tr>
+    <tr><td class="k">0.1</td><td>0.100</td><td>0.067</td><td>0.002</td><td>579 (0.8%)</td></tr>
+    <tr><td class="k">0.2 <span class="pill now">default</span></td><td>0.200</td><td>0.134</td><td>0.003</td><td>76 (0.1%)</td></tr>
+    <tr><td class="k">0.3</td><td>0.300</td><td>0.194</td><td>0.005</td><td>37 (0.05%)</td></tr>
+  </table>
+  <p>
+    The bulk of the mask keeps exactly the standoff you ask for. The tight spots are creases
+    sharper than the averaged vertex normal can follow: offsetting along it there would push
+    the inner face <em>into</em> the model, which is worse than touching, so the offset is
+    pulled back to the surface at those vertices instead (spread over a ring of neighbours).
+    That is why the minimum barely improves when you raise the standoff.
+  </p>
+  <div class="warn">
+    <strong>A rigid mask will rub at a handful of spots.</strong> On this figure 0.1% of the
+    inner face sits on the surface at 0.2 mm standoff. Practical readings: 0.15–0.25 mm keeps a
+    real gap over ~99% of the part and is a good starting point for FDM; resin printers hold a
+    smaller gap but the same crease limit applies. The fix for a stubborn crease is geometric:
+    keep the window away from it, lower the reach so the shell stops before it, or sand those
+    few spots after printing.
+  </div>
+  <div class="warn">
+    <strong>Undercuts are geometry, not a setting.</strong> A single rigid shell has to slide on
+    and off. On a figure with arms and a head wider than its neck, a mask that reaches right
+    around it cannot be placed at all. Keep the reach local (a shell around the face, say) or
+    print in a flexible resin. The app guarantees and reports a <em>whole</em> part; whether
+    that part is placeable is a judgement about the model.
+  </div>
+</section>
+
+<section class="doc" id="view">
+  <h2>Model &amp; view <a class="anchor" href="#view">#</a></h2>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Up axis</td>
+      <td>
+        Rotates the model into the screen's Y-up world: <b>Y up</b> for character models (the
+        default), <b>Z up</b> for CAD and printer meshes, <b>X up</b> otherwise. It only
+        changes how the model is displayed and how the camera frames it — no coordinates in the
+        mask or any export are touched.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Front / Back / Left / Right / Top / Home</td>
+      <td>
+        Camera presets that frame the whole model from that direction. <b>Home</b> is the
+        three-quarter view the model is loaded with. Painting works from any angle, but the
+        brush only reaches what you can see.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Navigation</td>
+      <td>
+        Right-drag orbits, middle-drag pans, the wheel zooms. Holding <kbd>Space</kbd> lets the
+        left button orbit without disarming the paint tool. On a touch screen one finger paints
+        and two fingers pan and zoom.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Status bar<small>bottom of the viewport</small></td>
+      <td>
+        Left: what just happened (what was painted, how many vertices, what was exported) and
+        any warning that needs your attention. Right: the cursor's model-space position and the
+        frame rate.
+      </td>
+    </tr>
+  </table>
+</section>
+
+<section class="doc" id="export">
+  <h2>Export / import <a class="anchor" href="#export">#</a></h2>
+  <table>
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Mask JSON</td>
+      <td>
+        Saves the painting itself — palette, feature ids and the painted vertex list — as
+        <code>&lt;model&gt;-mask.json</code>. It is the only format that can be loaded back into
+        the app. <a href="#mask-json">Full schema below.</a> Refuses politely (with a status
+        message) if nothing is painted.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Painted shell PLY</td>
+      <td>
+        Saves the painted triangles as a binary PLY with per-vertex colours, for MeshLab,
+        Blender, CloudCompare and friends. It is a display/debug artefact, not a printable
+        part: the triangles are the painted surface itself, not a solid.
+        <a href="#ply">Full layout below.</a>
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Import mask JSON…</td>
+      <td>
+        Loads a previously exported mask. <a href="#import-json">Behaviour below.</a>
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Export stencil STL</td>
+      <td>
+        In the stencil panel rather than here: the printable mask.
+        <a href="#stl">Binary STL, format below.</a>
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Screenshot</td>
+      <td>In the top bar: a PNG of the viewport.</td>
+    </tr>
+  </table>
+
+  <h3 id="mask-json">Mask JSON — the format</h3>
+  <p>
+    Format <code>stl-mask</code>, version 1. All coordinates are implicit: the file names
+    vertices by their index in the model's triangle soup, in the order the STL lists them, so
+    the file is only meaningful for the model it was painted on.
+  </p>
+<pre>{
+  "format": "stl-mask",
+  "version": 1,
+  "model": "Sprunki Mercuy.stl",   // the file it was painted on, for reference only
+  "unit": "model units",           // documentation: nothing is converted
+  "vertexCount": 1267974,          // vertices in that model = 3 × its triangle count
+  "features": [                    // the palette that was in use
+    { "id": 1, "name": "Eyes",   "color": "#4ea1ff" },
+    { "id": 2, "name": "Pupils", "color": "#111820" }
+  ],
+  "paintedVertices": 6814,         // pairs below / 2
+  "painted": [ 12, 1, 13, 1, 14, 1, 27, 2, ... ]
+}</pre>
+  <table>
+    <tr><th>Field</th><th>Meaning</th></tr>
+    <tr><td class="k">format / version</td><td>Checked on import; a file without <code>"format": "stl-mask"</code> is rejected with a readable message.</td></tr>
+    <tr><td class="k">model</td><td>Recorded for reference. Never used to match anything, so renaming a model does not break its mask.</td></tr>
+    <tr><td class="k">vertexCount</td><td>The model's vertex count when the mask was made. Import compares it against the loaded model and warns when they differ.</td></tr>
+    <tr><td class="k">features</td><td>Id, name and colour for each feature. Ids are 1…32,000; id 0 is "unpainted" and is never listed.</td></tr>
+    <tr><td class="k">painted</td><td>A flat list of <code>[vertexIndex, featureId]</code> pairs — one entry per painted vertex, nothing per unpainted vertex. This is the part that scales with how much you painted: 82,127 painted vertices is a 0.79 MB file, the whole model painted would be 11.2 MB (measured with the app's own writer).</td></tr>
+  </table>
+  <p>
+    Only painted vertices appear, so an empty mask is a valid but useless file (the app refuses
+    to export one). Vertices that are painted <em>after</em> the file was written are simply
+    absent from it.
+  </p>
+
+  <h4>Ready to import</h4>
+  <p>
+    The block above is annotated, so it is not valid JSON. This one is: a complete mask for a
+    12-triangle model. Copy it, paste it into <code>example-mask.json</code>, and load it with
+    <b>Import mask JSON&#8230;</b> to see the round trip for yourself.
+  </p>
+<pre class="json">{
+  "format": "stl-mask",
+  "version": 1,
+  "model": "example-12-triangle.stl",
+  "unit": "model units",
+  "vertexCount": 36,
+  "features": [
+    { "id": 1, "name": "Eyes", "color": "#4ea1ff" },
+    { "id": 2, "name": "Pupils", "color": "#111820" }
+  ],
+  "paintedVertices": 4,
+  "painted": [0, 1, 1, 1, 2, 1, 3, 2]
+}</pre>
+  <p>
+    Loading it on the bundled figure (1,267,974 vertices) is accepted with a warning, because
+    <code>vertexCount</code> does not match: the indices would land on the wrong vertices. On
+    the model it was written for, the four listed vertices come back painted — the first three
+    with feature 1, the fourth with feature 2.
+  </p>
+
+  <h3 id="import-json">Import mask JSON</h3>
+  <p>What happens when you pick a file, in order:</p>
+  <ol>
+    <li>The JSON is parsed and validated: <code>format</code> must be <code>stl-mask</code> and
+      <code>painted</code> must be an array of numbers. Anything else throws, and the status bar
+      shows the reason — your current painting is left alone.</li>
+    <li>Features are merged into the palette by id: ones you do not have are added, ones you do
+      have keep the colour and name you already have. Nothing is removed, so importing two
+      files with different palettes gives you the union.</li>
+    <li>The vertex list is applied to the mask: every pair sets that vertex's feature id
+      (replacing whatever was there), and the overlay is redrawn in one go.</li>
+    <li>If the file's <code>vertexCount</code> differs from the loaded model, the status bar
+      warns — indices then mean different vertices, so the result will be scrambled. Nothing is
+      blocked, because a mask from a slightly re-exported mesh is often close enough to be
+      usable as a starting point.</li>
+    <li>The whole import is one undo step: <kbd>Ctrl</kbd>+<kbd>Z</kbd> returns the mask to what
+      it was before (but leaves any features the import added).</li>
+  </ol>
+  <div class="note">
+    <strong>Round trip is exact.</strong> Export → import on the same model reproduces the same
+    per-feature vertex counts; <code>test/app-path.test.mjs</code> exports and re-imports the mask it paints
+    (6,814 vertices on the bundled model) and checks every vertex and id comes back unchanged.
+  </div>
+
+  <h3 id="ply">Painted shell PLY — the format</h3>
+  <p>
+    <code>binary_little_endian 1.0</code>, vertices with position and RGBA colour, faces as
+    triangles. Only triangles whose <em>three</em> vertices are all painted are written, and
+    the kept vertices are repacked onto their own list, so the file is the painted shell rather
+    than the whole model.
+  </p>
+<pre>ply
+format binary_little_endian 1.0
+comment STL mask export - per-vertex feature colours
+element vertex N
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+property uchar alpha
+element face M
+property list uchar uint vertex_indices
+end_header
+&lt;N × (12 bytes xyz + 4 bytes RGBA)&gt;
+&lt;M × (1 byte count = 3 + 12 bytes indices)&gt;</pre>
+  <table>
+    <tr><th>Detail</th><th>Behaviour</th></tr>
+    <tr><td class="k">Colour</td><td>The feature's colour, converted from the palette to 0–255 per channel, so what you see in the viewport is what other tools show.</td></tr>
+    <tr><td class="k">Alpha</td><td>255 for painted vertices, 0 for hidden or unpainted ones — so hiding a feature and exporting gives you its triangles at alpha 0 rather than dropping them.</td></tr>
+    <tr><td class="k">A shared triangle</td><td>A triangle with one unpainted corner is <em>not</em> included, which is why the exported triangle count is a little lower than the painted area suggests. A vertex shared by painted and unpainted triangles appears once.</td></tr>
+    <tr><td class="k">Sizes</td><td>Byte size is <code>header + 16 × vertices + 13 × faces</code>; the app reports both counts and the file size after export.</td></tr>
+    <tr><td class="k">Not for printing</td><td>This is a zero-thickness copy of the painted surface, exactly where it was painted. For something to print, build the <a href="#stencil">stencil</a> instead.</td></tr>
+  </table>
+
+  <h3 id="stl">Stencil STL — the format</h3>
+  <p>
+    Binary STL: an 80-byte header (ASCII <code>STL Mask Painter stencil</code>, padded), a
+    <code>uint32</code> triangle count, then 50 bytes per triangle — a normal and three
+    vertices, all <code>float32</code> little-endian. Normals are recomputed from the winding
+    on export, so they are always consistent with the geometry even though most slicers ignore
+    them anyway.
+  </p>
+  <table>
+    <tr><th>Detail</th><th>Behaviour</th></tr>
+    <tr><td class="k">Units</td><td>Untouched: the shell is in the model's own units, in the model's own coordinate frame, so importing it next to the figure in a slicer lines the two up.</td></tr>
+    <tr><td class="k">Watertight</td><td>The build only reports success after checking that every edge is used by exactly two triangles with consistent winding. A refused build leaves export disabled.</td></tr>
+    <tr><td class="k">Size</td><td>Exactly <code>84 + 50 × triangles</code> bytes — the tests assert this, re-read the file and re-check it welds back into the same watertight, same-volume solid.</td></tr>
+    <tr><td class="k">Orientation</td><td>Whatever up axis you are viewing with is <em>not</em> baked in: the mesh is written in model coordinates, so rotate it in the slicer if your printer expects Z up.</td></tr>
+  </table>
+</section>
+
+<section class="doc" id="shortcuts">
+  <h2>Keyboard &amp; mouse <a class="anchor" href="#shortcuts">#</a></h2>
+  <table>
+    <tr><th>Key</th><th>Action</th></tr>
+    <tr><td class="k"><kbd>B</kbd></td><td>Brush tool</td></tr>
+    <tr><td class="k"><kbd>F</kbd></td><td>Region fill tool</td></tr>
+    <tr><td class="k"><kbd>P</kbd></td><td>Part tool — click a whole seam-bounded panel</td></tr>
+    <tr><td class="k"><kbd>E</kbd></td><td>Erase tool</td></tr>
+    <tr><td class="k"><kbd>I</kbd></td><td>Pick tool (eyedropper)</td></tr>
+    <tr><td class="k"><kbd>1</kbd>…<kbd>9</kbd></td><td>Select the first nine features</td></tr>
+    <tr><td class="k"><kbd>M</kbd></td><td>Toggle mirroring across X</td></tr>
+    <tr><td class="k"><kbd>[</kbd> <kbd>]</kbd></td><td>Smaller / bigger brush</td></tr>
+    <tr><td class="k"><kbd>Space</kbd><small>hold</small></td><td>Orbit with the left button without leaving the paint tool</td></tr>
+    <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo one edit (a whole stroke, a fill, a part click, a clear)</td></tr>
+    <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Redo</td></tr>
+    <tr><td class="k"><kbd>?</kbd> <small>or <kbd>F1</kbd></small></td><td>Open this guide in a new tab</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+<kbd>I</kbd></td><td>Invert the mask (painted ⟷ unpainted); <kbd>I</kbd> on its own is the Pick tool</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+click<small>Part tool</small></td><td>Add another panel to the current feature</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+click<small>Pick tool</small></td><td>Pick a feature without switching back to the previous tool</td></tr>
+    <tr><td class="k"><kbd>Alt</kbd>+click<small>Part tool</small></td><td>Remove a panel from the paint</td></tr>
+    <tr><td class="k">right-drag</td><td>Orbit</td></tr>
+    <tr><td class="k">middle-drag</td><td>Pan</td></tr>
+    <tr><td class="k">wheel</td><td>Zoom</td></tr>
+    <tr><td class="k">drop an <code>.stl</code></td><td>Load it, same as <b>Open STL…</b></td></tr>
+  </table>
+  <p>Shortcuts are ignored while a text or number field has focus, so typing a feature name is safe.</p>
+</section>
+
+<section class="doc" id="howitworks">
+  <h2>How it works, and what it cannot do <a class="anchor" href="#howitworks">#</a></h2>
+  <h3>Three representations of the same idea</h3>
+  <table>
+    <tr><th>Thing</th><th>What it is</th><th>Where it lives</th></tr>
+    <tr><td class="k">Mask</td><td>A feature id per model vertex, plus colours</td><td>In memory; saved as <a href="#mask-json">mask JSON</a></td></tr>
+    <tr><td class="k">Painted shell</td><td>The painted triangles with per-vertex colours</td><td><a href="#ply">PLY</a>, for looking at in other tools</td></tr>
+    <tr><td class="k">Stencil</td><td>A printable solid whose window is the painted area</td><td><a href="#stl">Binary STL</a>, for printing</td></tr>
+  </table>
+
+  <h3>Things worth knowing before you print</h3>
+  <ul>
+    <li>
+      <b>Resolution comes from the mesh.</b> The mask is per vertex, so the window edge can be
+      no finer than the model's triangles. A coarse mesh gives a visibly blocky window; the
+      smoothing in the build hides some of it, not all.
+    </li>
+    <li>
+      <b>The window insets.</b> The window edge lands a couple of units inside the painted
+      boundary (the field is smoothed so the cut is not ragged), so a thin sliver of what you
+      painted stays covered by mask material. The <b>Window inlay</b> value is the deliberate
+      part of that overlap; on top of it, expect a small inset.
+    </li>
+    <li>
+      <b>Clearance at creases is zero, by design.</b> See
+      <a href="#stencil">Clearance</a> — the offset is pulled back to the surface where the
+      surface bends too tightly for the standoff to fit. That is a geometric limit, not a
+      setting.
+    </li>
+    <li>
+      <b>Undercuts decide whether the print can be placed.</b> A rigid one-piece shell cannot
+      wrap a shape that is wider than whatever it has to pass over. Keep the reach local, or
+      print flexibly.
+    </li>
+    <li>
+      <b>A click selects the panel it hits — including when that is not what you aimed at.</b>
+      On a mesh where one panel is half the model and the details are a fraction of a percent,
+      a near-miss paints the big panel and leaves the small one bare. The
+      <a href="#paint-candidates">panel list</a> and <kbd>Alt</kbd>-click are the fix; nothing
+      can make a two-pixel target easy to hit.
+    </li>
+    <li>
+      <b>One piece is preferred, not guaranteed.</b> Far-apart painted areas, or a window larger
+      than the band around it, give more than one shell. The app widens the reach while that
+      helps, then says so in plain words instead of pretending.
+    </li>
+    <li>
+      <b>Nothing is sent anywhere.</b> Parsing, painting, segmentation and the stencil build all
+      run in the page; there is no server-side step and no telemetry.
+    </li>
+  </ul>
+
+  <h3>Performance on the bundled model</h3>
+  <table>
+    <tr><th>Step</th><th>Time</th><th>When</th></tr>
+    <tr><td class="k">Load + BVH</td><td>~0.3 s</td><td>Per model</td></tr>
+    <tr><td class="k">Brush stamp</td><td>sub-millisecond</td><td>Every stamp while dragging</td></tr>
+    <tr><td class="k">Seam parts</td><td>~0.4 s</td><td>First Part click or <b>Show seams</b>, then cached per angle</td></tr>
+    <tr><td class="k">Mesh weld</td><td>~0.4 s</td><td>First stencil build, then cached</td></tr>
+    <tr><td class="k">Stencil build</td><td>0.7–1.5 s</td><td>Per build (plus each widening attempt, if it is on)</td></tr>
+    <tr><td class="k">STL export</td><td>~0.1 s for 100k triangles</td><td>Per export</td></tr>
+  </table>
+</section>
+
+<section class="doc" id="tests">
+  <h2>How it is verified <a class="anchor" href="#tests">#</a></h2>
+  <p>
+    The geometry engine is dependency-free, so the same code that runs in the page runs under
+    Node against the bundled model. <code>npm test</code> runs six suites — five on the
+    geometry and editing, and one that checks this page against the app. What they cannot check
+    is the interactive half — pointing, dragging, hovering — so that lives in the
+    <a href="VALIDATION.md">validation document</a>, one item per feature with the steps to test
+    it and the result to expect:
+  </p>
+  <table>
+    <tr><th>Suite</th><th>What it proves</th></tr>
+    <tr>
+      <td class="k">test/stencil.test.mjs</td>
+      <td>
+        Ten painted cases (single eye, both eyes, narrow cover, a dot smaller than the inlay, a
+        head cap, a front slab, two far-apart features, nothing painted, everything painted, and
+        a standoff sweep). For each: every edge used exactly twice with consistent winding and
+        outward volume, the window genuinely open, mask material in the ring around it, the
+        inner face never both behind the surface and inside the figure, thickness inside the
+        expected band, one connected shell or an honest warning — and the exported STL re-read
+        and re-checked, same volume, still watertight.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/app-path.test.mjs</td>
+      <td>
+        The app's own classes on the real model: paint with <code>MaskLayer</code>, build with
+        the panel's default numbers, write the STL with the real writer, read the blob back,
+        and probe the result (0/139 probes over the paint hit material, 2901/2910 probes in the
+        ring do). Also cross-checks the reported clearance against an independent measurement
+        of every inner vertex.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/painting.test.mjs</td>
+      <td>
+        Editing behaviour: a 9-stamp stroke is one undo step, undo/redo restore the exact
+        vertex ids, the erase brush takes back part of a stroke, Clear feature and Clear all are
+        each one step, history is capped, and the colour buffer holds what the Mask buttons
+        claim (painted alpha 1, hidden and cleared alpha 0) with the right upload ranges. It also
+        covers invert (both directions, exactly mirrored counts, undo and redo) and redo after
+        the snapshot-based edits — Clear all, Clear feature and Invert — which is where redo used
+        to put the old image back instead of reapplying the change.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/parts.test.mjs</td>
+      <td>
+        The seam rule on a cube where the answer is known, then on the real model: every face in
+        one part, sizes consistent, slivers merged, a part click painting exactly its vertices,
+        shift-click composing two panels, and a clicked panel building a stencil whose window
+        opens over it.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/parts.test.mjs</td>
+      <td>
+        Also the panel-near-a-point query on a cube where the distances are known (0.62 to the
+        four faces beside it, 1.03 to the one opposite), and on the real model: that the opening
+        panel is 48% of the mesh, that the smallest is 0.05%, that the thin panel a click missed
+        is on the list within a brush radius, and that picking it paints exactly that panel and
+        leaves the giant one alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/help.test.mjs</td>
+      <td>
+        This page against the app: every panel heading's <span class="pill">?</span> link resolves
+        to a section here, every button, checkbox, slider and menu option in
+        <code>index.html</code> is named somewhere in this text, the four format sections
+        (mask JSON, import, PLY, STL) still exist, the embedded example parses as valid JSON with
+        the fields the importer reads, and the format constants the guide quotes are still the
+        ones in <code>js/io.js</code>. It also compares the suite list below against
+        <code>package.json</code>: this page must name every suite <code>npm test</code> runs and
+        the right number of them, and no <code>test/*.test.mjs</code> may exist that
+        <code>npm test</code> does not run. The <a href="VALIDATION.md">validation
+        document</a> is checked the same way: every section here must be covered by an item
+        there, its links must resolve, and its coverage counts cannot drift. Adding a control —
+        or a suite — without documenting it fails the build, so the guide cannot quietly
+        describe an older app.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/ui-wiring.test.mjs</td>
+      <td>
+        That every element id the app looks up exists in the markup, that the stencil panel is
+        complete, and that the modules the app imports really export what it uses. This guide is
+        checked the same way: every panel heading's link must resolve to a section here.
+      </td>
+    </tr>
+  </table>
+  <p>
+    <code>node test/clearance.mjs 0.1 0.2 0.3</code> prints the clearance distribution for any
+    standoff, measured against the whole model rather than against the mask's own footprint.
+  </p>
+</section>
+</main>
+</div>
+
+<footer>
+  STL Mask Painter — this guide describes the app in <code>index.html</code> in the same
+  folder. It is a static page: no network calls, and the only script is the small helper that
+  filters the contents list and puts a <b>Copy</b> button on each code block.
+  <p>
+    <a href="VALIDATION.md"><b>Validation document</b></a> — the same features as a checklist:
+    steps to perform, the result to expect, and which suite backs each one. Use it to sign off a
+    build by hand.
+  </p>
+</footer>
+
+<script>
+  // A copy button on every code block: these blocks exist to be pasted.
+  for (const pre of document.querySelectorAll('pre')) {
+    const source = () => {
+      // Copy the block's text only — the button itself sits inside the <pre>.
+      const clone = pre.cloneNode(true);
+      for (const b of clone.querySelectorAll('.copy')) b.remove();
+      return clone.textContent.replace(/\n+$/, '\n');
+    };
+    const btn = document.createElement('button');
+    btn.className = 'copy';
+    btn.type = 'button';
+    btn.textContent = 'Copy';
+    btn.title = 'Copy this block';
+    btn.addEventListener('click', async () => {
+      const text = source();
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        // Clipboard API needs a secure context and a user gesture; fall back to a selection.
+        const r = document.createRange();
+        r.selectNodeContents(pre);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(r);
+        document.execCommand('copy');
+      }
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+    });
+    pre.appendChild(btn);
+  }
+
+  // Filter the table of contents and dim non-matching sections. Small and self-contained.
+  const filter = document.getElementById('filter');
+  const links = [...document.querySelectorAll('#tocLinks a')];
+  const sections = links
+    .map((a) => document.querySelector(a.getAttribute('href')))
+    .filter(Boolean);
+  filter?.addEventListener('input', () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const a of links) {
+      const target = document.querySelector(a.getAttribute('href'));
+      const hay = ((target?.textContent || '') + ' ' + a.textContent).toLowerCase();
+      const hit = !q || hay.includes(q);
+      a.style.display = hit ? '' : 'none';
+      if (target && !target.classList.contains('sub')) target.style.display = hit ? '' : 'none';
+    }
+  });
+  // Highlight the section currently on screen.
+  const byId = new Map(links.map((a) => [a.getAttribute('href').slice(1), a]));
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        for (const a of links) a.style.color = '';
+        const a = byId.get(e.target.id);
+        if (a) a.style.color = 'var(--accent)';
+      }
+    },
+    { rootMargin: '-20% 0px -70% 0px' },
+  );
+  for (const s of sections) if (s.tagName === 'SECTION') observer.observe(s);
+</script>
+</body>
+</html>

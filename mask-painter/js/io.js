@@ -126,3 +126,52 @@ export function buildPLY(mask) {
 
   return { blob: new Blob([buffer], { type: 'application/octet-stream' }), triangles: faces.length, vertices: verts.length };
 }
+
+/**
+ * Binary STL of an indexed triangle mesh — the format 3D printing tools want.
+ * `positions` is a flat xyz array, `indices` a flat triangle index array.
+ */
+export function buildBinarySTL(positions, indices) {
+  const triCount = indices.length / 3;
+  const buffer = new ArrayBuffer(84 + triCount * 50);
+  const view = new DataView(buffer);
+  const header = 'STL Mask Painter stencil';
+  for (let i = 0; i < 80; i += 1) view.setUint8(i, i < header.length ? header.charCodeAt(i) & 255 : 32);
+  view.setUint32(80, triCount, true);
+  let off = 84;
+  for (let t = 0; t < triCount; t += 1) {
+    const a = indices[t * 3] * 3;
+    const b = indices[t * 3 + 1] * 3;
+    const c = indices[t * 3 + 2] * 3;
+    const ax = positions[a];
+    const ay = positions[a + 1];
+    const az = positions[a + 2];
+    const bx = positions[b];
+    const by = positions[b + 1];
+    const bz = positions[b + 2];
+    const cx = positions[c];
+    const cy = positions[c + 1];
+    const cz = positions[c + 2];
+    const ux = bx - ax;
+    const uy = by - ay;
+    const uz = bz - az;
+    const vx = cx - ax;
+    const vy = cy - ay;
+    const vz = cz - az;
+    let nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    let nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len;
+    ny /= len;
+    nz /= len;
+    view.setFloat32(off, nx, true);
+    view.setFloat32(off + 4, ny, true);
+    view.setFloat32(off + 8, nz, true);
+    const verts = [ax, ay, az, bx, by, bz, cx, cy, cz];
+    for (let k = 0; k < 9; k += 1) view.setFloat32(off + 12 + k * 4, verts[k], true);
+    view.setUint16(off + 48, 0, true);
+    off += 50;
+  }
+  return { buffer, triangles: triCount, bytes: buffer.byteLength };
+}

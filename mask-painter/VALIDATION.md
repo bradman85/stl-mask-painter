@@ -1,0 +1,1191 @@
+# STL Mask Painter — validation document
+
+Every feature the app exposes, with the steps to test it and what a correct result looks like.
+It is derived from the on-screen guide (`help.html`), which explains what each control is *for*;
+this document is about proving it works.
+
+- **Running the checks:** `npm test` proves the geometry, the editing model, the segmentation,
+  the stencil and the wiring without a browser. The items below are the interactive half — the
+  things only a person in front of a viewport can confirm.
+- **Record as you go.** Each item ends with a verdict line: tick **pass** or **fail** and write
+  what you saw. A fail without a note cannot be reproduced.
+- **Coverage matrix** maps each guide section to the items that test it.
+
+## Verdicts
+
+| Verdict | Meaning |
+| --- | --- |
+| **PASS** | Matches the expected result exactly. |
+| **FAIL** | Does not match. Note the model, the numbers in the status bar, the first console error. |
+| **BLOCKED** | Cannot be tested in this environment (no touch screen, no slicer, …). Say why. |
+| **N/A** | Not applicable to this run — the feature was unreachable for a documented reason. |
+
+## Environment and setup
+
+1. `cd mask-painter` and run `node serve.mjs`. It prints the URL to open —
+   `http://127.0.0.1:8137/mask-painter/index.html` unless that port is taken.
+2. Open it in a browser with WebGL (Chrome, Firefox, Edge, Safari) and leave the developer
+   console open: several items ask for the absence of errors.
+3. Load the bundled model with **Load example model** unless an item says otherwise. It is
+   `Sprunki Mercuy.stl` — 422,658 triangles, 1,267,974 vertices, bounding box 60.1 × 103.4 ×
+   53.0 units.
+4. Between sections, **reload the page** to start from a clean mask. Several checks are about
+   *what changed*, which needs a known starting point.
+5. Timings below come from a desktop-class machine; treat them as orders of magnitude, not
+   budgets.
+
+**Test data**
+
+| Data | Where it comes from |
+| --- | --- |
+| The bundled figure | **Load example model** |
+| A tiny valid mask | The *Ready to import* block in [Export / import](help.html#mask-json) — 4 painted vertices on a 36-vertex model |
+| A deliberately wrong mask | The same file, loaded while the bundled figure is open (its `vertexCount` is 36, the figure has 1,267,974) |
+| A non-STL file | Any `.png` or `.json` — used to prove drag & drop ignores it |
+
+## Coverage matrix
+
+| Guide section | Items |
+| --- | --- |
+| [Getting started](help.html#start) | L1–L7, U1–U2 |
+| [Top bar](help.html#topbar) | L1–L7 |
+| [Features](help.html#features) | F1–F6 |
+| [Paint](help.html#paint) | P1–P17 |
+| [Mask](help.html#mask) | M1–M7 |
+| [Paint stencil](help.html#stencil) | S1–S11 |
+| [Model & view](help.html#view) | V1–V4 |
+| [Export / import](help.html#export) | X1–X10 |
+| [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
+| [How it works](help.html#howitworks) | N1–N3 |
+| [How it is verified](help.html#tests) | N4 |
+
+---
+
+# A. Startup & loading
+
+#### L1 · The app loads and runs
+
+**Steps**
+1. `node serve.mjs`, then open the printed URL.
+2. Watch the console while the page settles.
+
+**Expected** Panel, viewport and ground grid render. No console errors. The model line reads
+`no model loaded`; the Mask panel reads `No model loaded.`
+**Guide** [Getting started](help.html#start)
+**Automated** `test/ui-wiring.test.mjs` — every element id `main.js` looks up exists in the
+markup; serving itself checked with `curl` (200, `text/html; charset=utf-8`).
+**Result** ☐ pass ☐ fail — notes:
+
+#### L2 · Open STL… loads a binary or ASCII STL
+
+**Steps**
+1. **Open STL…** and pick `Sprunki Mercuy.stl` (or any other STL).
+2. Note the model line and the status bar. Watch the console.
+
+**Expected** The model appears framed by the camera. The model line shows the file name,
+`422,658 triangles`, `1,267,974 vertices` and the bounding box. A fresh empty mask is created —
+the Mask panel's paint stats read `0 of 1,267,974 vertices painted (0%)`. Load takes roughly
+0.3 s, almost all of it the pick acceleration structure (BVH).
+**Guide** [Top bar](help.html#topbar)
+**Automated** `test/app-path.test.mjs` drives the same parser and `MaskLayer` construction on
+the real file.
+**Result** ☐ pass ☐ fail — notes:
+
+#### L3 · Load example model
+
+**Steps**
+1. Reload the page.
+2. Press **Load example model**.
+
+**Expected** Same result as L2 without a file dialog. If the `.stl` is missing from the parent
+folder, the status bar reports the HTTP error and whatever was loaded stays loaded.
+**Guide** [Top bar](help.html#topbar)
+**Automated** not automated — needs a browser fetch.
+**Result** ☐ pass ☐ fail — notes:
+
+#### L4 · Drag & drop
+
+**Steps**
+1. Drag an `.stl` onto the viewport.
+2. Then drag a `.png` (or `.json`) onto the viewport.
+
+**Expected** The STL loads exactly as **Open STL…** would. The non-STL is ignored and the
+current model is left alone.
+**Guide** [Top bar](help.html#topbar)
+**Automated** not automated — browser file drag events.
+**Result** ☐ pass ☐ fail — notes:
+
+#### L5 · Screenshot
+
+**Steps**
+1. Paint something so the viewport has visible colour.
+2. Turn on the stencil **Preview** and **Show seams** if you want them in the image.
+3. Press **Screenshot**.
+
+**Expected** A PNG downloads named `<model>-mask-view.png`, showing the viewport exactly as
+rendered — paint overlay, preview and seam lines included.
+**Guide** [Top bar](help.html#topbar)
+**Automated** not automated — canvas capture.
+**Result** ☐ pass ☐ fail — notes:
+
+#### L6 · The model line
+
+**Steps**
+1. Load the example model.
+2. Compare the numbers against the expected figures in the Environment section above.
+
+**Expected** File name, triangle count, vertex count and bounding box
+(`60.1 × 103.4 × 53.0 units`). Units are whatever the STL uses; the guide says "mm" where a
+printed number is meant, because every STL that prints well is in millimetres at final size.
+**Guide** [Top bar](help.html#topbar)
+**Automated** `test/app-path.test.mjs` (model dimensions used throughout).
+**Result** ☐ pass ☐ fail — notes:
+
+#### L7 · A second model replaces the mask
+
+**Steps**
+1. Load the example model and paint the eyes.
+2. Load a different STL (any other file will do).
+
+**Expected** The painting is gone and the stats read 0 painted: the mask is per vertex and only
+means anything for the model it was painted on.
+**Guide** [Top bar](help.html#topbar)
+**Automated** `test/ui-wiring.test.mjs` (the load path builds a fresh `MaskLayer`).
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# B. Features (the palette)
+
+#### F1 · Add a feature
+
+**Steps**
+1. Pick a colour in the swatch, type a name, press **Enter** (or **Add**).
+2. Add a second one.
+
+**Expected** Each feature is appended with the next free id (1, 2, …; id 0 is reserved for
+"unpainted") and becomes the current feature, so the next brush stroke uses it. Ids are never
+reused inside a session — an exported JSON keeps pointing at the right features.
+**Guide** [Features](help.html#features)
+**Automated** `test/painting.test.mjs` (feature list and ids), `test/help.test.mjs` (the default
+palette quoted in the guide matches the code).
+**Result** ☐ pass ☐ fail — notes:
+
+#### F2 · Empty name
+
+**Steps**
+1. Leave the name box empty and add a feature.
+
+**Expected** It is called `Feature N`.
+**Guide** [Features](help.html#features)
+**Automated** `test/help.test.mjs` (the importer's fallback name is the documented one).
+**Result** ☐ pass ☐ fail — notes:
+
+#### F3 · Selecting and counting
+
+**Steps**
+1. Paint something with feature 1, then something with feature 2.
+2. Click the feature rows, then press `1`…`9`.
+
+**Expected** The clicked/pressed feature becomes current (the tools paint with it), and each row
+shows how many vertices currently carry it. Those counts update as you paint, erase and clear.
+**Guide** [Features](help.html#features)
+**Automated** `test/painting.test.mjs`, `test/parts.test.mjs` (per-feature vertex counts).
+**Result** ☐ pass ☐ fail — notes:
+
+#### F4 · Hide and show a feature
+
+**Steps**
+1. Paint two overlapping features.
+2. Press the `◉` / `◌` button on one of them.
+3. Build a stencil while one feature is hidden.
+
+**Expected** Only the display changes: the row goes dim, the feature's paint disappears from the
+viewport, and *nothing else* changes — the paint count, the exported files and the stencil
+window are all unaffected. The built stencil is identical with the feature hidden or shown.
+**Guide** [Features](help.html#features)
+**Automated** `test/painting.test.mjs` — hiding is not an edit and does not touch the ids; the
+colour buffer test pins alpha 0 for hidden vertices.
+**Result** ☐ pass ☐ fail — notes:
+
+#### F5 · Remove a feature
+
+**Steps**
+1. Paint a feature, then press its `✕`.
+2. `Ctrl`+`Z`.
+
+**Expected** It asks first when the feature has paint. Confirming removes the feature *and*
+clears its paint in one undo step; undo brings both back (provided nothing else was painted in
+between). An unpainted feature is removed without asking.
+**Guide** [Features](help.html#features)
+**Automated** `test/painting.test.mjs` (clear-clear paths and their undo/redo).
+**Result** ☐ pass ☐ fail — notes:
+
+#### F6 · Features do not change the window
+
+**Steps**
+1. Paint one area with feature 1 and a neighbouring area with feature 2.
+2. Build the stencil.
+
+**Expected** The window is everything painted, whatever feature it belongs to. Two features
+painted side by side become a single window joined at the seam. Features exist to see, count and
+clear areas separately — nothing more.
+**Guide** [Features](help.html#features)
+**Automated** `test/stencil.test.mjs` — "two far-apart features" case; `test/parts.test.mjs`
+(two panels composed with `Shift`-click build one window).
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# C. Paint
+
+#### P1 · Brush stroke is one edit
+
+**Steps**
+1. Press `B`. Drag a long stroke across the torso.
+2. Note the painted count in the Mask panel.
+3. Press **Undo**, then **Redo**.
+
+**Expected** The whole drag, however many stamps it contained, is one undo step. Undo removes
+all of it (the count returns to what it was before the stroke); redo restores the identical
+vertices, not a re-painted approximation.
+**Guide** [Paint](help.html#paint)
+**Automated** `test/painting.test.mjs` — a 9-stamp stroke paints 10,127 vertices as one history
+step; undo leaves zero difference and redo restores the same ids.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P2 · Fast strokes stay smooth
+
+**Steps**
+1. With the brush, drag quickly across a large area.
+
+**Expected** A continuous painted band with no gaps and no blotchy over-painting. Stamps are
+sub-sampled by their on-screen size while dragging.
+**Guide** [Paint](help.html#paint-tools)
+**Automated** `test/painting.test.mjs` (the stroke path is the app's own sampler).
+**Result** ☐ pass ☐ fail — notes:
+
+#### P3 · Brush radius
+
+**Steps**
+1. Move the **Brush radius** slider; watch the ring in the viewport.
+2. Press `[` and `]` several times.
+
+**Expected** The ring grows/shrinks with the slider (0.2–16 units, one step 0.1) and the `[`/`]`
+keys nudge it by 0.4. On load the radius is derived from the model's diagonal — 3.2 units on
+the bundled figure.
+**Guide** [Paint](help.html#paint-radius)
+**Automated** `test/ui-wiring.test.mjs` (the slider and the keys are wired to the same state).
+**Result** ☐ pass ☐ fail — notes:
+
+#### P4 · The brush can reach the far side of a thin part
+
+**Steps**
+1. Zoom onto a thin area (an ear, a fin) and paint with a wide brush from one side.
+2. Orbit and look at the other side.
+
+**Expected** Paint appears on the far side too — a brush stamp is a sphere. This is documented
+behaviour, not a defect: use **Part** or **Region fill** when it matters.
+**Guide** [Paint](help.html#paint-tools)
+**Automated** `test/painting.test.mjs` (`paintSphere` semantics).
+**Result** ☐ pass ☐ fail — notes:
+
+#### P5 · Mirror across X
+
+**Steps**
+1. Turn on **Mirror across X plane**.
+2. Paint one eye with the brush; then fill one cheek; then click one foot with **Part**.
+3. Turn it off and paint again.
+
+**Expected** The mirrored stroke/fill/panel appears about the plane `x =` the number beside it
+(default: the model's centre). All three tools honour it. With it off, only the painted side
+changes.
+**Guide** [Paint](help.html#paint-radius)
+**Automated** `test/parts.test.mjs` and `test/painting.test.mjs` use the same mirrored point
+path; the asymmetry caveat (the fill's mirrored run has no seed normal) is documented.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P6 · Region fill stops at seams
+
+**Steps**
+1. Press `F`, click a large smooth area (a shirt front).
+2. Then click right on a crease and lower the **Seam angle**.
+
+**Expected** The fill covers the connected surface and stops where the surface turns more than
+the seam angle — it does not run over the whole model. Lowering the angle makes the filled area
+smaller; raising it lets the fill spread further.
+**Guide** [Paint](help.html#paint-tools)
+**Automated** `test/parts.test.mjs` (the same crease rule drives segmentation).
+**Result** ☐ pass ☐ fail — notes:
+
+#### P7 · Region fill budget
+
+**Steps**
+1. Set **Max vertices** to its minimum (1000).
+2. Fill a large area.
+
+**Expected** The fill stops at the budget and the status bar says it was truncated rather than
+silently under-filling.
+**Guide** [Paint](help.html#paint-radius)
+**Automated** `test/ui-wiring.test.mjs` (the field is wired); truncation message is UI.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P8 · Part click paints a whole panel
+
+**Steps**
+1. Press `P`, click the figure's head.
+
+**Expected** The whole seam-bounded panel under the cursor is painted with the current feature,
+in one undo step. Nothing else changes. On the bundled model at the default 8° seam angle the
+biggest panel is 42.8% of the mesh, so a click that misses a small detail can still be a large
+part of the figure — the panel list under the seam controls (P10) is how you get the detail
+instead.
+**Guide** [Paint → Seam parts](help.html#paint-parts)
+**Automated** `test/parts.test.mjs` — a clicked panel paints exactly its vertices (59,136 in
+that run) as one undo step.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P9 · Part modifiers
+
+**Steps**
+1. With **Part**, click one panel, then `Shift`-click another, then `Alt`-click (or
+   `Ctrl`-click) one of them.
+
+**Expected** A plain click *replaces* the current feature's paint with that panel;
+`Shift`-click adds a second panel; `Alt`/`Ctrl`-click removes one. These clicks are not treated
+as "not painting" — Part is the one tool that reacts to a modifier click.
+**Guide** [Paint → Seam parts](help.html#paint-parts)
+**Automated** `test/ui-wiring.test.mjs` — the modifier guard is pinned by name and exempts the
+Part tool, so an Alt-click cannot be swallowed before the tool sees it.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P10 · The panel list
+
+**Steps**
+1. Click a thin detail (an eyebrow), a couple of pixels off.
+2. Read the list that appears under the seam controls.
+3. Click a row in the list.
+4. Press **Hide this list**, then click again elsewhere.
+
+**Expected** The list names the panels with surface within a brush radius of the click, nearest
+first, each with its face count, its percentage of the mesh and its distance. The panel you
+actually hit is excluded. It also finds panels *hidden behind* the surface you hit. Clicking a
+row selects that panel with the current feature, exactly as if you had hit it. The list is
+hidden until a Part click and is dismissible.
+**Guide** [Paint → The panel list](help.html#paint-candidates)
+**Automated** `test/parts.test.mjs` — the query on a cube with known distances (0.62 to the four
+nearer faces, 1.03 to the opposite one; a 0.7 radius returns exactly those four, nearest first),
+and on the real model (the opening panel is 42.8%, the smallest 0.021%, the thin panel a
+near-miss lands on is in the list). `test/ui-wiring.test.mjs` checks the wiring.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P11 · Seam angle and Show seams
+
+**Steps**
+1. Turn on **Show seams** — the first time, expect a short pause.
+2. Move the **Seam angle** slider from 8° to 25°, watching the line under it.
+3. Move it back to 8° (the default — the **Portrait** preset lights up again).
+
+**Expected** Yellow seam lines appear where a click will stop. The hint line reports how many
+parts that angle produces, how many are worth clicking (1,000+ faces) and how many slivers were
+merged. Roughly: 5° → 35 parts (largest 21%), 8° → 26 (43%), 12° → 21 (48%), 25° → 14 (52%),
+35° → 12 — too coarse to click. Segmentation takes about 0.4 s and is cached per model and
+angle, so returning to 8° is instant.
+**Guide** [Paint → Seam parts](help.html#paint-parts)
+**Automated** `test/parts.test.mjs` — every face lands in exactly one part, sizes match, the
+largest comes first, the default 8° gives 26 parts with 10 of them ≥ 5,000 faces, and the
+sliver merge turns 7,550 raw parts into 26.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P12 · Seam angle presets
+
+**Steps**
+1. With the model loaded, press **Face details 5°** under the seam slider.
+2. Watch the slider, the number beside **Seam angle**, the status bar and the button row.
+3. With **Part**, click an eye, then an eyebrow: each should be its own panel.
+4. Press **Portrait 8°**, then **Body parts 12°**, then **Broad shapes 25°**, clicking the same
+detail after each.
+5. Drag the slider to 15° by hand.
+
+**Expected** Each press moves the slider, re-cuts the model and lights up that button only. The
+status bar reports the cut, e.g. `Face details: seams at 5° cut the model into 35 panels, the
+biggest 87,175 faces (21%) — click one with the Part tool.` After **Face details** the same click
+selects a much smaller panel than after **Broad shapes**; at **Body parts** (12°) an eyebrow
+click selects the 48% panel and the status bar says so and names the smaller panel instead.
+Dragging the slider by hand dims all four buttons, and the four angles match the measured table
+in the guide.
+**Guide** [Paint → Seam parts](help.html#paint-parts)
+**Automated** `test/help.test.mjs` checks the preset buttons, the `SEAM_PRESETS` list in
+`js/main.js` and the guide's table all name the same four labels and angles, and that the
+default angle agrees in `js/parts.js`, the slider markup and the guide. `test/ui-wiring.test.mjs`
+checks the buttons call `setSeamAngle`.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P13 · Pick previews before the click
+
+**Steps**
+1. Press `I`. Move the cursor over a painted area, then over bare geometry, then off the model.
+
+**Expected** The ring takes the colour of the feature under the cursor; over bare geometry it is
+grey. The cursor line reads `Pick: Eyes (click to paint with it)` or `Pick: nothing painted`.
+No click has happened yet, and nothing has been painted.
+**Guide** [Paint → Pick](help.html#paint-tools)
+**Automated** `test/ui-wiring.test.mjs` — the hover preview and the click call the same function,
+so the ring cannot promise one feature and the click deliver another.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P14 · Pick click semantics
+
+**Steps**
+1. Paint an eye with feature 3. Switch to feature 1. Press `I`, click the eye.
+2. Press `I` again and `Shift`-click two different painted areas in a row.
+3. Press `I` and click bare, unpainted geometry; then click off the model entirely.
+
+**Expected** The click makes the picked feature current and the status bar names it with its
+vertex count (`Picked "Eyes" (3,892 vertices)…`), so picking the feature you already had is still
+visible. Control **returns to the paint tool you were using**, so your next drag paints. With
+`Shift` you stay on Pick. The empty cases are distinguished: *nothing painted here* (that
+feature is painted elsewhere) versus *nothing painted anywhere nearby*, and a click that misses
+the model says so. Picking is not an edit — it adds nothing to the undo history.
+**Guide** [Paint → Pick](help.html#paint-tools)
+**Automated** `test/painting.test.mjs` — the vote finds the feature the brush just painted
+(3,307 vertices voting), reports nothing off the model and nothing away from the paint, prefers
+the patch painted on top, falls back when it is erased, and agrees with **Clear all**.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P15 · Erase
+
+**Steps**
+1. Paint a long stroke.
+2. Press `E` and drag across its middle.
+3. `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`.
+
+**Expected** Erase paints "unpainted", so only the swept part goes; the rest of the stroke
+survives. Undo restores exactly the erased vertices; redo erases them again.
+**Guide** [Paint → Tools](help.html#paint-tools)
+**Automated** `test/painting.test.mjs` — erasing 4 stamps over a 10,127-vertex stroke leaves
+4,633; undo restores the erased vertices, redo removes them again.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P16 · Undo, redo and the history cap
+
+**Steps**
+1. Perform a stroke, a fill, a Part click, a **Clear feature**, a **Clear all** and an
+   **Invert mask**, undoing each immediately.
+2. Undo a **Clear all** and press **Redo**.
+3. Make more than 40 edits and keep pressing **Undo**.
+
+**Expected** Each action is exactly one step and comes back unchanged. Redo after a clear or an
+invert *reapplies the change* rather than restoring the state before it. History holds 40 steps;
+undoing past the cap simply stops. Painting something new clears the redo stack.
+**Guide** [Paint](help.html#paint-radius)
+**Automated** `test/painting.test.mjs` — undo/redo of clear, clear-feature and invert, plus the
+redo-after-snapshot paths; the cap is exercised.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P17 · Navigate
+
+**Steps**
+1. Press **Navigate: off** so it reads **Navigate: on** and left-drag in the viewport.
+2. Turn it off again and hold `Space` while left-dragging.
+3. Release `Space`.
+
+**Expected** With Navigate on, the left button orbits any tool. With it off, holding `Space`
+orbits without leaving the paint tool, and releasing `Space` returns to painting.
+**Guide** [Paint](help.html#paint-radius)
+**Automated** `test/ui-wiring.test.mjs` (the toggle is wired to the same navigation state).
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# D. Mask
+
+#### M1 · Mask opacity
+
+**Steps**
+1. Paint something solid-coloured.
+2. Drag **Mask opacity** from 100% down to 0% and back.
+
+**Expected** The paint fades and lets the model's own shading through as the value drops — the
+layer's colours never change, only how strongly the overlay is blended. At 100% (the default)
+the paint hides the model under it.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs` (the colour buffer itself is unchanged by opacity).
+**Result** ☐ pass ☐ fail — notes:
+
+#### M2 · The view toggles
+
+**Steps**
+1. Paint something, then toggle each control below in turn.
+2. After each, check the Mask panel's paint stats line.
+
+**Expected**
+
+| Control | Expected result | Result |
+| --- | --- | --- |
+| **Show mask layer** | The whole paint layer disappears and returns. The stats line does not change. | ☐ pass ☐ fail |
+| **Ghost shell (dim unpainted area)** | The unpainted surface becomes a faint translucent shell, so painted regions stand out in context. Mask and exports unchanged. | ☐ pass ☐ fail |
+| **Show base model** | The original mesh shows/hides. Off is the cleanest way to look at the mask alone (keep the grid on for scale). | ☐ pass ☐ fail |
+| **Show ground grid** | The ground plane appears/disappears; it is sized from the model's bounding box, which makes window sizes easy to judge. | ☐ pass ☐ fail |
+| **Wireframe** | The model draws as triangles — the quickest way to see whether the mesh is fine enough for the mask edge you want. | ☐ pass ☐ fail |
+
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs` — the colour buffer's alpha is what these toggles change,
+and the tests pin painted = 1, hidden/cleared = 0.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M3 · Hide all paint
+
+**Steps**
+1. With paint on the model, press **Hide all paint**, then press it again.
+2. Clear the mask and press it once more.
+
+**Expected** The first click hides every feature at once; the second shows them again (it
+checks whether anything is visible). With nothing painted it says so instead of doing nothing.
+A view setting: the mask is untouched.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/ui-wiring.test.mjs` (wiring and the action's existence).
+**Result** ☐ pass ☐ fail — notes:
+
+#### M4 · Invert mask
+
+**Steps**
+1. Paint one eye with **Part**, note the painted count.
+2. Press **Invert mask** (or `Shift`+`I`).
+3. `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`.
+
+**Expected** Every painted vertex is released and every unpainted vertex takes the *current*
+feature: the two counts mirror each other exactly (before: N painted of M; after: M−N painted).
+One undo step; redo re-applies the inversion. A multi-feature mask collapses onto the current
+feature — this is a single-selection invert, as the guide says.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs` — invert in both directions with exactly mirrored counts,
+its undo and its redo.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M5 · Clear feature
+
+**Steps**
+1. Paint two features.
+2. Select one and press **Clear feature**.
+3. Select the other and hover the button before clicking it.
+
+**Expected** Only the selected feature's paint goes. Hovering shows a tooltip with how many
+vertices it would clear; with nothing painted for that feature the button is disabled and the
+click reports `Nothing painted for “Eyes” — nothing to clear`. One undo step.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs` (clear-feature restores the exact previous ids).
+**Result** ☐ pass ☐ fail — notes:
+
+#### M6 · Clear all
+
+**Steps**
+1. Paint several features.
+2. Press **Clear all** once and pause; press it again inside the four-second window.
+3. `Ctrl`+`Z`.
+
+**Expected** The first click arms the button (**Click again to clear**); the second wipes the
+whole mask and the status bar reports the vertex count (`Mask cleared (4,633 vertices). Ctrl+Z
+brings it back.`). It never uses a browser confirm dialog — those are silently blocked inside
+some embedded browser views — so an armed-then-abandoned click just disarms. Undo restores the
+exact previous mask.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs` — Clear all is one undoable step and redo re-clears.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M7 · Paint stats
+
+**Steps**
+1. Paint, erase, clear and invert, watching the bottom line of the Mask panel.
+
+**Expected** It reads `N of M vertices painted (x.x% of the mask)`, where M is the model's vertex
+count (three per triangle — 1,267,974 for the bundled model). These are the numbers the mask
+JSON and the stencil build start from, so it must track every edit.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/painting.test.mjs`, `test/app-path.test.mjs` (the same counts are asserted
+in the exported JSON).
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# E. Paint stencil (STL)
+
+#### S1 · Build the stencil
+
+**Steps**
+1. Paint one eye generously (a brush blob is fine).
+2. Press **Build stencil**. Read the result panel.
+
+**Expected** The build succeeds and reports: triangle count, how many pieces, **how many
+windows** (one per separate painted area — paint the eye and the eyebrow as two areas and this
+reads 2), the reach used, the wall thickness range achieved, the standoff, the bounding box,
+whether it is watertight, the measured clearance, per-stage timings, and any warnings. First
+build also welds the model (~0.4 s, cached); the build itself takes 0.7–1.5 s with the widening
+option on. Warnings are not decoration — they are the conditions under which the part will not do
+what you expect.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — ten painted cases checked for two-triangles-per-edge,
+outward winding, positive volume, an open window, mask material in the ring, one piece or an
+honest warning. `test/app-path.test.mjs` builds with the panel's own defaults.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S2 · Repainting after a build
+
+**Steps**
+1. Build a stencil.
+2. Paint somewhere else without rebuilding.
+
+**Expected** The panel says the mask has been repainted since this was built and asks you to
+build again — the app never hands you a silently stale part. Repainting does not invalidate the
+geometry you already have. Pressing **Build stencil** again reuses the cached weld, so the
+rebuild is fast.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/app-path.test.mjs` (a second build reuses the cached topology).
+**Result** ☐ pass ☐ fail — notes:
+
+#### S3 · Preview draws under the paint
+
+**Steps**
+1. Build a stencil, leave **Preview** on.
+2. Paint over part of the shell and clear another part, keeping the preview on.
+3. Turn **Preview** off.
+
+**Expected** The shell is semi-transparent and double-sided, and you can orbit around it. It
+draws **under** the paint layer, so painted areas keep their exact colours and stay fully
+visible; with the preview off you are looking at the mask alone.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/ui-wiring.test.mjs` pins the preview's render order relative to the paint
+layer; `test/painting.test.mjs` pins painted alpha = 1, which is what makes the paint win.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S4 · Reach
+
+**Steps**
+1. Build with **Reach** at a small value, then at a large one.
+
+**Expected** Reach is how far the mask material extends from the window boundary *across the
+surface*. Default is ~11.5% of the model's diagonal (15 mm on the bundled figure). Small reach
+gives a band around the window; large reach wraps the figure. Triangle count and build time both
+grow with it.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` (the band is measured from the paint field).
+**Result** ☐ pass ☐ fail — notes:
+
+#### S5 · Wall
+
+**Steps**
+1. Build at the default **Wall** (1.19 mm) and note the reported wall range.
+2. Raise it and rebuild.
+
+**Expected** The sheet away from the window is the wall thickness; the window edge is
+deliberately thinner (~0.4 mm, half the wall) so a brush meets a thin lip instead of a wall and
+paint cannot wick under it. The result panel reports the wall range it achieved.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — thickness stays inside the expected band for every case.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S6 · Standoff and the clearance you actually get
+
+**Steps**
+1. Build with **Standoff** at 0.19 mm (the default). Read the reported clearance.
+2. Rebuild at 0.3 mm and compare the median, the 5th percentile, the minimum and the count of
+   spots tighter than half the standoff.
+
+**Expected** The reported clearance is the gap *achieved*, measured from every inner-face
+vertex to the nearest surface triangle — not just the number you typed. Expect roughly: 0.1 mm →
+median 0.100, min 0.002; 0.2 mm → median 0.200, min 0.003; 0.3 mm → median 0.300, min 0.005.
+The minimum barely improves as you raise the standoff, because creases sharper than the averaged
+vertex normal force the offset back to the surface — a geometric limit, not a setting.
+**Guide** [Paint stencil → Clearance](help.html#stencil)
+**Automated** `test/app-path.test.mjs` cross-checks the reported clearance against an
+independent measurement of every inner vertex; `node test/clearance.mjs 0.1 0.2 0.3` prints the
+distribution for any standoff.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S7 · Window inlay
+
+**Steps**
+1. Build at the default **Window inlay** (0.35 mm), then rebuild with 0.
+
+**Expected** Inlay is mask material overlapping the painted side of the boundary, so brush
+strokes cannot creep under the window edge. Raising it makes the window slightly smaller than
+the painted area and the edge more forgiving; 0 puts the window exactly on the painted boundary.
+On top of the inlay there is always a small inset, because the distance field is smoothed so the
+cut is not ragged.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — the "narrow cover" and "dot smaller than the inlay"
+cases cover both ends.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S8 · Widen the reach until the mask is one piece
+
+**Steps**
+1. Paint one big panel with **Part** (about half the figure). Leave **Widen the reach…** on and
+   build — note the time and the reported piece count and reach.
+2. Turn it off and build again.
+
+**Expected** With it on, the reach is grown automatically (up to six times, in 25% steps) until
+the shell is one piece, or the limit is reached — this is the main reason a build can take
+several seconds (up to ~6 builds, 8.8 s on the measured run). With it off you get a band around
+the panel: one pass, far less material, much faster (about 110,676 triangles in 749 ms versus
+644,876). If it still comes out in pieces, the panel says so.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/parts.test.mjs` — a part-sized window builds and the shell covers the band
+around it (2525/2525 probes) with nothing on the far side (14186/14186 bare).
+**Result** ☐ pass ☐ fail — notes:
+
+#### S9 · Export stencil STL
+
+**Steps**
+1. Before building anything, look at **Export stencil STL**.
+2. Build successfully and press it.
+3. Check the downloaded file's size.
+
+**Expected** Disabled until a build has succeeded (and left disabled after a refused build). It
+writes a binary STL named `<model>-paint-stencil.stl` whose size is exactly
+`84 + 50 × triangles` bytes.
+**Guide** [Paint stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — byte size equals `84 + 50 × triangles`, and the file
+re-reads into the same watertight, same-volume solid.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S10 · The exported part in a slicer
+
+**Steps**
+1. Load the exported STL beside the figure in your slicer.
+2. Slice it without repair.
+
+**Expected** It is a single watertight solid, in the model's own units and coordinate frame, so
+it lines up with the figure without scaling. Up axis is *not* baked in — rotate it in the slicer
+if your printer expects Z up. The painted area is a hole, not a thin wall.
+**Guide** [Paint stencil → Stencil STL](help.html#stl)
+**Automated** `test/stencil.test.mjs` (watertight and consistent winding, re-read from the file);
+**not** automated for slicer behaviour.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S11 · The documented clearance sweep
+
+**Steps**
+1. Run `node test/clearance.mjs 0.1 0.2 0.3` in `mask-painter/`.
+
+**Expected** It prints the clearance distribution at each standoff, measured against the whole
+model rather than against the mask's own footprint — the reference behind the table in the
+guide.
+**Guide** [Paint stencil → Clearance](help.html#stencil)
+**Automated** this *is* the tool; `test/app-path.test.mjs` checks the same numbers from the app
+path.
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# F. Model & view
+
+#### V1 · Up axis
+
+**Steps**
+1. Load the example model (it loads as **Y up**).
+2. Switch to **Z up**, then **X up**, then back to **Y up**.
+
+**Expected** The model rotates into the screen's Y-up world and the camera re-frames it. This
+only changes display and framing — no coordinate in the mask or in any export is touched (check
+by exporting before and after; the files are byte-identical).
+**Guide** [Model & view](help.html#view)
+**Automated** not automated — display-only transform in `js/viewer.js`.
+**Result** ☐ pass ☐ fail — notes:
+
+#### V2 · Camera presets
+
+**Steps**
+1. Press **Front**, **Back**, **Left**, **Right**, **Top**, then **Home**.
+
+**Expected** Each frames the whole model from that direction; **Home** is the three-quarter view
+the model loads with. Painting works from any angle, but remember the brush only reaches what
+you can see.
+**Guide** [Model & view](help.html#view)
+**Automated** not automated — camera framing.
+**Result** ☐ pass ☐ fail — notes:
+
+#### V3 · Navigation
+
+**Steps**
+1. Right-drag, middle-drag and wheel in the viewport.
+2. Hold `Space` and left-drag.
+3. On a touch screen: one finger over the model, then two fingers.
+
+**Expected** Right-drag orbits, middle-drag pans, the wheel zooms. `Space` + left-drag orbits
+without disarming the paint tool. One finger paints; two fingers pan and zoom.
+**Guide** [Model & view](help.html#view)
+**Automated** not automated — pointer and touch handling.
+**Result** ☐ pass ☐ fail — notes:
+
+#### V4 · Status bar
+
+**Steps**
+1. Paint, export, import, and provoke a no-op (erase where nothing is painted).
+2. Move the cursor over the model and off it.
+
+**Expected** The left side reports what just happened — what was painted, how many vertices,
+what was exported — and any warning that needs attention. The right side shows the cursor's
+model-space position and the frame rate; both update as you move.
+**Guide** [Model & view](help.html#view)
+**Automated** `test/ui-wiring.test.mjs` (the status element exists and the actions write to it).
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# G. Export / import
+
+#### X1 · Mask JSON export
+
+**Steps**
+1. With nothing painted, press **Mask JSON**.
+2. Paint something and press it again.
+
+**Expected** With an empty mask it refuses politely in the status bar instead of writing an
+empty file. With paint it downloads `<model>-mask.json` and the status bar reports the painted
+vertex count, the feature count and the file size. It is the only format that can be loaded back
+in.
+**Guide** [Export / import](help.html#export)
+**Automated** `test/app-path.test.mjs` — export → import of the mask this suite paints
+(6,814 vertices) is exact, vertex for vertex and id for id.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X2 · Mask JSON fields
+
+**Steps**
+1. Export a mask with two features.
+2. Open the file in a text editor and compare it with the schema table in the guide.
+
+**Expected** `format: "stl-mask"`, `version: 1`, `model`, `unit: "model units"`,
+`vertexCount` equal to the model's vertex count (1,267,974), `features` with `id`/`name`/`color`,
+`paintedVertices` equal to half the length of `painted`, and `painted` as a flat
+`[vertexIndex, featureId]` pair list holding only painted vertices. Id 0 never appears in the
+list. Sizes scale with the paint: 82,127 painted vertices is a 0.79 MB file.
+**Guide** [Export / import → Mask JSON](help.html#mask-json)
+**Automated** `test/app-path.test.mjs` asserts each field; `test/help.test.mjs` proves the
+embedded sample in the guide parses with the fields the importer reads.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X3 · Round trip is exact
+
+**Steps**
+1. Paint several features; note each feature's vertex count in the palette.
+2. **Mask JSON**, then **Clear all**.
+3. **Import mask JSON…** and pick the file you just saved.
+
+**Expected** Every feature's count returns to exactly what it was, and the status bar reports
+the imported vertex count.
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** `test/app-path.test.mjs` — the imported mask reproduces every vertex and id.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X4 · Importing merges palettes by id
+
+**Steps**
+1. Note your current palette.
+2. Import a mask whose features you do not have (the guide's sample adds two).
+3. Import it again.
+
+**Expected** Features you lack are added; features you already have keep *your* colour and name.
+Nothing is removed, so two files with different palettes give you the union. Importing the same
+file twice adds no duplicates.
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** partially — `test/help.test.mjs` proves the sample carries the ids the importer
+reads; the merge itself is in `js/main.js` and is covered by `test/ui-wiring.test.mjs` wiring
+checks only.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X5 · Vertex-count mismatch warns
+
+**Steps**
+1. With the bundled figure open, import the guide's 36-vertex sample (`vertexCount: 36`).
+
+**Expected** The import is **not** blocked, but the status bar warns that the mask was painted
+on 36 vertices while this model has 1,267,974, so the indices land on the wrong vertices. A mask
+from a slightly re-exported mesh is often close enough to be a starting point, which is why it
+is a warning and not a refusal.
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** `test/app-path.test.mjs` — the importer exposes both numbers, so this comparison
+cannot silently disappear.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X6 · A bad file is refused without damage
+
+**Steps**
+1. Paint something.
+2. Try to import a JSON file that is not a mask (e.g. `{}` or a random document), then a file
+   that is not JSON at all.
+
+**Expected** The status bar shows the reason (`Not an STL mask file…`, `Mask file has no
+"painted" vertex list.`, or a JSON parse error). Your current painting is left exactly as it was;
+nothing is half-applied.
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** `test/help.test.mjs` (the format/`painted` validation the guide describes is the
+one in `js/io.js`).
+**Result** ☐ pass ☐ fail — notes:
+
+#### X7 · Import is one undo step
+
+**Steps**
+1. Paint a mask; export it; clear all; import it.
+2. Press `Ctrl`+`Z`.
+
+**Expected** One undo returns the mask to what it was before the import (empty). Features the
+import added to the palette stay in the palette — the undo covers the paint, not the palette.
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** `test/painting.test.mjs` (the load path's history semantics).
+**Result** ☐ pass ☐ fail — notes:
+
+#### X8 · Painted shell PLY
+
+**Steps**
+1. Paint a patch that includes triangles whose neighbours are unpainted.
+2. Press **Painted shell PLY** and inspect the header of the downloaded file, or open it in
+   MeshLab/Blender/CloudCompare.
+
+**Expected** `binary_little_endian 1.0` with the vertex and face counts in the header and the
+documented property list (x, y, z as floats; red, green, blue, alpha as uchar; faces as
+`list uchar uint`). Only triangles whose *three* vertices are all painted are written, and the
+vertices are repacked onto their own list, so the file is the painted shell rather than the whole
+model. Per-vertex colour matches the palette; alpha is 255 where painted and 0 where hidden or
+unpainted. Byte size is `header + 16 × vertices + 13 × faces`, and the app reports both counts
+and the file size after export. It is a zero-thickness display artefact, not a printable part.
+**Guide** [Export / import → Painted shell PLY](help.html#ply)
+**Automated** `test/help.test.mjs` proves the guide's layout matches `js/io.js`'s writer
+exports; the byte-level layout is otherwise manual.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X9 · The guide's sample loads
+
+**Steps**
+1. Copy the *Ready to import* JSON block from the guide (each code block has a **Copy** button).
+2. Paste it into `example-mask.json`.
+3. **Import mask JSON…** and pick it.
+
+**Expected** The block is valid JSON and imports without an error. On a model with 36 vertices
+the four listed vertices come back painted — the first three with feature 1, the fourth with
+feature 2 — and on the bundled figure it imports with the vertex-count warning from X5.
+**Guide** [Export / import → Mask JSON](help.html#mask-json)
+**Automated** `test/help.test.mjs` parses the embedded sample with the app's own importer and
+checks it against a 1,267,974-vertex model and a 36-vertex one.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X10 · Copy buttons
+
+**Steps**
+1. Press **Copy** on any code block in the guide.
+
+**Expected** The block's text (without the button's own label) goes to the clipboard, and a
+non-clipboard fallback covers browsers that refuse the clipboard API. This is the one thing HTTP
+checks cannot prove.
+**Guide** [Export / import](help.html#export)
+**Automated** not automated — clipboard permission.
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# H. Keyboard, mouse and the guide
+
+#### K1 · Every binding
+
+**Steps**
+1. Press each key below, in a loaded, painted session, and compare with the expected result.
+
+**Expected**
+
+| Key | Action | Expected result | Result |
+| --- | --- | --- | --- |
+| `B` / `F` / `P` / `E` / `I` | Tool | The matching tool button becomes active and the cursor line names it. | ☐ pass ☐ fail |
+| `1`…`9` | Feature | The nth feature becomes current. | ☐ pass ☐ fail |
+| `M` | Mirror | The **Mirror across X plane** checkbox toggles. | ☐ pass ☐ fail |
+| `[` / `]` | Brush size | Radius changes by 0.4 and the ring resizes. | ☐ pass ☐ fail |
+| `Space` (hold) | Orbit | Left-drag orbits without leaving the paint tool. | ☐ pass ☐ fail |
+| `Ctrl`+`Z` | Undo | The last edit is taken back. | ☐ pass ☐ fail |
+| `Ctrl`+`Shift`+`Z` | Redo | The undone edit is re-applied. | ☐ pass ☐ fail |
+| `Shift`+`I` | Invert | The mask inverts; `I` alone is still Pick. | ☐ pass ☐ fail |
+| `Shift`+click (Part) | Add panel | The clicked panel is added to the current feature. | ☐ pass ☐ fail |
+| `Shift`+click (Pick) | Sample | The feature is picked and Pick stays active. | ☐ pass ☐ fail |
+| `Alt`+click (Part) | Remove panel | The clicked panel leaves the paint. | ☐ pass ☐ fail |
+| `?` or `F1` | Guide | The guide opens in a new tab. | ☐ pass ☐ fail |
+| right-drag / middle-drag / wheel | Navigate | Orbit / pan / zoom. | ☐ pass ☐ fail |
+| drop an `.stl` | Load | The model loads (see L4). | ☐ pass ☐ fail |
+
+**Guide** [Keyboard & mouse](help.html#shortcuts)
+**Automated** `test/ui-wiring.test.mjs` — the modifier guard exempts the Part tool, `Shift`+`I`
+is separated from plain `I`, and the picker's `Shift`-click behaviour is pinned.
+**Result** ☐ pass ☐ fail — notes:
+
+#### K2 · Typing is safe
+
+**Steps**
+1. Click into the **New feature name** box (or a number field) and type `b`, `f`, `p`, `e`, `i`,
+   `m`, `1`, `[`, `?`.
+
+**Expected** The characters are typed. No tool switches, no feature changes, no brush resize and
+no guide tab — shortcuts are ignored while a text or number field has focus.
+**Guide** [Keyboard & mouse](help.html#shortcuts)
+**Automated** `test/ui-wiring.test.mjs` (the key handler checks the focused element).
+**Result** ☐ pass ☐ fail — notes:
+
+#### U1 · Launching the guide
+
+**Steps**
+1. Press the **Guide** button in the top bar.
+2. Press `?` on a machine with a keyboard, then `F1`.
+3. Press the small `?` next to each panel heading — Features, Paint, Mask, Paint stencil,
+   Model & view, Export / import.
+4. In the console, run `window.maskPainter.openGuide()`.
+
+**Expected** The guide opens in a new tab; each panel's `?` opens it *at that panel's section*,
+scrolled to it. The console handle works too.
+**Guide** [Getting started](help.html#start)
+**Automated** `test/ui-wiring.test.mjs` (`openGuide` exists, points at `help.html`, is on the
+console handle, and is bound to `?` and `F1`); `test/help.test.mjs` proves every panel `?` link
+resolves to a section that exists.
+**Result** ☐ pass ☐ fail — notes:
+
+#### U2 · The guide describes the app you have
+
+**Steps**
+1. Walk each panel in the app with its guide section open beside it.
+2. Try anything the guide says is possible; look for a control the guide does not mention.
+
+**Expected** Every control in the app appears in the guide with its behaviour, cost and limits,
+and no documented control is missing from the app. The guide's footer links to this validation
+document.
+**Guide** [How it is verified](help.html#tests)
+**Automated** `test/help.test.mjs` — every button, checkbox, slider, number field and menu
+option in `index.html` is named in the guide, and the suite list in the guide matches the suites
+`npm test` runs.
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# I. Non-functional
+
+#### N1 · Nothing leaves the page
+
+**Steps**
+1. Open the browser's network panel, clear it, and use the app: load, paint, build the stencil,
+   export every format.
+2. Run a session with the developer tools set to offline after the page has loaded (keep the
+   vendored files cached).
+
+**Expected** Requests only for the app's own files — `index.html`, `css/`, `js/`, `vendor/`, and
+the `.stl` when you load the example. No analytics, no telemetry, no upload of the model or the
+mask; parsing, painting, segmentation and the stencil build all run in the page.
+**Guide** [How it works](help.html#howitworks)
+**Automated** not automated — needs the browser's network panel.
+**Result** ☐ pass ☐ fail — notes:
+
+#### N2 · Performance on the bundled model
+
+**Steps**
+1. Time the operations below (the guide's table is the reference).
+
+**Expected**
+
+| Step | Expected | Measured | Result |
+| --- | --- | --- | --- |
+| Load + BVH | ~0.3 s | | ☐ pass ☐ fail |
+| Brush stamp | sub-millisecond (dragging feels continuous) | | ☐ pass ☐ fail |
+| Seam parts | ~0.4 s first Part click or **Show seams**, then cached | | ☐ pass ☐ fail |
+| Mesh weld | ~0.4 s on the first stencil build, then cached | | ☐ pass ☐ fail |
+| Stencil build | 0.7–1.5 s (plus each widening attempt) | | ☐ pass ☐ fail |
+| STL export | ~0.1 s per 100k triangles | | ☐ pass ☐ fail |
+
+**Guide** [How it works](help.html#howitworks)
+**Automated** not automated — needs a browser; the geometry-side costs are measured in the
+suites' own output.
+**Result** ☐ pass ☐ fail — notes:
+
+#### N3 · Documented limits behave as documented
+
+**Steps**
+1. Confirm each limit below — these are *expected*, not defects (see the next section).
+
+**Expected**
+
+| Limit | How to see it | Expected | Result |
+| --- | --- | --- | --- |
+| Resolution comes from the mesh | Turn on **Wireframe** and paint on a coarse mesh | The window edge is blocky, no finer than the triangles | ☐ pass ☐ fail |
+| The window insets | Paint a patch, build, and compare the window with the paint | Mask material covers a thin sliver of what you painted | ☐ pass ☐ fail |
+| Clearance at creases is zero | Build at 0.3 mm standoff and read the minimum | The minimum barely improves; a few spots still touch | ☐ pass ☐ fail |
+| Undercuts | Build a shell that wraps the whole figure | It builds, but cannot be placed on a rigid print | ☐ pass ☐ fail |
+| One piece is preferred, not guaranteed | Paint two far-apart areas with widening off | More than one shell, reported in plain words | ☐ pass ☐ fail |
+| A click selects the panel it hits | Click two pixels off a thin panel | The big panel is painted and the list appears (P10) | ☐ pass ☐ fail |
+
+**Guide** [How it works](help.html#howitworks)
+**Automated** `test/stencil.test.mjs` (the "must fail" cases — nothing painted, everything
+painted, a dot smaller than the inlay) and `test/parts.test.mjs` (panel sizes and the near-miss
+list).
+**Result** ☐ pass ☐ fail — notes:
+
+#### N4 · The automated suites
+
+**Steps**
+1. `npm ci` (only needed to restore the vendored library copies; the app itself needs no
+   install), then `npm test`.
+2. Confirm the exit status is 0 and read the per-suite summaries.
+
+**Expected** Six suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
+`painting.test.mjs`, `parts.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (175 checks).
+The last one proves this documentation cannot drift from the app: a new control or a new suite
+that is not documented fails the build.
+**Guide** [How it is verified](help.html#tests)
+**Automated** this *is* the automated half of this document — see the note at the top.
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+# Do not log these as failures
+
+They are documented behaviour, they are geometry rather than bugs, and they are all explained in
+the guide. Record them under N3 instead:
+
+- A mask that wraps a figure with arms or a wider head **cannot be placed** on a rigid print. The
+  app guarantees and reports a *whole* part; whether it is placeable is a judgement about your
+  model.
+- A few inner-face spots sit **on the surface** at any standoff, wherever a crease is sharper
+  than the averaged vertex normal can follow. 0.15–0.25 mm keeps a real gap over ~99% of the
+  part.
+- A **sliver of painted area stays covered** by mask material: the window edge is smoothed and
+  inset on purpose, and **Window inlay** is the deliberate part of that overlap.
+- A **click on a thin or hidden panel can select the big panel behind it**. The panel list and
+  `Alt`-click are the workaround; a two-pixel target cannot be made easy to hit.
+- A **brush stamp is a sphere**, so it can paint the far side of a thin part. Use **Part** or
+  **Region fill**.
+- A **hidden feature** still counts, still exports and still becomes part of the window — hiding
+  is view-only.
+- The stencil is **not** part of the undo history. Repainting after a build leaves the old part
+  in hand; the panel says so and asks you to build again.
+- **Undo stops after 40 steps**, and undoing past the cap does nothing rather than erroring.
+
+# Sign-off
+
+| Field | Value |
+| --- | --- |
+| Build / commit | |
+| Tester | |
+| Date | |
+| Browser and version | |
+| Machine (CPU / GPU) | |
+| Model(s) used | |
+| Environment setup steps followed | ☐ yes ☐ no — notes: |
+| Items run | ___ of 70 |
+| Passes / failures / blocked | ___ / ___ / ___ |
+| Blocking failures | |
+| Notes | |
+
+**Failure report template** — one per failed item:
+
+```
+Item:            P10
+Model:           Sprunki Mercuy.stl (422,658 triangles)
+Steps:           clicked the left eyebrow, 2 px inside its edge
+Expected:        eyebrow panel selected
+Observed:        panel 1 (48.3%) painted; eyebrow stayed bare
+Status bar:      Painted part 1 — 204,113 vertices
+Console:         (first error, if any)
+Reproduced:      yes / no / intermittent
+```

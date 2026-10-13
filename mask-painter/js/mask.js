@@ -265,6 +265,61 @@ export class MaskLayer {
     return true;
   }
 
+  /**
+   * Paints a list of vertex indices — how a whole part (or a geodesic blob) is selected in
+   * one go. Inside `beginStroke()`/`endStroke()` the whole list lands in one undo step.
+   */
+  paintIndices(indices, id) {
+    let changed = 0;
+    for (let k = 0; k < indices.length; k += 1) {
+      if (this._assign(indices[k], id)) changed += 1;
+    }
+    return changed;
+  }
+
+  /** Every vertex currently painted with `id`, as a reusable array. */
+  verticesOf(id, out = []) {
+    out.length = 0;
+    if (!id) return out;
+    for (let i = 0; i < this.vertexCount; i += 1) {
+      if (this.ids[i] === id) out.push(i);
+    }
+    return out;
+  }
+
+  /**
+   * The feature painted on the surface around `p` — the eyedropper, and the hover preview
+   * the Pick tool draws before you click.
+   *
+   * Every painted vertex within `radius` votes, weighted by inverse distance, and the
+   * heaviest vote wins. Testing only the vertex nearest the cursor is unreliable on dense
+   * meshes: the closest vertex can be unpainted (or belong to a neighbouring feature painted
+   * right up against this one) while the surface under the cursor is not.
+   *
+   * Returns `{ id, painted }` — `id` 0 means nothing painted here, and `painted` is how many
+   * painted vertices were in range, so a caller can tell "unpainted area" from "no paint at
+   * all nearby".
+   */
+  featureUnderPoint(p, radius) {
+    const votes = new Map();
+    let painted = 0;
+    this.forEachVertexNear(p, radius, (i, d2) => {
+      const id = this.ids[i];
+      if (id === UNPAINTED_ID) return;
+      painted += 1;
+      votes.set(id, (votes.get(id) || 0) + 1 / (d2 + 1e-6));
+    });
+    let id = UNPAINTED_ID;
+    let best = 0;
+    for (const [candidate, weight] of votes) {
+      if (weight > best) {
+        best = weight;
+        id = candidate;
+      }
+    }
+    return { id, painted };
+  }
+
   /** Binary brush stamp: every vertex within `radius` of `p` becomes `id`. */
   paintSphere(p, radius, id) {
     let changed = 0;
@@ -312,6 +367,10 @@ export class MaskLayer {
         this._writeVertex(i, entry.prev[k]);
       }
     } else {
+      // A snapshot entry only holds the state *before* the edit (it is taken before the edit
+      // runs). Undo is where the state it replaces becomes known, so capture it here — without
+      // this, redo put the old image back and a cleared or inverted mask could not be redone.
+      entry.next = this.ids.slice();
       this.ids.set(entry.ids);
       this.refreshColors();
     }
@@ -329,7 +388,7 @@ export class MaskLayer {
         this._writeVertex(i, entry.next[k]);
       }
     } else {
-      this.ids.set(entry.ids);
+      this.ids.set(entry.next || entry.ids);
       this.refreshColors();
     }
     this.history.push(entry);
@@ -454,6 +513,31 @@ export class MaskLayer {
       });
     }
     return { changed, visited: visitedCount, truncated };
+  }
+
+  /**
+   * Swap painted for unpainted: every vertex carrying a feature is released, every unpainted
+   * vertex takes `id`. One undo step.
+   *
+   * This is the "select everything but that" move. It matters because a click can only ever
+   * select the panel it lands on: if you wanted the sliver next to it, inverting the selection
+   * you did get is usually one action instead of repainting by hand.
+   */
+  invert(id, { record = true } = {}) {
+    let cleared = 0;
+    let painted = 0;
+    if (!id) return { cleared, painted };
+    if (record) this._pushHistory(this._snapshotIds());
+    for (let i = 0; i < this.vertexCount; i += 1) {
+      const was = this.ids[i];
+      const next = was === UNPAINTED_ID ? id : UNPAINTED_ID;
+      if (was === next) continue;
+      this.ids[i] = next;
+      this._writeVertex(i, next);
+      if (next === UNPAINTED_ID) cleared += 1;
+      else painted += 1;
+    }
+    return { cleared, painted };
   }
 
   // ------------------------------------------------------------ persistence

@@ -31,13 +31,14 @@
     </label>
     <button class="btn" id="loadExampleBtn">Load example model</button>
     <button class="btn" id="shotBtn">Screenshot</button>
+    <a class="btn" href="help.html" target="_blank" rel="noopener" title="Open the guide to every control">Guide</a>
   </div>
 </header>
 
 <main>
   <aside class="panel">
     <section>
-      <h2>Features</h2>
+      <h2>Features<a class="help" href="help.html#features" target="_blank" rel="noopener" title="Guide: Features">?</a></h2>
       <p class="hint">Pick a feature, then paint it onto the model. <kbd>1</kbd>&hellip;<kbd>9</kbd> switch fast.</p>
       <div id="palette" class="palette"></div>
       <div class="row add-feature">
@@ -48,12 +49,32 @@
     </section>
 
     <section>
-      <h2>Paint</h2>
+      <h2>Paint<a class="help" href="help.html#paint" target="_blank" rel="noopener" title="Guide: Paint">?</a></h2>
       <div class="tool-row">
         <button class="tool" data-tool="brush" title="Paint with the brush (B)">Brush</button>
-        <button class="tool" data-tool="fill" title="Flood the connected surface region (F)">Region fill</button>
+        <button class="tool" data-tool="fill" title="Flood the connected surface region, stopping at seams (F)">Region fill</button>
+        <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and paint the whole of it (P). Shift-click adds another part, Alt-click removes one.">Part</button>
         <button class="tool" data-tool="erase" title="Erase paint (E)">Erase</button>
         <button class="tool" data-tool="picker" title="Pick the feature under the cursor (I)">Pick</button>
+      </div>
+      <div id="seamOptions" class="fill-options">
+        <label class="slider">
+          <span>Seam angle <b id="seamAngleVal">8&deg;</b></span>
+          <input type="range" id="seamAngle" min="3" max="60" step="1" value="8">
+        </label>
+        <div class="tool-row preset-row" id="seamPresets" role="group" aria-label="Seam angle presets">
+          <button class="btn small preset" data-seam="5" title="Finest cut: eyes, eyebrows and mouth each become a panel of their own">Face details 5&deg;</button>
+          <button class="btn small preset" data-seam="8" title="Face details plus a whole head, torso and limbs (this is the default)">Portrait 8&deg;</button>
+          <button class="btn small preset" data-seam="12" title="Head, torso, legs, arms and feet — the eyebrows merge into the head">Body parts 12&deg;</button>
+          <button class="btn small preset" data-seam="25" title="Limbs merge into the body — too coarse for anything but a full-body window">Broad shapes 25&deg;</button>
+        </div>
+        <p class="hint" id="partInfo">Move the slider to cut the model into parts.</p>
+        <label class="check"><input type="checkbox" id="showSeams"><span>Show seams</span></label>
+        <p class="hint">The Part tool paints the whole panel under the cursor — head, torso, a limb — so the mask window is exactly that panel.</p>
+        <div id="partCandidates" class="candidates" hidden>
+          <p class="hint" id="candidateHint">Panels near the cursor:</p>
+          <div class="candidate-list" id="candidateList"></div>
+        </div>
       </div>
       <label class="slider">
         <span>Brush radius <b id="brushRadiusVal">3.2</b></span>
@@ -64,10 +85,7 @@
         <span>Mirror across X plane at <input type="number" id="mirrorPlaneX" step="0.5" value="0"></span>
       </label>
       <div id="fillOptions" class="fill-options">
-        <label class="slider">
-          <span>Region angle limit <b id="fillAngleVal">60&deg;</b></span>
-          <input type="range" id="fillAngle" min="5" max="180" step="5" value="60">
-        </label>
+        <p class="hint">Flood fill stops where the surface turns more than the <b>seam angle</b> below.</p>
         <label class="row">
           <span class="dim">Max vertices</span>
           <input type="number" id="fillLimit" value="200000" min="1000" step="1000">
@@ -81,7 +99,7 @@
     </section>
 
     <section>
-      <h2>Mask</h2>
+      <h2>Mask<a class="help" href="help.html#mask" target="_blank" rel="noopener" title="Guide: Mask">?</a></h2>
       <label class="slider">
         <span>Mask opacity <b id="overlayOpacityVal">100%</b></span>
         <input type="range" id="overlayOpacity" min="0" max="1" step="0.02" value="1">
@@ -93,6 +111,7 @@
       <label class="check"><input type="checkbox" id="wireframe"><span>Wireframe</span></label>
       <div class="row">
         <button class="btn small" id="hideAllBtn">Hide all paint</button>
+        <button class="btn small" id="invertBtn" title="Paint every unpainted vertex with the current feature and release the painted ones (Shift+I) — the window becomes everything except what you had selected">Invert mask</button>
         <button class="btn small" id="clearFeatureBtn">Clear feature</button>
         <button class="btn small danger" id="clearAllBtn">Clear all</button>
       </div>
@@ -100,7 +119,7 @@
     </section>
 
     <section>
-      <h2>Model &amp; view</h2>
+      <h2>Model &amp; view<a class="help" href="help.html#view" target="_blank" rel="noopener" title="Guide: Model and view">?</a></h2>
       <label class="row">
         <span class="dim">Up axis</span>
         <select id="upAxis">
@@ -121,7 +140,48 @@
     </section>
 
     <section>
-      <h2>Export / import</h2>
+      <h2>Paint stencil (STL)<a class="help" href="help.html#stencil" target="_blank" rel="noopener" title="Guide: Paint stencil (STL)">?</a></h2>
+      <p class="hint">
+        The painted area becomes a <b>window</b> in a one-piece shell that sits on the model.
+        Hold the printed mask on the figure and only the painted area is exposed.
+      </p>
+      <div class="row">
+        <button class="btn small" id="stencilBuildBtn">Build stencil</button>
+        <label class="check"><input type="checkbox" id="stencilPreview" checked><span>Preview</span></label>
+      </div>
+      <label class="row">
+        <span class="dim">Reach (mm)</span>
+        <input type="number" id="stencilReach" step="1" min="1">
+      </label>
+      <label class="row">
+        <span class="dim">Wall (mm)</span>
+        <input type="number" id="stencilWall" step="0.1" min="0.2">
+      </label>
+      <label class="row">
+        <span class="dim">Standoff (mm)</span>
+        <input type="number" id="stencilStandoff" step="0.05" min="0">
+      </label>
+      <label class="row">
+        <span class="dim">Window inlay (mm)</span>
+        <input type="number" id="stencilOverhang" step="0.05" min="0">
+      </label>
+      <label class="check"><input type="checkbox" id="growIfSplit" checked><span>Widen the reach until the mask is one piece</span></label>
+      <p class="hint">
+        Reach is where the mask material starts. With widening on it grows by itself until the
+        mask is a single piece — good for a window you painted by hand, but it can spread over
+        the whole figure. Turn it off to keep a band around the window (builds much faster).
+        Standoff is the gap the mask leaves over the model so it can be slid into place; the
+        build reports the gap it actually achieved. Numbers are in model units (mm for a
+        millimetre model).
+      </p>
+      <div class="row">
+        <button class="btn small" id="stencilExportBtn" disabled>Export stencil STL</button>
+      </div>
+      <p class="stats lines" id="stencilStats">No stencil built yet.</p>
+    </section>
+
+    <section>
+      <h2>Export / import<a class="help" href="help.html#export" target="_blank" rel="noopener" title="Guide: Export / import">?</a></h2>
       <div class="row">
         <button class="btn small" id="exportMaskBtn">Mask JSON</button>
         <button class="btn small" id="exportPlyBtn">Painted shell PLY</button>

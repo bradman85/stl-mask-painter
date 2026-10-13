@@ -110,6 +110,11 @@ kbd {
 .btn[disabled]:hover { background: var(--panel-2); border-color: var(--border); }
 
 .tool-row, .view-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+/* Seam-angle presets: four named cuts, the one the slider is sitting on lit up. */
+.preset-row { margin: -2px 0 10px; }
+.btn.preset { color: var(--dim); }
+.btn.preset:hover { color: var(--text); }
+.btn.preset.on { background: var(--accent); border-color: var(--accent); color: #08101f; font-weight: 600; }
 
 .tool {
   background: var(--panel-2);
@@ -185,7 +190,33 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .feature .mini:hover { background: #333a44; color: var(--text); }
 .feature.off .fname, .feature.off .fcount { opacity: .45; }
 
+h2 { position: relative; }
+h2 .help {
+  float: right;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--dim);
+  font-size: 10px; text-transform: none; letter-spacing: 0; text-decoration: none;
+  line-height: 1;
+}
+h2 .help:hover { background: var(--accent); border-color: var(--accent); color: #08101f; }
+
+.candidates { margin: 8px 0 2px; }
+.candidate-list { display: flex; flex-direction: column; gap: 4px; }
+.candidate {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  width: 100%; text-align: left; cursor: pointer;
+  background: var(--panel-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 12px;
+}
+.candidate:hover { border-color: var(--accent); }
+.candidate.current { border-color: var(--accent); background: #26324a; }
+.candidate b { font-weight: 600; }
+.candidate small { color: var(--dim); }
+
 .stats { font-size: 12px; color: #c8cdd4; margin: 12px 0 0; font-variant-numeric: tabular-nums; }
+.stats.lines { white-space: pre-line; line-height: 1.5; }
+.stats .warn { color: #ffd27d; }
 
 /* --------------------------------------------------------------- viewport */
 

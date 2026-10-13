@@ -3,7 +3,10 @@
 // The app needs to be served over HTTP (ES modules + fetch of the model), and it expects
 // to find models next to the app folder, so this serves the *parent* directory.
 //
-//   node serve.mjs [port]
+//   node serve.mjs [port] [host]
+//
+// `host` defaults to 127.0.0.1; pass 0.0.0.0 to reach it from another machine (or a hosted
+// preview), which is why the server never inspects the Host header.
 //
 import http from 'node:http';
 import fs from 'node:fs';
@@ -13,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const port = Number(process.argv[2] || process.env.PORT || 8137);
+const host = process.argv[3] || process.env.HOST || '127.0.0.1';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -24,6 +28,9 @@ const TYPES = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.map': 'application/json; charset=utf-8',
+  // The guide links to the validation checklist, so it has to open in the browser rather than
+  // download as an opaque blob.
+  '.md': 'text/plain; charset=utf-8',
   '.ply': 'application/octet-stream',
 };
 
@@ -35,7 +42,16 @@ const server = http.createServer((req, res) => {
     return;
   }
   fs.stat(filePath, (err, stat) => {
-    if (!err && stat.isDirectory()) filePath = path.join(filePath, 'index.html');
+    if (!err && stat.isDirectory()) {
+      // The root has no index.html of its own — send visitors to the app rather than a 404.
+      const indexPath = path.join(filePath, 'index.html');
+      // path.join keeps a trailing slash, so compare resolved paths.
+      if (path.resolve(filePath) === path.resolve(root) && !fs.existsSync(indexPath)) {
+        res.writeHead(302, { location: '/mask-painter/index.html' }).end();
+        return;
+      }
+      filePath = indexPath;
+    }
     fs.stat(filePath, (err2, stat2) => {
       if (err2 || !stat2.isFile()) {
         res.writeHead(404, { 'content-type': 'text/plain' }).end('Not found');
@@ -52,7 +68,8 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`STL mask painter: http://127.0.0.1:${port}/mask-painter/index.html`);
-  console.log(`serving ${root}`);
+server.listen(port, host, () => {
+  const shown = host === '0.0.0.0' ? '127.0.0.1' : host;
+  console.log(`STL mask painter: http://${shown}:${port}/mask-painter/index.html`);
+  console.log(`serving ${root} on ${host}:${port}`);
 });

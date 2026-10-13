@@ -4,6 +4,8 @@ import { Viewer } from './viewer.js';
 import { MaskLayer } from './mask.js';
 import { createFeatureList, nextFeatureId } from './features.js';
 import * as io from './io.js';
+import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal } from './stencil.js';
+import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -11,14 +13,17 @@ const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
 const el = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
+const TOOL_NAMES = { brush: 'Brush', fill: 'Region fill', part: 'Part', erase: 'Erase', picker: 'Pick' };
+
 const state = {
   features: createFeatureList(),
   currentFeatureId: 1,
   tool: 'brush',
+  lastPaintTool: 'brush',
   brushRadius: 3.2,
   mirrorX: false,
   mirrorPlaneX: 0,
-  fillAngle: 60,
+  seamAngle: DEFAULT_SEAM_ANGLE,
   fillLimit: 200000,
   navigate: false,
   upAxis: 'y',
@@ -34,6 +39,47 @@ let mask = null;
 let modelName = '';
 let stroke = null;
 
+// The paint stencil: an optional solid built from the painted mask. The welded topology is
+// expensive on a big model, so it is cached per loaded model and reused across rebuilds.
+const stencil = {
+  topology: null,
+  topologyFor: '',
+  result: null,
+  mesh: null,
+  buildMs: 0,
+};
+
+// Seam-based parts, cached per model and seam angle. The segmentation pass takes a few
+// hundred milliseconds on the example model, so it is only recomputed when one of those
+// actually changes.
+const parts = {
+  data: null,
+  key: '',
+  seams: null,
+  seamsKey: '',
+  building: false,
+};
+
+// The named seam-angle cuts the preset row offers. The angles are the measured sweet spots on
+// the bundled figure (the table is in help.html#paint-parts) and the labels are what the guide
+// documents; test/help.test.mjs fails if those three lists — here, the markup and the guide —
+// stop agreeing. The default (DEFAULT_SEAM_ANGLE, "Portrait") is the coarsest cut at which the
+// small facial panels stay clickable panels of their own.
+const SEAM_PRESETS = [
+  { angle: 5, label: 'Face details' },
+  { angle: 8, label: 'Portrait' },
+  { angle: 12, label: 'Body parts' },
+  { angle: 25, label: 'Broad shapes' },
+];
+const presetFor = (angle) => SEAM_PRESETS.find((p) => p.angle === angle) || null;
+
+/** The next finer preset than `angle` — the "cut finer" suggestion after a big-panel click. */
+function finerPreset(angle) {
+  let best = null;
+  for (const p of SEAM_PRESETS) if (p.angle < angle && (!best || p.angle > best.angle)) best = p;
+  return best;
+}
+
 // Handle for console debugging / scripted checks.
 window.maskPainter = {
   state,
@@ -47,6 +93,20 @@ window.maskPainter = {
   exportMaskJSON,
   exportPLY,
   importMaskFile,
+  buildStencilPart,
+  exportStencilSTL,
+  ensureParts,
+  currentParts: () => parts.data,
+  paintPartAt,
+  setSeamAngle,
+  invertPaint,
+  pickFeatureUnderPoint: (p, radius) => mask.featureUnderPoint(p, radius ?? maskedPickRadius()),
+  openGuide,
+  partsIo: { buildParts, partSoupVertices },
+  stencilIo: { buildTopology, buildStencil, validateSolid },
+  get stencil() {
+    return stencil;
+  },
   paintAt(x, y) {
     const hit = viewer.pick(x, y);
     if (!hit || !mask) return 0;
@@ -66,6 +126,13 @@ const nextPaint = () =>
 
 function setStatus(msg) {
   el('statusMsg').textContent = msg;
+}
+
+/** The on-screen guide: one section per panel, plus the file formats. */
+function openGuide(hash = '') {
+  const url = new URL('help.html', location.href);
+  if (hash) url.hash = hash;
+  window.open(url.href, '_blank', 'noopener');
 }
 
 function setLoading(show, text) {
@@ -157,6 +224,7 @@ async function loadFromBuffer(buffer, name) {
   const bvhMs = Math.round(performance.now() - tBvh);
 
   modelName = name;
+  resetStencil();
 
   // Sensible defaults from the model's own size.
   const size = geometry.boundingBox.getSize(new THREE.Vector3());
@@ -167,7 +235,8 @@ async function loadFromBuffer(buffer, name) {
   state.mirrorPlaneX = Math.round(center.x * 100) / 100;
   el('mirrorPlaneX').value = String(state.mirrorPlaneX);
 
-  applyDisplayState();
+  el('seamAngleVal').textContent = `${state.seamAngle}°`;
+applyDisplayState();
   renderPalette();
   updateStats();
   updateHud();
@@ -196,25 +265,54 @@ function paintHit(hit) {
 }
 
 /**
- * Feature under the cursor for the eyedropper: the painted neighbourhood around the hit
- * point votes, weighted by distance. Testing only the hit triangle's three vertices is
- * unreliable on dense meshes with coincident faces, where the nearest triangle can be
- * unpainted even though the surface under the cursor is painted.
+ * Feature under the cursor for the eyedropper. The vote itself lives in the mask
+ * (`featureUnderPoint`), which is also what the hover preview uses, so what the ring shows
+ * before a click is exactly what the click picks.
  */
 function featureUnderHit(hit) {
-  if (!hit) return 0;
-  const radius = Math.max(state.brushRadius, mask.estimateEdgeLength() * 2);
-  const p = [hit.localPoint.x, hit.localPoint.y, hit.localPoint.z];
-  const weights = new Map();
-  mask.forEachVertexNear(p, radius, (i, d2) => {
-    const id = mask.ids[i];
-    if (!id) return;
-    weights.set(id, (weights.get(id) || 0) + 1 / (d2 + 1e-6));
-  });
-  let best = 0;
-  let bestW = 0;
-  for (const [id, w] of weights) if (w > bestW) { bestW = w; best = id; }
-  return best;
+  if (!hit) return { id: 0, painted: 0 };
+  const radius = maskedPickRadius();
+  return mask.featureUnderPoint([hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], radius);
+}
+
+/** How far the eyedropper looks: the brush, or a couple of mesh steps, whichever is larger. */
+function maskedPickRadius() {
+  return Math.max(state.brushRadius, mask.estimateEdgeLength() * 2);
+}
+
+/**
+ * The eyedropper. Picking changes nothing about the model, so the feedback has to be
+ * deliberate: the hover preview has already put the candidate feature's colour on the ring,
+ * this reports the feature and how much of it is under the cursor, and — unless you hold
+ * Shift — the tool hands back to whatever you were painting with, so the pick is something
+ * you can use immediately.
+ */
+function pickAt(hit, { stay = false } = {}) {
+  const { id, painted } = featureUnderHit(hit);
+  if (!id) {
+    setStatus(
+      painted
+        ? 'Nothing painted under the cursor — that feature is painted elsewhere on the model.'
+        : 'Nothing painted under the cursor — paint an area first (Brush, Region fill or Part), then pick its feature.',
+    );
+    return 0;
+  }
+  state.currentFeatureId = id;
+  const name = featureById(id)?.name || String(id);
+  const total = mask.stats().counts.get(id) || 0;
+  renderPalette();
+  if (stay) {
+    updateHud();
+    setStatus(`Picked “${name}” — ${fmt(total)} vertices painted with it. Shift-click to keep picking.`);
+  } else {
+    const back = state.lastPaintTool === 'picker' ? 'brush' : state.lastPaintTool;
+    setTool(back);
+    setStatus(
+      `Picked “${name}” (${fmt(total)} vertices). Now painting with it as the ${TOOL_NAMES[back]} — ` +
+        'Shift-click with Pick to sample several areas without switching back.',
+    );
+  }
+  return id;
 }
 
 function paintSegment(from, to) {
@@ -239,23 +337,32 @@ function paintSegment(from, to) {
 
 let lastWorldPoint = null;
 
+/**
+ * Only the Part tool does anything with modifier clicks (Shift adds a panel, Alt/Ctrl removes
+ * one). For every other tool a modifier click means "not painting" and is ignored — but it
+ * must be ignored *here*, after this test, or Alt-click never reaches the Part tool.
+ */
+function modifierClickIgnored(e) {
+  return (e.altKey || e.ctrlKey || e.metaKey) && state.tool !== 'part';
+}
+
 function onPointerDown(e) {
   if (!mask) return;
-  if (e.button !== 0 || state.navigate || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.button !== 0 || state.navigate || modifierClickIgnored(e)) return;
   const hit = viewer.pick(e.clientX, e.clientY);
-  if (!hit) return;
+  if (!hit) {
+    if (state.tool === 'picker') setStatus('Nothing under the cursor — click on the model surface.');
+    return;
+  }
   e.preventDefault();
 
   if (state.tool === 'picker') {
-    const id = featureUnderHit(hit);
-    if (id) {
-      state.currentFeatureId = id;
-      renderPalette();
-      updateHud();
-      setStatus(`Picked “${featureById(id)?.name || id}”.`);
-    } else {
-      setStatus('Nothing painted under the cursor.');
-    }
+    pickAt(hit, { stay: e.shiftKey });
+    return;
+  }
+
+  if (state.tool === 'part') {
+    partClick(e);
     return;
   }
 
@@ -265,14 +372,14 @@ function onPointerDown(e) {
     mask.beginStroke();
     const res = mask.fillFrom([hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], {
       id: paintId(),
-      angleLimitDeg: state.fillAngle,
+      angleLimitDeg: state.seamAngle,
       maxVertices: state.fillLimit,
       seedNormal: state.mirrorX ? null : hit.localNormal,
     });
     if (state.mirrorX) {
       mask.fillFrom([state.mirrorPlaneX * 2 - hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], {
         id: paintId(),
-        angleLimitDeg: state.fillAngle,
+        angleLimitDeg: state.seamAngle,
         maxVertices: state.fillLimit,
         seedNormal: null,
       });
@@ -303,8 +410,20 @@ function onPointerMove(e) {
     return;
   }
   const hit = viewer.pick(e.clientX, e.clientY);
+  // With the eyedropper the ring shows the candidate *before* the click, so the tool reads
+  // as alive even when the click would change nothing (picking the feature you already have).
+  hoverPick = hit && state.tool === 'picker' ? featureUnderHit(hit) : null;
   updateCursor(hit);
-  el('statusCursor').textContent = hit ? cursorText(hit.worldPoint) : '';
+  el('statusCursor').textContent = hit ? cursorText(hit.worldPoint) + pickHint() : '';
+}
+
+let hoverPick = null;
+
+function pickHint() {
+  if (state.tool !== 'picker') return '';
+  if (!hoverPick || !hoverPick.id) return '  ·  Pick: nothing painted';
+  const f = featureById(hoverPick.id);
+  return `  ·  Pick: ${f?.name || hoverPick.id} (click to paint with it)`;
 }
 
 function cursorText(p) {
@@ -329,8 +448,12 @@ function updateCursor(hit) {
   }
   let color = '#ffffff';
   if (state.tool === 'erase') color = '#ff8a8a';
-  else if (state.tool === 'picker') color = '#ffe066';
+  else if (state.tool === 'picker') {
+    // The feature under the cursor, so the ring previews exactly what a click would pick.
+    color = hoverPick && hoverPick.id ? featureById(hoverPick.id)?.color || '#ffe066' : '#6d747d';
+  }
   else if (state.tool === 'fill') color = '#8affc1';
+  else if (state.tool === 'part') color = '#ffd24d';
   else if (featureById(state.currentFeatureId)) color = featureById(state.currentFeatureId).color;
   viewer.setCursor({
     point: hit.worldPoint,
@@ -445,6 +568,13 @@ function updateStats() {
   for (const node of document.querySelectorAll('.fcount')) {
     node.textContent = fmt(s.counts.get(Number(node.dataset.id)) || 0);
   }
+  const current = s.counts.get(state.currentFeatureId) || 0;
+  const clearBtn = el('clearFeatureBtn');
+  clearBtn.disabled = current === 0;
+  clearBtn.title = current
+    ? `Clear the ${fmt(current)} vertices painted as “${featureById(state.currentFeatureId)?.name || ''}” (Ctrl+Z undoes it)`
+    : 'The selected feature has no paint to clear';
+  if (stencil.result) updateStencilStats(s.painted);
   updateUndoButtons();
 }
 
@@ -459,17 +589,23 @@ function updateHud() {
   const erasing = state.tool === 'erase';
   chip.querySelector('.swatch').style.background = erasing ? '#ff8a8a' : painted?.color || '#666';
   chip.querySelector('span').textContent = erasing ? 'Erasing' : painted?.name || '—';
-  el('hudTool').textContent = { brush: 'Brush', fill: 'Region fill', erase: 'Erase', picker: 'Pick' }[state.tool];
+  el('hudTool').textContent = TOOL_NAMES[state.tool];
   el('hudRadius').textContent = `r ${state.brushRadius.toFixed(1)}`;
   el('brushRadiusVal').textContent = state.brushRadius.toFixed(1);
 }
 
 function setTool(tool) {
+  // Remembered so the eyedropper can hand back to it after a pick.
+  if (tool !== 'picker') state.lastPaintTool = tool;
   state.tool = tool;
   for (const b of document.querySelectorAll('.tool')) {
     b.classList.toggle('active', b.dataset.tool === tool);
   }
   el('fillOptions').classList.toggle('on', tool === 'fill');
+  el('seamOptions').classList.toggle('on', tool === 'fill' || tool === 'part');
+  hoverPick = null;
+  // The panel list belongs to the click that produced it, not to the next tool.
+  if (tool !== 'part') hidePartCandidates();
   updateHud();
 }
 
@@ -490,6 +626,476 @@ function setNavigate(on) {
   viewer.setPointerMode(on ? 'navigate' : 'paint');
   el('navigateBtn').textContent = `Navigate: ${on ? 'on' : 'off'}`;
   el('navigateBtn').classList.toggle('active', on);
+}
+
+// -------------------------------------------------------- paint stencil
+
+/** Where the mask numbers come from: the model's own size, overridable in the panel. */
+function stencilDefaultsForModel() {
+  const box = viewer.boundingBox;
+  const diagonal = box ? box.getSize(new THREE.Vector3()).length() : 100;
+  return stencilDefaultsForDiagonal(diagonal);
+}
+
+function resetParts() {
+  parts.data = null;
+  parts.key = '';
+  clearSeams();
+}
+
+function resetStencil() {
+  hidePartCandidates();
+  resetParts();
+  clearStencilPreview();
+  stencil.result = null;
+  stencil.topology = null;
+  stencil.topologyFor = '';
+  el('stencilExportBtn').disabled = true;
+  const defaults = stencilDefaultsForModel();
+  el('stencilReach').value = String(Math.max(1, Math.round(defaults.coverRadius)));
+  el('stencilWall').value = String(defaults.wall);
+  el('stencilStandoff').value = String(defaults.standoff);
+  el('stencilOverhang').value = String(defaults.overhang);
+  updateStencilStats();
+}
+
+/** Every painted vertex, whichever feature it belongs to. The window is all of them. */
+function paintedMask() {
+  const painted = new Uint8Array(mask.vertexCount);
+  let count = 0;
+  for (let i = 0; i < painted.length; i += 1) {
+    if (mask.ids[i] !== 0) {
+      painted[i] = 1;
+      count += 1;
+    }
+  }
+  return { painted, count };
+}
+
+function stencilParamsFromInputs() {
+  const defaults = stencilDefaultsForModel();
+  const p = { ...defaults };
+  const read = (id, fallback, min) => {
+    const raw = el(id).value;
+    if (raw === '') return fallback;
+    const v = Number(raw);
+    return Number.isFinite(v) ? Math.max(min, v) : fallback;
+  };
+  p.coverRadius = read('stencilReach', defaults.coverRadius, 1);
+  p.wall = read('stencilWall', defaults.wall, 0.2);
+  p.standoff = read('stencilStandoff', defaults.standoff, 0);
+  p.overhang = read('stencilOverhang', defaults.overhang, 0);
+  // The window edge has to stay thinner than the sheet it thickens into.
+  p.edgeLip = Math.min(p.wall * 0.5, defaults.edgeLip);
+  p.edgeFade = Math.max(p.edgeFade, p.wall * 2);
+  // Widening (to force a single piece) has room to work above whatever reach was asked for.
+  p.maxCoverRadius = Math.max(defaults.maxCoverRadius || defaults.coverRadius * 3, p.coverRadius * 2);
+  p.growIfSplit = el('growIfSplit').checked;
+  return p;
+}
+
+/** The welded surface, built once per loaded model and shared by everything that needs it. */
+async function ensureTopology() {
+  if (stencil.topology && stencil.topologyFor === modelName) return stencil.topology;
+  setLoading(true, 'Welding the model into a shared-vertex surface…');
+  await nextPaint();
+  const t0 = performance.now();
+  stencil.topology = buildTopology(mask.position.array, mask.vertexCount);
+  stencil.topologyFor = modelName;
+  stencil.weldMs = Math.round(performance.now() - t0);
+  setLoading(false);
+  return stencil.topology;
+}
+
+const seamAngleInput = () => Math.max(3, Math.min(60, Number(el('seamAngle').value) || DEFAULT_SEAM_ANGLE));
+
+/** Lights up the preset the slider is currently sitting on, if it is one of them. */
+function syncSeamPresets() {
+  for (const btn of document.querySelectorAll('[data-seam]')) {
+    btn.classList.toggle('on', Number(btn.dataset.seam) === state.seamAngle);
+  }
+}
+
+/**
+ * Moves the seam angle — what a preset button and any scripted change go through — and re-cuts
+ * the model if one is loaded. The slider's own `input` handler only tracks the drag; the cut
+ * happens on `change`, so dragging does not segment the model thirty times.
+ */
+async function setSeamAngle(angle, { announce = false } = {}) {
+  state.seamAngle = Math.max(3, Math.min(60, Math.round(angle) || DEFAULT_SEAM_ANGLE));
+  el('seamAngle').value = String(state.seamAngle);
+  el('seamAngleVal').textContent = `${state.seamAngle}°`;
+  syncSeamPresets();
+  if (!mask) return;
+  await ensureParts();
+  updateSeams();
+  if (!announce || !parts.data) return;
+  const preset = presetFor(state.seamAngle);
+  const biggest = parts.data.partSizes[0] || 0;
+  setStatus(
+    `${preset ? preset.label : 'Seam angle'}: seams at ${state.seamAngle}° cut the model into ` +
+      `${fmt(parts.data.partCount)} panels, the biggest ${fmt(biggest)} faces ` +
+      `(${((biggest / stencil.topology.faceCount) * 100).toFixed(0)}%) — click one with the Part tool.`,
+  );
+}
+
+/** Cuts the model into seam-bounded parts, reusing the cache when nothing relevant changed. */
+async function ensureParts({ force = false } = {}) {
+  if (!mask) return null;
+  const angle = seamAngleInput();
+  const key = `${modelName}|${angle}`;
+  if (!force && parts.data && parts.key === key) return parts.data;
+  if (parts.building) return parts.data;
+  parts.building = true;
+  try {
+    const topology = await ensureTopology();
+    setLoading(true, `Cutting the model into parts (seams at ${angle}°)…`);
+    await nextPaint();
+    const t0 = performance.now();
+    parts.data = buildParts(topology, { seamAngleDeg: angle });
+    parts.key = key;
+    parts.ms = Math.round(performance.now() - t0);
+    reportParts();
+  } finally {
+    parts.building = false;
+    setLoading(false);
+  }
+  return parts.data;
+}
+
+function reportParts() {
+  const node = el('partInfo');
+  if (!parts.data) {
+    node.textContent = 'Move the slider to cut the model into parts.';
+    return;
+  }
+  const d = parts.data;
+  const usable = d.partSizes.filter((n) => n >= 1000).length;
+  node.textContent =
+    `${fmt(d.partCount)} parts at ${d.seamAngleDeg}° (${fmt(usable)} of them with 1,000+ faces, ` +
+    `${fmt(d.mergedSpecks)} slivers merged) · ${fmt(d.seamEdges)} seam edges · ${parts.ms} ms`;
+}
+
+/** Yellow lines along the seams, so it is obvious where a click will stop. */
+function updateSeams() {
+  const on = el('showSeams').checked && parts.data;
+  const topology = stencil.topology;
+  if (!on || !topology || !parts.data.seamVerts.length) {
+    clearSeams();
+    return;
+  }
+  const key = parts.key;
+  if (parts.seams && parts.seamsKey === key) {
+    parts.seams.visible = true;
+    return;
+  }
+  clearSeams();
+  const pairs = parts.data.seamVerts;
+  const positions = new Float32Array(pairs.length * 3);
+  for (let i = 0; i < pairs.length; i += 1) {
+    const v = pairs[i] * 3;
+    positions[i * 3] = topology.positions[v];
+    positions[i * 3 + 1] = topology.positions[v + 1];
+    positions[i * 3 + 2] = topology.positions[v + 2];
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const material = new THREE.LineBasicMaterial({ color: 0xffd24d, transparent: true, opacity: 0.85 });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.name = 'seams';
+  lines.renderOrder = -2;
+  viewer.modelGroup.add(lines);
+  parts.seams = lines;
+  parts.seamsKey = key;
+}
+
+function clearSeams() {
+  if (!parts.seams) return;
+  viewer.modelGroup.remove(parts.seams);
+  parts.seams.geometry.dispose();
+  parts.seams.material.dispose();
+  parts.seams = null;
+  parts.seamsKey = '';
+}
+
+/**
+ * Paints one seam-bounded part. A plain click replaces the current feature's paint with the
+ * part (the lasso "select this"), Shift adds another part, Alt removes one.
+ *
+ * `near` is where the click landed, in model space; it is only used to rank the other panels
+ * that meet this one, which the panel offers as alternatives (see `renderPartCandidates`).
+ */
+function paintPartAt(faceIndex, { add = false, remove = false, near = null } = {}) {
+  const d = parts.data;
+  const topology = stencil.topology;
+  if (!d || !topology || faceIndex == null || faceIndex < 0 || faceIndex >= d.facePart.length) return 0;
+  return applyPartSelection(d.facePart[faceIndex], { add, remove, near });
+}
+
+function applyPartSelection(partId, { add = false, remove = false, near = null } = {}) {
+  const d = parts.data;
+  const topology = stencil.topology;
+  if (!d || !topology || !(partId >= 0)) return 0;
+  const indices = partSoupVertices(d, partId, partScratch);
+  const featureId = remove ? 0 : state.currentFeatureId;
+  mask.beginStroke();
+  if (!add && !remove) mask.paintIndices(mask.verticesOf(state.currentFeatureId, paintScratch), 0);
+  const changed = mask.paintIndices(indices, featureId);
+  const recorded = mask.endStroke();
+  mask.flush();
+  updateStats();
+
+  const faces = d.partSizes[partId];
+  const share = faces / topology.faceCount;
+  const name = featureById(state.currentFeatureId)?.name || 'feature';
+  const verb = remove ? 'Removed' : add ? 'Added' : 'Selected';
+  const { found, radius } = renderPartCandidates(partId, near);
+  // The detail the click was most likely aimed at: a panel near the click that is a small
+  // fraction of the one that got selected. Without naming it the status bar can only say "that
+  // is a big panel", which leaves the reader to work out which of the listed panels was meant.
+  const target =
+    !add && !remove
+      ? found.filter((n) => n.share <= 0.1 && n.share < share / 3).sort((a, b) => a.distance - b.distance)[0] || null
+      : null;
+  const finer = finerPreset(d.seamAngleDeg);
+  const cutHint = finer ? ` or take the ${finer.label} cut (${finer.angle}°)` : '';
+  setStatus(
+    `${verb} part ${partId + 1} of ${d.partCount} — ${fmt(faces)} faces (${(share * 100).toFixed(1)}% of the mesh), ` +
+      `${fmt(changed)} vertices painted${remove ? '' : ` as “${name}”`} (seams at ${d.seamAngleDeg}°).` +
+      (target
+        ? ` That is ${(share * 100).toFixed(0)}% of the model — the detail you aimed at is probably Part ${target.part + 1} ` +
+          `(${fmt(target.faces)} faces, ${(target.share * 100).toFixed(2)}% of the mesh, ${target.distance.toFixed(1)} away): ` +
+          `click it in the list above${cutHint}.`
+        : share > 0.15
+          ? ` That is a big panel: pick a smaller one from the list above${cutHint}.`
+          : '') +
+      (found.length && !target
+        ? ` ${found.length} other panel${found.length === 1 ? '' : 's'} meet it within ${radius.toFixed(1)} units of the click.`
+        : '') +
+      (add ? ' Shift-click another part to add it.' : ''),
+  );
+  if (share > 0.6) {
+    el('partInfo').textContent =
+      `Part ${partId + 1} is ${(share * 100).toFixed(0)}% of the model — ` +
+      (finer
+        ? `click one of the smaller panels in the list, or press ${finer.label} (${finer.angle}°) to cut the model finer.`
+        : 'click one of the smaller panels in the list.');
+  } else {
+    reportParts();
+  }
+  return recorded ? changed : 0;
+}
+
+/**
+ * The other panels that meet the one just selected, closest to the click.
+ *
+ * A click can only ever select the panel it lands on. On the bundled model the opening panel
+ * is 48% of the mesh while the detail you may be aiming at is a strip of 332 faces that is a
+ * few pixels wide on screen, so a click a little off selects half the model and the strip
+ * stays bare — which reads as "the button ran backward". It did not: it selected the face it
+ * hit. These are the panels it shares a seam with, so the one you meant is one click away
+ * without pixel-hunting, including panels hidden behind the one under the cursor.
+ */
+function hidePartCandidates() {
+  const box = el('partCandidates');
+  if (box) box.hidden = true;
+}
+
+function renderPartCandidates(partId, near) {
+  const d = parts.data;
+  const topology = stencil.topology;
+  const box = el('partCandidates');
+  const list = el('candidateList');
+  list.textContent = '';
+  if (!d || !topology || partId < 0 || !near) {
+    box.hidden = true;
+    return { found: [], radius: 0 };
+  }
+  // How far to look: a few mesh steps, never less than the brush the user is used to.
+  const radius = Math.max(state.brushRadius, topology.meanEdgeLength * 4);
+  const found = partsNearPoint(d, topology, [near.x, near.y, near.z], radius, { excludePart: partId, limit: 6 });
+  if (!found.length) {
+    box.hidden = true;
+    return { found: [], radius };
+  }
+  const currentShare = d.partSizes[partId] / topology.faceCount;
+  el('candidateHint').textContent =
+    `Panel ${partId + 1} covers ${(currentShare * 100).toFixed(1)}% of the mesh — a near-miss on a thin ` +
+    `panel lands here. Panels within ${radius.toFixed(1)} units of the click; click one to select it instead:`;
+  for (const n of found) {
+    const btn = document.createElement('button');
+    btn.className = 'candidate';
+    const left = document.createElement('b');
+    left.textContent = `Part ${n.part + 1}`;
+    const right = document.createElement('small');
+    right.textContent =
+      `${fmt(n.faces)} faces (${(n.share * 100).toFixed(2)}% of the mesh) · ${n.distance.toFixed(1)} away`;
+    btn.append(left, right);
+    btn.title = `Select this panel (${fmt(n.faces)} faces) with the current feature`;
+    btn.addEventListener('click', () => applyPartSelection(n.part, { near }));
+    list.appendChild(btn);
+  }
+  const clear = document.createElement('button');
+  clear.className = 'candidate';
+  clear.innerHTML = '<small>Hide this list</small>';
+  clear.title = 'Hide the panel list';
+  clear.addEventListener('click', () => {
+    box.hidden = true;
+  });
+  list.appendChild(clear);
+  box.hidden = false;
+  return { found, radius };
+}
+
+let partScratch = [];
+let paintScratch = [];
+
+async function partClick(e) {
+  if (!mask) return;
+  const d = await ensureParts();
+  if (!d) return;
+  const hit = viewer.pick(e.clientX, e.clientY);
+  if (!hit || hit.faceIndex == null) return;
+  updateSeams();
+  paintPartAt(hit.faceIndex, {
+    add: e.shiftKey,
+    remove: e.altKey || e.ctrlKey || e.metaKey,
+    near: hit.localPoint,
+  });
+}
+
+async function buildStencilPart() {
+  if (!requireModel()) return null;
+  const { painted, count } = paintedMask();
+  if (!count) {
+    setStatus('Nothing painted yet — paint the area the mask should expose, then build.');
+    return null;
+  }
+
+  const t0 = performance.now();
+  await ensureTopology();
+  const weldMs = performance.now() - t0;
+
+  const params = stencilParamsFromInputs();
+  setLoading(true, `Building the mask around ${fmt(count)} painted vertices…`);
+  await nextPaint();
+  const tBuild = performance.now();
+  const res = buildStencil({ topology: stencil.topology, painted, params });
+  stencil.paintedCount = count;
+  stencil.buildMs = Math.round(performance.now() - tBuild);
+  stencil.weldMs = Math.round(weldMs);
+  setLoading(false);
+  return res;
+}
+
+function clearStencilPreview() {
+  if (!stencil.mesh) return;
+  viewer.modelGroup.remove(stencil.mesh);
+  stencil.mesh.geometry.dispose();
+  stencil.mesh.material.dispose();
+  stencil.mesh = null;
+}
+
+function showStencilPreview(res) {
+  clearStencilPreview();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(res.positions, 3));
+  geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(res.indices), 1));
+  geometry.computeVertexNormals();
+  const material = new THREE.MeshStandardMaterial({
+    color: 0xffb703,
+    roughness: 0.62,
+    metalness: 0,
+    transparent: true,
+    opacity: 0.6,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    polygonOffsetUnits: -4,
+  });
+  stencil.mesh = new THREE.Mesh(geometry, material);
+  stencil.mesh.name = 'paint-stencil';
+  // Draw the shell BEFORE the paint overlay, not after. Both are transparent and neither
+  // writes depth, so the blend order decides what you see: painted vertices have alpha 1 in
+  // the overlay, so they land on top of the shell in their exact colours, while the shell
+  // still reads clearly on everything unpainted. With the shell drawn last (and double
+  // sided) the paint came through at ~16% and hiding or clearing paint looked like it did
+  // nothing.
+  stencil.mesh.renderOrder = -1;
+  stencil.mesh.visible = el('stencilPreview').checked;
+  viewer.modelGroup.add(stencil.mesh);
+}
+
+function updateStencilStats(paintedNow = null) {
+  const node = el('stencilStats');
+  if (!stencil.result) {
+    node.textContent = 'No stencil built yet.';
+    return;
+  }
+  const res = stencil.result;
+  const s = res.stats;
+  const v = validateSolid(res);
+  const lines = [
+    `${fmt(s.solidTriangles)} triangles · ${s.components === 1 ? 'one piece' : `${s.components} pieces`} · ` +
+      `${s.windowLoops} window${s.windowLoops === 1 ? '' : 's'} · reach ${s.coverRadius.toFixed(0)} mm`,
+    `wall ${s.thicknessMin.toFixed(2)}–${s.thicknessMax.toFixed(2)} mm · standoff ${s.standoff.toFixed(2)} mm · ` +
+      `size ${s.size.map((n) => n.toFixed(0)).join(' × ')} mm`,
+    s.clearance
+      ? `clearance inside the mask: median ${s.clearance.median.toFixed(3)} mm, min ${s.clearance.min.toFixed(3)} mm` +
+        ` (${s.clearance.tight} of ${fmt(s.clearance.measured)} vertices under ${(s.clearance.requested * 0.5).toFixed(2)} mm)`
+      : 'clearance not measured',
+    `${v.watertight ? 'watertight ✓' : 'NOT watertight'} · every edge shared by two triangles` +
+      (s.windowOpen ? '' : ' · window closed'),
+    `built in ${fmt(stencil.buildMs)} ms (mesh weld ${fmt(stencil.weldMs || 0)} ms, cached)`,
+  ];
+  for (const w of res.warnings) lines.push(`⚠ ${w}`);
+  const now = paintedNow === null ? (mask ? mask.stats().painted : null) : paintedNow;
+  if (now !== null && now !== stencil.paintedCount) {
+    lines.push('⚠ the mask has been repainted since this was built — build again to match it.');
+  }
+  node.textContent = lines.join('\n');
+}
+
+async function buildStencilClicked() {
+  try {
+    const res = await buildStencilPart();
+    if (!res) return;
+    if (!res.ok) {
+      stencil.result = null;
+      clearStencilPreview();
+      el('stencilExportBtn').disabled = true;
+      el('stencilStats').textContent = res.warnings.join('\n');
+      setStatus(`No stencil: ${res.warnings[0]}`);
+      return;
+    }
+    stencil.result = res;
+    showStencilPreview(res);
+    el('stencilExportBtn').disabled = false;
+    updateStencilStats();
+    const s = res.stats;
+    setStatus(
+      `Stencil built in ${fmt(stencil.buildMs)} ms: ${fmt(s.solidTriangles)} triangles, ` +
+        `${s.components === 1 ? 'one piece' : `${s.components} pieces`}, ` +
+        `${s.windowLoops} window${s.windowLoops === 1 ? '' : 's'}${res.warnings.length ? ' — see the panel for notes' : ''}.`,
+    );
+  } catch (err) {
+    setLoading(false);
+    setStatus(`Stencil build failed: ${err.message}`);
+  }
+}
+
+function exportStencilSTL() {
+  if (!stencil.result) {
+    setStatus('Build the stencil first.');
+    return;
+  }
+  const { buffer, triangles, bytes } = io.buildBinarySTL(stencil.result.positions, stencil.result.indices);
+  io.downloadBlob(
+    `${io.safeBaseName(modelName)}-paint-stencil.stl`,
+    new Blob([buffer], { type: 'model/stl' }),
+  );
+  setStatus(`Exported paint stencil: ${fmt(triangles)} triangles (${(bytes / 1048576).toFixed(1)} MB).`);
 }
 
 // -------------------------------------------------------------- exports
@@ -556,6 +1162,32 @@ async function importMaskFile(file) {
   }
 }
 
+/**
+ * Invert the mask: everything painted is released and everything not painted takes the current
+ * feature. This is the escape hatch for "I meant the other thing" — a click can only select the
+ * panel it lands on, and the complement is usually what the other thing is.
+ */
+function invertPaint() {
+  if (!requireModel()) return;
+  const id = state.currentFeatureId;
+  if (!id || !featureById(id)) {
+    setStatus('Select a feature first — the inverted paint needs a colour to use.');
+    return;
+  }
+  const { cleared, painted } = mask.invert(id);
+  mask.flush();
+  updateStats();
+  if (!cleared && !painted) {
+    setStatus('Nothing to invert — the mask covers everything already; Ctrl+Z undoes an invert.');
+    return;
+  }
+  const name = featureById(id)?.name || '';
+  setStatus(
+    `Inverted the mask: ${fmt(painted)} vertices now painted as “${name}”, ${fmt(cleared)} released. ` +
+      'Ctrl+Z brings the previous mask back.',
+  );
+}
+
 function screenshot() {
   const url = viewer.screenshot();
   fetch(url)
@@ -612,9 +1244,29 @@ el('mirrorX').addEventListener('change', (e) => {
 el('mirrorPlaneX').addEventListener('input', (e) => {
   state.mirrorPlaneX = Number(e.target.value) || 0;
 });
-el('fillAngle').addEventListener('input', (e) => {
-  state.fillAngle = Number(e.target.value);
-  el('fillAngleVal').textContent = `${state.fillAngle}°`;
+el('seamAngle').addEventListener('input', (e) => {
+  state.seamAngle = Number(e.target.value);
+  el('seamAngleVal').textContent = `${state.seamAngle}°`;
+  syncSeamPresets();
+});
+el('seamAngle').addEventListener('change', async () => {
+  if (!mask) return;
+  await ensureParts({ force: true });
+  updateSeams();
+});
+// Preset buttons: the named cuts, in one click each.
+for (const btn of document.querySelectorAll('[data-seam]')) {
+  btn.addEventListener('click', () => setSeamAngle(Number(btn.dataset.seam), { announce: true }));
+}
+el('showSeams').addEventListener('change', async () => {
+  if (!mask) return;
+  if (el('showSeams').checked) {
+    await ensureParts();
+    updateSeams();
+    if (!parts.seams) setStatus('No seams at this angle — lower it to split the model into parts.');
+  } else {
+    clearSeams();
+  }
 });
 el('fillLimit').addEventListener('input', (e) => {
   state.fillLimit = Math.max(1000, Number(e.target.value) || 200000);
@@ -662,26 +1314,58 @@ el('clearFeatureBtn').addEventListener('click', () => {
   if (!requireModel()) return;
   const id = state.currentFeatureId;
   const n = mask.stats().counts.get(id) || 0;
+  if (!n) {
+    setStatus(`Nothing painted for “${featureById(id)?.name || id}” — nothing to clear.`);
+    return;
+  }
   mask.clearFeature(id);
   mask.flush();
   updateStats();
   setStatus(`Cleared ${fmt(n)} vertices of “${featureById(id)?.name || id}”.`);
 });
+// Two clicks rather than window.confirm: a confirm dialog is silently blocked in some
+// embedded browser views, which made the button look broken instead of asking.
+let clearAllArmedAt = 0;
 el('clearAllBtn').addEventListener('click', () => {
   if (!requireModel()) return;
-  if (!window.confirm('Clear the whole mask? This can be undone with Ctrl+Z.')) return;
+  if (!mask.stats().painted) {
+    setStatus('Nothing painted yet.');
+    return;
+  }
+  const now = performance.now();
+  if (now - clearAllArmedAt > 4000) {
+    clearAllArmedAt = now;
+    el('clearAllBtn').textContent = 'Click again to clear';
+    setStatus('Click “Clear all” again within 4 seconds to wipe the whole mask (Ctrl+Z undoes it).');
+    return;
+  }
+  clearAllArmedAt = 0;
+  el('clearAllBtn').textContent = 'Clear all';
+  const n = mask.stats().painted;
   mask.clearAll();
   mask.flush();
   updateStats();
-  setStatus('Mask cleared.');
+  setStatus(`Mask cleared (${fmt(n)} vertices). Ctrl+Z brings it back.`);
 });
 el('hideAllBtn').addEventListener('click', () => {
   if (!requireModel()) return;
+  if (!mask.stats().painted) {
+    setStatus('Nothing painted yet.');
+    return;
+  }
   const anyVisible = state.features.some((f) => !mask.isHidden(f.id));
   for (const f of state.features) mask.setHidden(f.id, anyVisible);
   mask.flush();
   renderPalette();
   setStatus(anyVisible ? 'All paint hidden.' : 'All paint shown.');
+});
+
+el('invertBtn').addEventListener('click', invertPaint);
+
+el('stencilBuildBtn').addEventListener('click', buildStencilClicked);
+el('stencilExportBtn').addEventListener('click', exportStencilSTL);
+el('stencilPreview').addEventListener('change', (e) => {
+  if (stencil.mesh) stencil.mesh.visible = e.target.checked;
 });
 
 el('exportMaskBtn').addEventListener('click', exportMaskJSON);
@@ -721,10 +1405,21 @@ window.addEventListener('keydown', (e) => {
   if (meta) return;
 
   switch (e.key.toLowerCase()) {
+    case '?':
+    case 'f1':
+      // The guide each panel links to; also reachable from the top bar.
+      e.preventDefault();
+      openGuide();
+      break;
     case 'b': setTool('brush'); break;
     case 'f': setTool('fill'); break;
     case 'e': setTool('erase'); break;
-    case 'i': setTool('picker'); break;
+    case 'i':
+      // Shift+I is the invert; I on its own is the eyedropper.
+      if (e.shiftKey) invertPaint();
+      else setTool('picker');
+      break;
+    case 'p': setTool('part'); break;
     case 'm':
       el('mirrorX').checked = !el('mirrorX').checked;
       state.mirrorX = el('mirrorX').checked;
@@ -764,7 +1459,9 @@ window.addEventListener('keyup', (e) => {
 // Boot: try the example model, degrade gracefully if it is not reachable.
 setTool('brush');
 setNavigate(false);
+syncSeamPresets();
 renderPalette();
 updateUndoButtons();
 updateHud();
+resetStencil();
 loadFromURL(DEFAULT_MODEL_URL);
