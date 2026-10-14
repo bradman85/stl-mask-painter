@@ -51,9 +51,9 @@ this document is about proving it works.
 | [Top bar](help.html#topbar) | L1–L7 |
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P17 |
-| [Mask](help.html#mask) | M1–M7 |
+| [Mask](help.html#mask) | M1–M8 |
 | [Paint stencil](help.html#stencil) | S1–S12 |
-| [Model & view](help.html#view) | V1–V4 |
+| [Model & view](help.html#view) | V1–V5 |
 | [Export / import](help.html#export) | X1–X10 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
 | [How it works](help.html#howitworks) | N1–N3 |
@@ -614,6 +614,33 @@ JSON and the stencil build start from, so it must track every edit.
 in the exported JSON).
 **Result** ☐ pass ☐ fail — notes:
 
+#### M8 · Trim islands out of the mask
+
+**Steps**
+1. Load the example model and paint a generous blob on the chest with the brush (or one panel with
+   **Part**).
+2. Add two stray dabs: drop the brush radius and click twice well away from the blob — once on a
+   limb, once near the head.
+3. Press **Count islands** and read the status bar.
+4. Press **Trim islands**, then `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`, then **Trim islands** again.
+
+**Expected** The count reports how many painted islands there are (blob + 2 dabs = 3), the size of
+each, and how many a trim would release at the threshold in the panel — 2% of the model's
+diagonal by default, about 2.6 units on the bundled figure, where the dabs are ~1.9 units across
+and the blob ~27. The trim releases exactly the dabs: the blob keeps its own colour and counts, the
+status bar names how many islands went, how many vertices were released, what share of the mask
+that was and how many islands are left, and the paint stats drop by exactly that count. One undo
+step — `Ctrl`+`Z` puts every released vertex back and `Ctrl`+`Shift`+`Z` trims again — and the
+second trim reports that there is nothing to trim. Set the threshold above everything (say 50%)
+and trim: the largest island is kept and the status bar says it was spared, so a threshold set too
+high can shrink a mask to its main region but never wipe it out. With a built stencil in hand the
+message also says the shell is now stale — build again to match the trimmed mask.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/cleanup.test.mjs` — islands on a made-up mesh with a known answer and on the
+bundled figure, the released set being exactly the dabs, one undo step with undo and redo, the
+idempotent second trim, and the largest-island rule.
+**Result** ☐ pass ☐ fail — notes:
+
 ---
 
 # E. Paint stencil (STL)
@@ -856,6 +883,27 @@ what was exported — and any warning that needs attention. The right side shows
 model-space position and the frame rate; both update as you move.
 **Guide** [Model & view](help.html#view)
 **Automated** `test/ui-wiring.test.mjs` (the status element exists and the actions write to it).
+**Result** ☐ pass ☐ fail — notes:
+
+#### V5 · Centre the model on the grid
+
+**Steps**
+1. Load the example model and read the status bar — it says whether the model had to be moved.
+2. Untick **Centre model on the grid**, then tick it again.
+3. Export the mask JSON (X1) and import it again with centring on, then repeat with centring off.
+4. If you have an STL authored far from the origin, load it and watch where it lands.
+
+**Expected** With the checkbox on (the default) a loaded model is moved so its footprint centre
+sits on the grid's centre lines and its lowest point on the grid's plane; the status bar reports how
+far it moved, or that it was already centred. Unticking puts the model back exactly where the file
+puts it. Either way the grid is sized from the model's own bounding box and painting behaves the
+same. It is a view transform, like the up axis: no coordinate the mask or an export is written in
+changes, so masks imported before or after still line up with the original STL. The bundled figure
+is authored about 10 units off in x and 42 in y; the offset reported is −10.5, 42.1, −26.4.
+**Guide** [Model & view](help.html#view)
+**Automated** `test/cleanup.test.mjs` (the offset arithmetic on real boxes, and that measuring it
+leaves the model's coordinates untouched); `test/ui-wiring.test.mjs` pins that centring writes only
+`group.position`.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1157,8 +1205,9 @@ which is the order the panels are cut in).
    install), then `npm test`.
 2. Confirm the exit status is 0 and read the per-suite summaries.
 
-**Expected** Six suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
-`painting.test.mjs`, `parts.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (196 checks).
+**Expected** Seven suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
+`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (30 checks), `ui-wiring.test.mjs` and
+`help.test.mjs` (203 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1203,7 +1252,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 71 |
+| Items run | ___ of 73 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

@@ -115,6 +115,15 @@
         <button class="btn small" id="clearFeatureBtn">Clear feature</button>
         <button class="btn small danger" id="clearAllBtn">Clear all</button>
       </div>
+      <label class="row">
+        <span class="dim">Trim islands under (% of size)</span>
+        <input type="number" id="trimPercent" step="0.5" min="0" max="50" value="2"
+               title="Islands whose bounding box is smaller than this share of the model's diagonal count as specks">
+      </label>
+      <div class="row">
+        <button class="btn small" id="trimBtn" title="Release the painted islands smaller than the threshold above — the specks that become extra windows and loose pieces in the exported stencil. One undo step; the largest island is always kept">Trim islands</button>
+        <button class="btn small" id="islandInfoBtn" title="Report the painted islands and their sizes without changing the mask">Count islands</button>
+      </div>
       <p class="stats" id="paintStats">No model loaded.</p>
     </section>
 
@@ -127,6 +136,10 @@
           <option value="z">Z up (CAD / printer)</option>
           <option value="x">X up</option>
         </select>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="centreOnGrid" checked>
+        <span>Centre model on the grid</span>
       </label>
       <div class="view-row">
         <button class="btn small" data-view="front">Front</button>

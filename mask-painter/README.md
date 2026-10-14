@@ -29,7 +29,7 @@ seconds:
 
 ```bash
 npm ci        # three.js, needed by the mask layer the tests drive
-npm test      # engine, app path, painting edits, parts, UI wiring, guide-vs-app
+npm test      # engine, app path, painting edits, parts, cleanup, UI wiring, guide-vs-app
 ```
 
 Alternatively use any static server rooted at the repository folder, or drop an `.stl`
@@ -171,6 +171,23 @@ Two things worth knowing when the window is a whole panel:
   covered, and 2525 of 2525 face centres 1–10 units of surface away had shell material on
   them.
 
+## Where the model sits
+
+An STL keeps whatever coordinates its exporter used, and the grid in the viewport is drawn
+around the origin — so a mesh authored inside a CAD assembly arrives hundreds of units away
+and hangs in space beside the grid, with nothing on screen to bring it back. **Centre model on
+the grid** (Model & view, on by default) moves a loaded model so its footprint centre sits on
+the grid's centre lines and its lowest point sits on the grid's plane; the status bar reports
+the distance it moved. Unticking it puts the model back exactly where the file puts it.
+
+It is a transform on the model *group*, like the up axis, and not a rewrite of the geometry:
+the mask is per vertex, the panels are per face and every export is written in the file's own
+coordinates, so none of those may move under it. `viewer.centreTranslation(box)` is the whole
+of the arithmetic — the offset that centres a box — and `js/viewer.js` applies it to
+`modelGroup.position` and to nothing else, which is what `test/ui-wiring.test.mjs` pins and
+`test/cleanup.test.mjs` checks on real boxes. The bundled figure reads as an offset of
+−10.5, 42.1, −26.4.
+
 ## How the mask works
 
 An STL has no UVs, so the mask is **per vertex** rather than a texture:
@@ -237,6 +254,28 @@ browser and under Node):
 Numbers are in model units, which are millimetres for a model exported at final size. The
 window edge itself is deliberately thinner (`edgeLip`, ~0.4) than the rest of the sheet, so
 a brush stroke hits a thin lip rather than a wall.
+
+### Trimming the specks that would become extra windows
+
+Every separate painted region becomes its own **window** in the shell, and regions that do not
+touch become separate pieces — so the stray dabs a brush always leaves turn into a part with
+extra windows, several loose shells and nothing to hold them together on the print bed. **Trim
+islands** (Mask panel) takes them out before you build, and **Count islands** reports the same
+numbers without changing anything, which is how you pick a threshold rather than guess.
+
+An island is a connected painted region of the **welded** surface, found by walking the vertex
+adjacency the welder already built (`js/cleanup.js`, dependency-free like the stencil engine).
+Welded because an STL repeats every vertex once per triangle: two triangles that share an edge
+share no vertex index at all, and only the weld makes them neighbours. The threshold is a share
+of the model's diagonal (2% by default) compared with each island's **bounding box**, because a
+speck is a size on the print, not a vertex count — the same speck is 40 vertices on a coarse
+mesh and 4,000 on a dense one.
+
+The trim is one undo step, like every other mask edit, and it always keeps the largest island,
+so a threshold set too high can shrink a mask to its main region but never wipe it out (the
+status bar says when it was spared). On the bundled figure a chest blob with two stray dabs is
+three islands at 27.2, 2.0 and 1.9 units across; the default threshold releases the two dabs —
+429 vertices, exactly the vertices inside them and nothing else — in one 29 ms pass.
 
 ### Clearance: does it fit onto the model?
 
@@ -317,10 +356,11 @@ mask-painter/
   js/io.js          mask JSON + binary PLY + binary STL writers, import parsing
   js/stencil.js     printable-stencil engine: weld, geodesic field, clipping, solid, checks
   js/parts.js       seam-based part segmentation for one-click panel selection
+  js/cleanup.js     painted-island analysis: what a trim would release, and why
   help.html         the guide: one section per panel + the file formats (linked from the app)
   VALIDATION.md     the same features as a sign-off checklist: steps, expected result, suite
   serve.mjs         tiny static server for the app + neighbouring models
-  test/             Node tests: engine, app path, painting edits, parts, UI wiring, guide
+  test/             Node tests: engine, app path, painting edits, parts, cleanup, wiring, guide
   vendor/           three.module.js, OrbitControls, STLLoader, three-mesh-bvh
 ```
 
@@ -342,6 +382,14 @@ DOM events, pixel reads from the live WebGL canvas):
 - erase removes exactly one stamp's worth (2,817); undo restores it; redo re-applies it.
 - masked alpha: tinting unpainted vertices red with alpha 0 changes no pixels; the same
   vertices with alpha 1 turn red — vertex alpha is genuinely honoured.
+Measured by `test/cleanup.test.mjs` on the same model:
+
+- islands: a blob plus two dabs come back as three islands (27.2, 2.0 and 1.9 units across); a
+  2% threshold releases exactly the 429 vertices inside the dabs, keeps the blob bit for bit, and
+  the whole plan takes 29 ms on the welded mesh.
+- centring: the grid offset on the bundled figure is −10.5, 42.1, −26.4 units; applying it centres
+  the box and puts its lowest point on the grid, it leaves the model's own coordinates untouched,
+  and it is a no-op for a model that is already centred.
 - rendering: 6.5% of viewport pixels classify as the Head colour, 2.7% Body, plus Eyes and
   Mouth dabs, matching the painted vertex counts.
 - JSON round trip: export → import reproduces every vertex and feature id exactly

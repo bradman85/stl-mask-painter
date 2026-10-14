@@ -36,6 +36,23 @@ export function sourceTriangleIndex(hit, soupSource = true) {
 }
 
 /**
+ * The translation that puts a model's footprint centre over the grid's centre lines and its
+ * lowest point on the grid's plane.
+ *
+ * An STL carries whatever coordinates its exporter used: a mesh authored in a CAD assembly
+ * arrives hundreds of units from the origin the grid is drawn around, so it hangs in space
+ * beside the grid with nothing on screen to move it back. The grid is sized from the model and
+ * centred on the origin, so this is the offset that makes the two agree.
+ *
+ * Kept as a pure function of the box so it can be checked without a renderer (the offset is in
+ * world space, i.e. measured after any up-axis rotation).
+ */
+export function centreTranslation(box) {
+  const centre = box.getCenter(new THREE.Vector3());
+  return new THREE.Vector3(-centre.x, -box.min.y, -centre.z);
+}
+
+/**
  * Owns the WebGL scene: model + mask overlay, lights, orbit controls, brush cursor,
  * and the accelerated raycast used by every painting tool.
  */
@@ -82,6 +99,8 @@ export class Viewer {
     this.upAxis = 'z';
     this.fitDistance = 200;
     this.soupSource = true;
+    this.centred = true;
+    this.centreOffset = new THREE.Vector3();
 
     this.raycaster = new THREE.Raycaster();
     this.raycaster.firstHitOnly = true;
@@ -184,9 +203,10 @@ export class Viewer {
    * Installs a model. `geometry` is the STL geometry; the returned overlay geometry is a
    * clone that carries the mask's vertex colours.
    */
-  setGeometry(geometry, { upAxis = 'z', overlayGeometry = null } = {}) {
+  setGeometry(geometry, { upAxis = 'z', overlayGeometry = null, centre = null } = {}) {
     this.disposeModel();
     if (!geometry.attributes.normal) geometry.computeVertexNormals();
+    if (typeof centre === 'boolean') this.centred = centre;
 
     // Read the mesh's order before the BVH below installs an index buffer of its own; the
     // hit's triangle has to be translated back to it (see sourceTriangleIndex).
@@ -221,6 +241,9 @@ export class Viewer {
     this.modelGroup.add(this.baseMesh);
     this.modelGroup.add(this.overlayMesh);
     this.applyUpAxis(upAxis);
+    // Where the model sits is decided here, after the rotation, because the offset is measured
+    // in world space — the space the grid lives in.
+    this._applyCentre();
 
     // Picking acceleration: built once, reused by every tool call.
     const t0 = performance.now();
@@ -242,9 +265,44 @@ export class Viewer {
 
   setUpAxis(axis) {
     this.applyUpAxis(axis);
+    // Turning the model changes which way its footprint and its lowest point face, so the
+    // centring offset is re-measured rather than reused.
+    this._applyCentre();
     this.boundingBox = new THREE.Box3().setFromObject(this.modelGroup);
     this._buildGrid();
     this.frameModel();
+  }
+
+  /**
+   * Centres the model on the grid, or puts it back at the coordinates it was loaded with.
+   *
+   * This moves the model group — the same place the up-axis rotation lives — and never the
+   * geometry: the mask is per vertex, the panels are per face and every export is written in the
+   * file's own coordinates, so the mesh itself must not move under them. The grid follows the
+   * model's own bounding box, so with centring on the model stands on the grid's centre, and with
+   * it off you get the file's coordinates back, unchanged.
+   *
+   * Returns `{ centred, offset }`, the translation applied in world units, for the status bar.
+   */
+  setCentreOnGrid(on = true) {
+    this.centred = !!on;
+    this._applyCentre();
+    this.boundingBox = new THREE.Box3().setFromObject(this.modelGroup);
+    this._buildGrid();
+    this.frameModel();
+    return { centred: this.centred, offset: this.centreOffset.toArray() };
+  }
+
+  _applyCentre() {
+    const group = this.modelGroup;
+    group.position.set(0, 0, 0);
+    group.updateMatrixWorld(true);
+    this.centreOffset.set(0, 0, 0);
+    if (!this.baseMesh || !this.centred) return;
+    const offset = centreTranslation(new THREE.Box3().setFromObject(group));
+    group.position.copy(offset);
+    group.updateMatrixWorld(true);
+    this.centreOffset.copy(offset);
   }
 
   _buildGrid() {

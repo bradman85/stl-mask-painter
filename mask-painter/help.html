@@ -553,8 +553,8 @@ Panels within 3.2 units of the click; click one to select it instead:
 <section class="doc" id="mask">
   <h2>Mask <a class="anchor" href="#mask">#</a></h2>
   <p class="lead">
-    How the painting is stored and how it is drawn — plus the three buttons that take paint
-    back.
+    How the painting is stored and how it is drawn — plus the buttons that take paint back and
+    the trim that takes out what a printer cannot use.
   </p>
   <p>
     An STL has no UVs, so there is nowhere to put a texture: the mask is <b>per vertex</b>.
@@ -642,6 +642,36 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
     <tr>
+      <td class="k">Trim islands under (% of size)</td>
+      <td>
+        The size that counts as a speck, as a share of the model's diagonal — 2% by default,
+        about 2.6 units on the bundled figure. A mask is painted with a brush, so it always ends
+        up with company: a dab beside the eye instead of on it, a stamp from a stroke that ran
+        off the edge of the part, a speck left where a fill stopped at a seam. An <b>island</b>
+        is one connected painted area of the <em>welded</em> surface — welded because an STL
+        repeats every vertex once per triangle, so two triangles that share an edge share no
+        vertex index at all and only the weld makes them neighbours.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Trim islands / Count islands</td>
+      <td>
+        <b>Trim islands</b> releases every painted island smaller than the threshold above. One
+        undo step, like every other mask edit. <b>Count islands</b> reports the same numbers
+        without touching the mask: how many islands there are, the largest and the smallest, and
+        how many a trim would release — which is how you choose a threshold instead of guessing.
+        Sizes are the islands' bounding boxes rather than their vertex counts, because a speck is
+        a size on the print: the same speck is 40 vertices on a coarse mesh and 4,000 on a dense
+        one.
+        <br><b>The largest island is always kept</b>, so a threshold set too high can shrink a
+        mask to its main region but never wipe it out (the status bar says when it was spared).
+        Why it matters for the stencil: every separate painted island becomes <em>its own
+        window</em> in the shell, and islands that do not touch become separate pieces — ten
+        specks are ten windows, ten loose shells and nothing to hold them together on the print
+        bed. Trim first, then build.
+      </td>
+    </tr>
+    <tr>
       <td class="k">Paint stats<small>bottom line</small></td>
       <td>
         "N of M vertices painted (x% of the mask)", where M is the model's vertex count (three
@@ -678,6 +708,10 @@ Panels within 3.2 units of the click; click one to select it instead:
         say how long each part took). If you repaint afterwards, the panel says the part is
         stale and you build again; repainting does not silently invalidate the geometry you
         already have.
+        <br><b>Windows are painted islands.</b> Every painted area that does not touch the next
+        one becomes a window of its own, and an island too far away to bridge becomes a piece of
+        its own — so a few stray brush dabs are a part with a few extra windows and often several
+        loose shells. <b>Trim islands</b> in the Mask panel takes those out before you build.
       </td>
     </tr>
     <tr>
@@ -852,6 +886,21 @@ Panels within 3.2 units of the click; click one to select it instead:
         default), <b>Z up</b> for CAD and printer meshes, <b>X up</b> otherwise. It only
         changes how the model is displayed and how the camera frames it — no coordinates in the
         mask or any export are touched.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Centre model on the grid</td>
+      <td>
+        On by default. An STL keeps whatever coordinates its exporter used, so a mesh authored
+        inside a CAD assembly arrives hundreds of units from the origin the grid is drawn around:
+        it hangs in space beside the grid, with nothing on screen to move it back. With this on,
+        a loaded model is moved so its footprint centre sits on the grid's centre lines and its
+        lowest point sits on the grid's plane (<b>Load example model</b> reports the distance it
+        moved); with it off, the model stays exactly where the file puts it.
+        <br>It is a <b>view transform</b>, like the up axis: it moves the model in the scene and
+        never the coordinates that the mask, the panels and every export are written in, so a
+        mask painted before or after still lines up with the original STL and the toggle can be
+        turned off at any time. The grid follows the model's own bounding box.
       </td>
     </tr>
     <tr>
@@ -1150,7 +1199,7 @@ end_header
   <h2>How it is verified <a class="anchor" href="#tests">#</a></h2>
   <p>
     The geometry engine is dependency-free, so the same code that runs in the page runs under
-    Node against the bundled model. <code>npm test</code> runs six suites — five on the
+    Node against the bundled model. <code>npm test</code> runs seven suites — six on the
     geometry and editing, and one that checks this page against the app. What they cannot check
     is the interactive half — pointing, dragging, hovering — so that lives in the
     <a href="VALIDATION.md">validation document</a>, one item per feature with the steps to test
@@ -1212,6 +1261,19 @@ end_header
         panel is 48% of the mesh, that the smallest is 0.05%, that the thin panel a click missed
         is on the list within a brush radius, and that picking it paints exactly that panel and
         leaves the giant one alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/cleanup.test.mjs</td>
+      <td>
+        The tidy-up around a mask. Trimming on a made-up mesh with a known answer — three islands
+        of different sizes, so which ones go is arithmetic rather than judgement — including that
+        a threshold above every island still keeps the largest one, and that two sheets meeting at
+        a single vertex stay one island. Then the bundled figure: a blob plus two stray dabs,
+        where the trim has to release exactly the dabs, keep the blob's vertices bit for bit, land
+        as one undo step, survive undo and redo, and find nothing to trim the second time. It also
+        checks the arithmetic that centres an off-origin model on the grid, and that measuring it
+        leaves the model's own coordinates — the ones the mask and the exports use — untouched.
       </td>
     </tr>
     <tr>

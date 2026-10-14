@@ -6,6 +6,7 @@ import { createFeatureList, nextFeatureId } from './features.js';
 import * as io from './io.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal } from './stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
+import { paintedIslands, planIslandTrim } from './cleanup.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -100,6 +101,10 @@ window.maskPainter = {
   paintPartAt,
   setSeamAngle,
   invertPaint,
+  trimIslands,
+  countIslands,
+  setCentreOnGrid: (on) => viewer.setCentreOnGrid(on),
+  islandIo: { paintedIslands, planIslandTrim },
   pickFeatureUnderPoint: (p, radius) => mask.featureUnderPoint(p, radius ?? maskedPickRadius()),
   openGuide,
   partsIo: { buildParts, partSoupVertices },
@@ -219,7 +224,11 @@ async function loadFromBuffer(buffer, name) {
   await nextPaint();
 
   const tBvh = performance.now();
-  viewer.setGeometry(geometry, { upAxis: state.upAxis, overlayGeometry });
+  viewer.setGeometry(geometry, {
+    upAxis: state.upAxis,
+    overlayGeometry,
+    centre: el('centreOnGrid').checked,
+  });
   viewer.setGridVisible(el('showGrid').checked);
   const bvhMs = Math.round(performance.now() - tBvh);
 
@@ -246,8 +255,38 @@ applyDisplayState();
     `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} units`;
   setLoading(false);
   setStatus(
-    `Loaded ${name} in ${Math.round(performance.now() - t0)} ms (pick acceleration ${bvhMs} ms). ` +
-    `Left-drag to paint “${featureById(state.currentFeatureId)?.name || 'feature'}”.`,
+    `Loaded ${name} in ${Math.round(performance.now() - t0)} ms (pick acceleration ${bvhMs} ms); ` +
+    `${centreNote()}. Left-drag to paint “${featureById(state.currentFeatureId)?.name || 'feature'}”.`,
+  );
+}
+
+/**
+ * Where the model ended up, in words, for the status bar.
+ *
+ * An STL keeps its exporter's coordinates, and the grid is drawn around the origin, so a file
+ * authored in a CAD assembly arrives off the grid with no way to move it — the complaint this
+ * answers. The wording says what actually happened: moved, already there, or centring off.
+ */
+function centreNote() {
+  if (!viewer.centred) return 'centring is off, so it sits where the file puts it';
+  const [dx, dy, dz] = viewer.centreOffset.toArray();
+  return Math.hypot(dx, dy, dz) < 1e-3
+    ? 'it is already centred on the grid'
+    : `it was moved ${dx.toFixed(1)}, ${dy.toFixed(1)}, ${dz.toFixed(1)} units to stand on the grid centre`;
+}
+
+/**
+ * Centring is a property of the view, like the up axis: it moves the model group, never the
+ * geometry, so the mask, the panels and every export keep the file's own coordinates and the
+ * toggle can be turned off again at any time.
+ */
+function onCentreToggle(e) {
+  if (!viewer.baseMesh) return;
+  const { centred } = viewer.setCentreOnGrid(e.target.checked);
+  setStatus(
+    centred
+      ? `Centred on the grid — ${centreNote()}. The mask and every export keep the file's own coordinates.`
+      : "Centring off — the model is back at the coordinates the file gives it, and the grid follows its own centre.",
   );
 }
 
@@ -1221,6 +1260,95 @@ function invertPaint() {
   );
 }
 
+/**
+ * The painted islands of the mask, for the count and the trim below.
+ *
+ * Both go through this so the numbers they report cannot disagree, and the threshold is read
+ * from the panel every time rather than remembered, so raising it and pressing the button twice
+ * trims harder the second time.
+ */
+async function analyseIslands() {
+  if (!requireModel()) return null;
+  const painted = mask.stats().painted;
+  if (!painted) {
+    setStatus('Nothing painted yet — paint the area the mask should expose first.');
+    return null;
+  }
+  const percent = Math.max(0, Math.min(50, Number(el('trimPercent').value) || 0));
+  const topology = await ensureTopology();
+  const t0 = performance.now();
+  const plan = planIslandTrim({
+    topology,
+    ids: mask.ids,
+    minDiagonal: (percent / 100) * topology.diagonal,
+  });
+  return { plan, percent, topology, painted, ms: Math.round(performance.now() - t0) };
+}
+
+/**
+ * The dry run: how many painted islands there are and which of them a trim would release.
+ * Sizes are the islands' bounding boxes, because that is what the threshold is measured in —
+ * a spec is a size on the print, not a vertex count (the same spec is 40 vertices on a coarse
+ * mesh and 4,000 on a dense one).
+ */
+async function countIslands() {
+  const got = await analyseIslands();
+  if (!got) return;
+  const { plan, percent, topology, ms } = got;
+  const largest = plan.details[0];
+  const smallest = plan.details[plan.details.length - 1];
+  setStatus(
+    `${fmt(plan.islands)} painted island${plan.islands === 1 ? '' : 's'} (${fmt(got.painted)} vertices): ` +
+      `largest ${fmt(largest.vertices)} vertices, ${largest.diagonal.toFixed(2)} units across; smallest ` +
+      `${fmt(smallest.vertices)} vertices, ${smallest.diagonal.toFixed(2)} across. At under ` +
+      `${plan.threshold.toFixed(2)} units (${percent}% of the model's ${topology.diagonal.toFixed(1)}-unit diagonal) ` +
+      `a trim would release ${fmt(plan.doomedIslands)} of them` +
+      `${plan.doomedIslands ? ` (${fmt(plan.doomedVertices)} vertices)` : ''} — each island is its own window ` +
+      `in the built stencil. (${ms} ms)`,
+  );
+}
+
+/**
+ * Releases the painted islands a printer cannot use: the specks and stray dabs that would
+ * otherwise each become another window, and often another loose piece, in the exported stencil.
+ *
+ * One undo step, like every other mask edit, and the largest island is always kept — a threshold
+ * set too high can shrink a mask to its main region but never wipe it out. The rest of the mask
+ * is untouched, and a built stencil is left in the viewport with the panel saying it is stale.
+ */
+async function trimIslands() {
+  const got = await analyseIslands();
+  if (!got) return;
+  const { plan, percent, topology } = got;
+  const plural = (n) => (n === 1 ? '' : 's');
+  if (!plan.doomedIslands) {
+    const smallest = plan.details[plan.details.length - 1];
+    setStatus(
+      `Nothing to trim: ${fmt(plan.islands)} island${plural(plan.islands)}, the smallest ` +
+        `${smallest.diagonal.toFixed(2)} units across, and none is under ${plan.threshold.toFixed(2)} ` +
+        `(${percent}% of the model's ${topology.diagonal.toFixed(1)}-unit diagonal). Raise the threshold ` +
+        'to trim harder, or press “Count islands” to see their sizes.'
+    );
+    return;
+  }
+  mask.beginStroke();
+  const changed = mask.paintIndices(plan.released, 0);
+  const recorded = mask.endStroke();
+  mask.flush();
+  updateStats();
+  updateStencilStats();
+  const kept = plan.islands - plan.doomedIslands;
+  setStatus(
+    `Trimmed ${fmt(plan.doomedIslands)} island${plural(plan.doomedIslands)} under ` +
+      `${plan.threshold.toFixed(2)} units (${percent}% of size): ${fmt(changed)} vertices released, ` +
+      `${((changed / got.painted) * 100).toFixed(1)}% of the mask. ${fmt(kept)} island${plural(kept)} left, ` +
+      `the largest ${fmt(plan.largestVertices)} vertices. Ctrl+Z brings them back.` +
+      (plan.sparedLargest ? ' The largest island is under the threshold too, so it was kept.' : '') +
+      (stencil.result ? ' The built stencil is still in the viewport — build again to match the trimmed mask.' : ''),
+  );
+  if (!recorded) setStatus('Nothing was released — the islands were already unpainted.');
+}
+
 function screenshot() {
   const url = viewer.screenshot();
   fetch(url)
@@ -1399,6 +1527,9 @@ el('hideAllBtn').addEventListener('click', () => {
 });
 
 el('invertBtn').addEventListener('click', invertPaint);
+el('trimBtn').addEventListener('click', trimIslands);
+el('islandInfoBtn').addEventListener('click', countIslands);
+el('centreOnGrid').addEventListener('change', onCentreToggle);
 
 el('stencilBuildBtn').addEventListener('click', buildStencilClicked);
 el('stencilClearBtn').addEventListener('click', discardStencil);

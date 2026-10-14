@@ -183,5 +183,72 @@ check('the parts module exposes it', /export function partsNearPoint/.test(
   fs.readFileSync(path.resolve(here, '../js/parts.js'), 'utf8'),
 ));
 
+// ------------------------------------------------- islands: the trim, and centring the model
+//
+// Two things a painted mask needs that are not painting: taking back the specks a brush always
+// leaves (each one becomes another window, and often another loose piece, in the exported
+// stencil), and bringing a model back to the grid when the file's exporter left it hundreds of
+// units away. Both are checked here for the parts that can go wrong silently: the threshold
+// being read, the edit being one undo step, the largest island being kept, and centring moving
+// the model group rather than the coordinates the mask and every export are written in.
+const cleanupSrc = fs.readFileSync(path.resolve(here, '../js/cleanup.js'), 'utf8');
+check('the mask panel carries the trim controls', ['trimBtn', 'islandInfoBtn', 'trimPercent'].every((id) => declared.has(id)));
+check(
+  'the island engine exports what the app imports',
+  /export function paintedIslands\(/.test(cleanupSrc) && /export function planIslandTrim\(/.test(cleanupSrc),
+);
+check('main.js imports the island engine', /import \{ paintedIslands, planIslandTrim \} from '\.\/cleanup\.js'/.test(js));
+check('the engine has no dependency on three or the DOM', !/from 'three|document\.|window\./.test(cleanupSrc));
+check('the trim button runs the trim', /el\('trimBtn'\)\.addEventListener\('click', trimIslands\)/.test(js));
+const countFn = js.slice(js.indexOf('async function countIslands()'), js.indexOf('async function trimIslands()'));
+check('the dry run is its own button', /el\('islandInfoBtn'\)\.addEventListener\('click', countIslands\)/.test(js) && countFn.length > 0);
+check(
+  'the dry run only reports — no stroke, no edit',
+  countFn.length > 0 && !/paintIndices|beginStroke/.test(countFn),
+  countFn.slice(0, 60).replace(/\n/g, ' '),
+);
+check('the threshold is read from the panel every time, not remembered', /Number\(el\('trimPercent'\)\.value\)/.test(js));
+check(
+  'both go through one analysis, so the numbers cannot disagree',
+  (js.match(/await analyseIslands\(\)/g) || []).length === 2 && /minDiagonal: \(percent \/ 100\) \* topology\.diagonal/.test(js),
+);
+check(
+  'the trim lands as one undo step that releases exactly the planned vertices',
+  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(plan\.released, 0\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+);
+check(
+  'the largest island is always kept, so a mask of specks is never wiped out',
+  /const largest = islands\.length \? islands\[0\] : null;/.test(cleanupSrc) &&
+    /island !== largest && island\.diagonal < threshold/.test(cleanupSrc),
+);
+check('the islands are numbered largest first, so island 0 is the mask proper', /islands\.sort\(\(a, b\) => b\.vertices - a\.vertices/.test(cleanupSrc));
+check(
+  'a spec is measured by its size, not its vertex count',
+  /diagonal: Math\.hypot\(sx, sy, sz\)/.test(cleanupSrc) && /island\.diagonal < threshold/.test(cleanupSrc),
+);
+check('a trim points at the build it leaves behind', /build again to match the trimmed mask/.test(js));
+check(
+  'the released vertices are file vertices, joined to the islands through the weld',
+  /doomedWelds\[weldOf\[i\]\]/.test(cleanupSrc),
+);
+check('main.js exposes the island engine for scripted checks', /islandIo: \{ paintedIslands, planIslandTrim \}/.test(js));
+
+check('the centring control exists', declared.has('centreOnGrid'));
+check('it starts checked, so a fresh model is centred by default', /id="centreOnGrid" checked/.test(html));
+check('the centring control is wired', /el\('centreOnGrid'\)\.addEventListener\('change', onCentreToggle\)/.test(js));
+check('a loaded model is placed with whatever the control says', /centre: el\('centreOnGrid'\)\.checked/.test(js));
+check('viewer exports the centring offset as a pure function of a box', /export function centreTranslation\(box\)/.test(viewerSrc));
+check(
+  'centring moves the model group, never the geometry the mask is indexed by',
+  /this\._applyCentre\(\)/.test(viewerSrc) &&
+    /_applyCentre\(\) \{[\s\S]{0,400}?group\.position\.copy\(offset\)/.test(viewerSrc) &&
+    !/_applyCentre\(\) \{[\s\S]{0,400}?position\.array/.test(viewerSrc),
+);
+check('the offset is re-measured when the up axis turns the model', /setUpAxis\(axis\) \{[\s\S]{0,200}?this\._applyCentre\(\)/.test(viewerSrc));
+check(
+  'centring can be turned off, which puts the file coordinates back',
+  /setCentreOnGrid\(on = true\)/.test(viewerSrc) && /if \(!this\.baseMesh \|\| !this\.centred\) return;/.test(viewerSrc),
+);
+
 console.log(`\n${missing.length + missingExports.length + (failures ? 1 : 0) === 0 ? 'all wiring checks passed' : `${failures} failure(s)`}`);
 process.exit(failures ? 1 : 0);
