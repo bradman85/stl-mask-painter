@@ -330,18 +330,36 @@ that model; the welded topology is cached and reused by later builds.
 
 ## Export / import
 
-- **Mask JSON** — `format: "stl-mask"`, the palette and a flat `[vertexIndex, featureId, …]`
-  list. Re-import merges features into the palette and warns if the vertex count differs.
+- **Save mask (JSON)** — the session file: `format: "stl-mask"`, the palette, a flat
+  `[vertexIndex, featureId, …]` list of the windows you marked up, and the build settings from
+  the stencil panel (`stencil: { coverRadius, wall, standoff, overhang, growIfSplit }`).
+  **Open mask (JSON)…** merges the features into the palette, warns if the vertex count differs,
+  and puts those settings back, so loading the same model later and reopening the file lets you
+  keep adding windows and build the same part. Files without the `stencil` block still load.
 - **Painted shell PLY** — binary little-endian PLY containing only triangles whose three
   vertices are painted, with `red/green/blue/alpha` properties, so it opens in MeshLab,
   Blender, CloudCompare and friends.
-- **Stencil STL** — binary STL of the printable mask, from the painted area. Written
-  straight from the built solid; a copy can be kept in the viewport as a preview
-  (double-sided, semi-transparent, toggled by **Preview**, or removed with **Discard
-  stencil**). The preview is drawn *under* the
+- **Stencil STL** — binary STL of the printable mask, rebuilt from the mask as it stands on
+  screen: if the paint has changed since the last build, the export builds again first (and says
+  so), so the file always holds every window rather than last round's. A copy of the build can be
+  kept in the viewport as a preview (double-sided, semi-transparent, toggled by **Preview**, or
+  removed with **Discard stencil**). The preview is drawn *under* the
   paint layer, so painted areas stay in their exact colours while the shell reads clearly on
   everything else — you can keep painting and clearing with the preview on.
 - **Screenshot** — PNG of the viewport.
+
+### Why the stencil export rebuilds
+
+A build is a snapshot of the paint, so `stencil.result` can be older than the mask on screen. A
+straight copy of it is a valid STL with last round's windows, which is how "I Shift-clicked three
+more panels, saved again, and the file only has the first ones" happens: the bytes are round one's,
+the timestamp is today's. The export now asks `stencilOutOfDate()` (the app's own comparison: the
+painted vertex count against `stencil.paintedCount`) and rebuilds through the same
+`rebuildStencil()` path **Build stencil** uses before writing anything, refusing to write at all if
+that build is rejected. The status line names the windows and pieces that went into the file.
+`test/app-path.test.mjs` pins both halves on the real model — the second round really is another
+window in a rebuild (2 → 3 windows at 4.9 MB → 10.6 MB), and the build in hand really does describe
+the smaller mask — and `test/ui-wiring.test.mjs` pins the export path in the source.
 
 ## Files
 

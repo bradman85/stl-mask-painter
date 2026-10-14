@@ -250,5 +250,61 @@ check(
   /setCentreOnGrid\(on = true\)/.test(viewerSrc) && /if \(!this\.baseMesh \|\| !this\.centred\) return;/.test(viewerSrc),
 );
 
+// ------------------------------------------------- the export must match the screen
+//
+// A build is a snapshot of the paint, so the result in hand can be older than the mask on screen:
+// Shift-click two more panels, press Export stencil STL again, and a straight copy of the old
+// shell lands on disk with a fresh timestamp and last round's windows — the "my second save only
+// has the first windows" report. These pin the fix: the export asks whether the paint has moved
+// on, rebuilds if it has, and writes nothing at all if that rebuild is refused.
+check(
+  'the export can tell when the build is older than the mask',
+  /function stencilOutOfDate\(\)/.test(js) && /mask \? mask\.stats\(\)\.painted : 0\) !== stencil\.paintedCount/.test(js),
+);
+check(
+  'Build stencil and the export share one build path',
+  /async function rebuildStencil\(\)/.test(js) && (js.match(/await rebuildStencil\(\)/g) || []).length === 2,
+);
+check(
+  'Export stencil STL rebuilds before writing when the paint has moved on',
+  /async function exportStencilSTL\(\)[\s\S]{0,900}?if \(!res \|\| stencilOutOfDate\(\)\)[\s\S]{0,400}?res = await rebuildStencil\(\)/.test(js),
+);
+check(
+  'and writes the fresh result, never the old one',
+  /const \{ buffer, triangles, bytes \} = io\.buildBinarySTL\(res\.positions, res\.indices\)/.test(js) &&
+    !/buildBinarySTL\(stencil\.result/.test(js),
+);
+check('a refused rebuild writes no file at all', /Nothing exported: the stencil could not be built/.test(js));
+check(
+  'the exported line names the windows and pieces that went into the file',
+  /\$\{s\.windowLoops\} window\$\{s\.windowLoops === 1 \? '' : 's'\} in/.test(js),
+);
+check('the export button still calls it', /el\('stencilExportBtn'\)\.addEventListener\('click', exportStencilSTL\)/.test(js));
+
+// ------------------------------------------------- the session file
+// Saving the windows and loading them back to add more is the mask JSON; what it has to carry to
+// be a session (rather than just a vertex list) is the palette and the build settings.
+check('the mask JSON carries the build settings', /stencil: stencilSettings\(\)/.test(js) && /function stencilSettings\(\)/.test(js));
+check('the guide documents that field', /"stencil"/.test(fs.readFileSync(path.resolve(here, '../help.html'), 'utf8')));
+check(
+  'opening a mask puts the settings back into the panel',
+  /function applyStencilSettings\(s\)/.test(js) && /applyStencilSettings\(savedStencil\)/.test(js),
+);
+check(
+  'io.js hands the settings back, and tolerates a file from before they existed',
+  /stencil: parseStencilSettings\(data\.stencil\)/.test(fs.readFileSync(path.resolve(here, '../js/io.js'), 'utf8')),
+);
+check(
+  'a loaded mask is compared against the build in hand, not left saying old numbers',
+  /mask\.loadPairs\(pairs\);[\s\S]{0,500}?updateStencilStats\(\);/.test(js),
+);
+check(
+  'the buttons read as save and open, and both say how to carry on',
+  /Save mask \(JSON\)/.test(html) &&
+    /Open mask \(JSON\)/.test(html) &&
+    /Open mask \(JSON\)” brings it back to carry on/.test(js) &&
+    /Shift-click more panels with the Part tool/.test(js),
+);
+
 console.log(`\n${missing.length + missingExports.length + (failures ? 1 : 0) === 0 ? 'all wiring checks passed' : `${failures} failure(s)`}`);
 process.exit(failures ? 1 : 0);

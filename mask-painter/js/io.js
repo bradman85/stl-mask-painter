@@ -18,9 +18,16 @@ export function safeBaseName(name) {
   return (name || 'model').replace(/\.[a-z0-9]+$/i, '').replace(/[^\w.-]+/g, '_');
 }
 
-/** Mask + palette as JSON: the authoritative, re-importable format. */
-export function buildMaskJSON({ mask, features, modelName, pairs }) {
-  return {
+/**
+ * Mask + palette as JSON: the authoritative, re-importable format.
+ *
+ * `stencil` is optional — the build settings that were in the panel when the mask was saved. They
+ * are not needed to bring the painting back, but a session that returns with the numbers it was
+ * saved with rebuilds the same shell, which is what "save the windows and load them back up to
+ * add more" has to mean when the next step is pressing Build again. Files without it still load.
+ */
+export function buildMaskJSON({ mask, features, modelName, pairs, stencil = null }) {
+  const out = {
     format: MASK_FORMAT,
     version: MASK_VERSION,
     model: modelName,
@@ -30,6 +37,21 @@ export function buildMaskJSON({ mask, features, modelName, pairs }) {
     paintedVertices: pairs.length / 2,
     // flat [vertexIndex, featureId, ...] pairs
     painted: pairs,
+  };
+  if (stencil) out.stencil = stencil;
+  return out;
+}
+
+/** Saved build settings, clamped to what the panel accepts. Null when the file has none. */
+function parseStencilSettings(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const num = (v, min) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(min, v) : null);
+  return {
+    coverRadius: num(raw.coverRadius, 1),
+    wall: num(raw.wall, 0.2),
+    standoff: num(raw.standoff, 0),
+    overhang: num(raw.overhang, 0),
+    growIfSplit: raw.growIfSplit !== false,
   };
 }
 
@@ -44,7 +66,7 @@ export function parseMaskJSON(text) {
         .filter((f) => f && Number.isInteger(f.id) && f.id > UNPAINTED_ID && f.id <= MAX_FEATURE_ID)
         .map((f) => ({ id: f.id, name: String(f.name || `Feature ${f.id}`), color: f.color || '#888888' }))
     : [];
-  return { data, features, pairs: data.painted };
+  return { data, features, pairs: data.painted, stencil: parseStencilSettings(data.stencil) };
 }
 
 /**

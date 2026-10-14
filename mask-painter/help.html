@@ -238,7 +238,7 @@
   </table>
   <div class="note">
     <strong>Loading a second model replaces the mask.</strong> The painting is per vertex, so a
-    mask only means anything for the model it was painted on. <b>Import mask JSON</b> warns if
+    mask only means anything for the model it was painted on. <b>Open mask (JSON)</b> warns if
     the vertex count differs, but it cannot map a mask onto different geometry.
   </div>
 </section>
@@ -708,6 +708,9 @@ Panels within 3.2 units of the click; click one to select it instead:
         say how long each part took). If you repaint afterwards, the panel says the part is
         stale and you build again; repainting does not silently invalidate the geometry you
         already have.
+        <br><b>Save first if you are stopping here.</b> The build itself is not stored anywhere:
+        <b>Save mask (JSON)</b> in the Export / import panel keeps the windows and the numbers
+        above, so you can come back later and keep adding panels.
         <br><b>Windows are painted islands.</b> Every painted area that does not touch the next
         one becomes a window of its own, and an island too far away to bridge becomes a piece of
         its own — so a few stray brush dabs are a part with a few extra windows and often several
@@ -789,6 +792,13 @@ Panels within 3.2 units of the click; click one to select it instead:
         <a href="#stl">format is documented below</a>) named
         <code>&lt;model&gt;-paint-stencil.stl</code>. Enabled once a build has succeeded; a
         build that was refused leaves it disabled.
+        <br><b>It saves the mask on screen, never a stale build.</b> A build is a snapshot, so
+        if you have painted or cleared anything since, the export builds again first (the status
+        bar says so) and writes that — otherwise Shift-clicking two more panels and pressing
+        export would put last round's windows in a file with today's timestamp. If that rebuild
+        is refused, nothing is written at all, and the status bar says why. The status line names
+        the windows and pieces that went into the file, so the numbers can be checked against the
+        result panel without opening it.
       </td>
     </tr>
     <tr>
@@ -935,12 +945,18 @@ Panels within 3.2 units of the click; click one to select it instead:
   <table>
     <tr><th>Button</th><th>What it does</th></tr>
     <tr>
-      <td class="k">Mask JSON</td>
+      <td class="k">Save mask (JSON)</td>
       <td>
-        Saves the painting itself — palette, feature ids and the painted vertex list — as
-        <code>&lt;model&gt;-mask.json</code>. It is the only format that can be loaded back into
-        the app. <a href="#mask-json">Full schema below.</a> Refuses politely (with a status
-        message) if nothing is painted.
+        <b>The session file.</b> Saves the windows you have marked up — the painted vertex list,
+        with the palette (feature ids, names, colours) and the <b>build settings</b> that were in
+        the stencil panel — as <code>&lt;model&gt;-mask.json</code>. It is the only format that
+        can be loaded back into the app, so this is the button to press when you want to stop and
+        carry on later, or to send a mask to someone else.
+        <br>It saves what is painted <em>now</em>, including this round's Shift-clicked panels —
+        unlike <b>Export stencil STL</b>, which is the built shell and only as current as the last
+        build (the export rebuilds itself when the paint has moved on; see the stencil panel).
+        <a href="#mask-json">Full schema below.</a> Refuses politely (with a status message) if
+        nothing is painted.
       </td>
     </tr>
     <tr>
@@ -953,9 +969,12 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
     <tr>
-      <td class="k">Import mask JSON…</td>
+      <td class="k">Open mask (JSON)…</td>
       <td>
-        Loads a previously exported mask. <a href="#import-json">Behaviour below.</a>
+        Loads a saved mask — the windows come back, the palette is merged and the build settings
+        in the file are put back into the stencil panel — so you can load the model again later
+        and <b>keep adding windows</b>: open the file, Shift-click more panels, build again.
+        <a href="#import-json">Behaviour below.</a>
       </td>
     </tr>
     <tr>
@@ -988,7 +1007,10 @@ Panels within 3.2 units of the click; click one to select it instead:
     { "id": 2, "name": "Pupils", "color": "#111820" }
   ],
   "paintedVertices": 6814,         // pairs below / 2
-  "painted": [ 12, 1, 13, 1, 14, 1, 27, 2, ... ]
+  "painted": [ 12, 1, 13, 1, 14, 1, 27, 2, ... ],
+  "stencil": {                     // the build settings the mask was saved with
+    "coverRadius": 15, "wall": 1.19, "standoff": 0.2, "overhang": 0.35, "growIfSplit": true
+  }
 }</pre>
   <table>
     <tr><th>Field</th><th>Meaning</th></tr>
@@ -996,6 +1018,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     <tr><td class="k">model</td><td>Recorded for reference. Never used to match anything, so renaming a model does not break its mask.</td></tr>
     <tr><td class="k">vertexCount</td><td>The model's vertex count when the mask was made. Import compares it against the loaded model and warns when they differ.</td></tr>
     <tr><td class="k">features</td><td>Id, name and colour for each feature. Ids are 1…32,000; id 0 is "unpainted" and is never listed.</td></tr>
+    <tr><td class="k">stencil</td><td>The build settings that were in the stencil panel when the mask was saved (reach, wall, standoff, window inlay, and whether the reach may widen until the part is one piece). Optional — an older file without it still loads; with it, <b>Open mask (JSON)</b> puts the numbers back into the panel so a reloaded session builds the same shell. Nothing in a build is stored, only how to make it: the geometry is rebuilt from the mask.</td></tr>
     <tr><td class="k">painted</td><td>A flat list of <code>[vertexIndex, featureId]</code> pairs — one entry per painted vertex, nothing per unpainted vertex. This is the part that scales with how much you painted: 82,127 painted vertices is a 0.79 MB file, the whole model painted would be 11.2 MB (measured with the app's own writer).</td></tr>
   </table>
   <p>
@@ -1007,8 +1030,9 @@ Panels within 3.2 units of the click; click one to select it instead:
   <h4>Ready to import</h4>
   <p>
     The block above is annotated, so it is not valid JSON. This one is: a complete mask for a
-    12-triangle model. Copy it, paste it into <code>example-mask.json</code>, and load it with
-    <b>Import mask JSON&#8230;</b> to see the round trip for yourself.
+    12-triangle model (without a <code>stencil</code> block — that field is optional). Copy it,
+    paste it into <code>example-mask.json</code>, and load it with
+    <b>Open mask (JSON)&#8230;</b> to see the round trip for yourself.
   </p>
 <pre class="json">{
   "format": "stl-mask",
@@ -1045,9 +1069,22 @@ Panels within 3.2 units of the click; click one to select it instead:
       warns — indices then mean different vertices, so the result will be scrambled. Nothing is
       blocked, because a mask from a slightly re-exported mesh is often close enough to be
       usable as a starting point.</li>
+    <li>If the file carries a <code>stencil</code> block, those build settings go back into the
+      stencil panel, so the next build matches the one the file was saved from. A file without
+      it just leaves the panel alone.</li>
     <li>The whole import is one undo step: <kbd>Ctrl</kbd>+<kbd>Z</kbd> returns the mask to what
       it was before (but leaves any features the import added).</li>
   </ol>
+  <div class="note">
+    <strong>Saving your place and carrying on.</strong> The mask JSON <em>is</em> the "save the
+    windows I have marked up and load them back to add more" file. Save it, close the tab (or
+    load a different model), then come back: load the model the mask was painted on, press
+    <b>Open mask (JSON)…</b>, and every window is where you left it. Shift-click more panels with
+    the <b>Part</b> tool, or paint with the brush, then build or press <b>Export stencil STL</b> —
+    the export rebuilds from the mask as it stands, so the file always holds every window, not
+    just the ones that were there at the last build. A built stencil is a snapshot and is not
+    stored in the file; the panel says the shell is stale when the mask and the build disagree.
+  </div>
   <div class="note">
     <strong>Round trip is exact.</strong> Export → import on the same model reproduces the same
     per-feature vertex counts; <code>test/app-path.test.mjs</code> exports and re-imports the mask it paints

@@ -107,6 +107,8 @@ window.maskPainter = {
   islandIo: { paintedIslands, planIslandTrim },
   pickFeatureUnderPoint: (p, radius) => mask.featureUnderPoint(p, radius ?? maskedPickRadius()),
   openGuide,
+  stencilOutOfDate,
+  rebuildStencil,
   partsIo: { buildParts, partSoupVertices },
   stencilIo: { buildTopology, buildStencil, validateSolid },
   get stencil() {
@@ -1127,24 +1129,52 @@ function updateStencilStats(paintedNow = null) {
   node.textContent = lines.join('\n');
 }
 
+/**
+ * True when the paint has moved on since the build in hand.
+ *
+ * A build is a snapshot of the mask, so `stencil.result` can be older than what is on screen:
+ * paint three more panels with Shift-click and the result in hand still describes the old mask.
+ * Its triangle count stays valid and its file still opens, which is exactly why this has to be
+ * asked out loud before anything is written to disk.
+ */
+function stencilOutOfDate() {
+  if (!stencil.result) return false;
+  return (mask ? mask.stats().painted : 0) !== stencil.paintedCount;
+}
+
+/**
+ * Builds the stencil for the mask as it stands and installs it: the shared half of **Build
+ * stencil** and of the export, so both go through the same path and the same panel state.
+ * Returns the build result (possibly one with `ok: false`), or null when there is nothing to
+ * build.
+ */
+async function rebuildStencil() {
+  const res = await buildStencilPart();
+  if (!res) return null;
+  if (!res.ok) {
+    stencil.result = null;
+    clearStencilPreview();
+    el('stencilExportBtn').disabled = true;
+    el('stencilClearBtn').disabled = true;
+    el('stencilStats').textContent = res.warnings.join('\n');
+    return res;
+  }
+  stencil.result = res;
+  showStencilPreview(res);
+  el('stencilExportBtn').disabled = false;
+  el('stencilClearBtn').disabled = false;
+  updateStencilStats();
+  return res;
+}
+
 async function buildStencilClicked() {
   try {
-    const res = await buildStencilPart();
+    const res = await rebuildStencil();
     if (!res) return;
     if (!res.ok) {
-      stencil.result = null;
-      clearStencilPreview();
-      el('stencilExportBtn').disabled = true;
-      el('stencilClearBtn').disabled = true;
-      el('stencilStats').textContent = res.warnings.join('\n');
       setStatus(`No stencil: ${res.warnings[0]}`);
       return;
     }
-    stencil.result = res;
-    showStencilPreview(res);
-    el('stencilExportBtn').disabled = false;
-    el('stencilClearBtn').disabled = false;
-    updateStencilStats();
     const s = res.stats;
     setStatus(
       `Stencil built in ${fmt(stencil.buildMs)} ms: ${fmt(s.solidTriangles)} triangles, ` +
@@ -1157,17 +1187,53 @@ async function buildStencilClicked() {
   }
 }
 
-function exportStencilSTL() {
-  if (!stencil.result) {
-    setStatus('Build the stencil first.');
-    return;
+/**
+ * Writes the printable shell to disk.
+ *
+ * The file has to be the mask on screen, not the last thing that was built: Shift-click two more
+ * panels, press Export again and a straight copy of the old result lands on disk with today's
+ * timestamp and last round's windows — reported as "my second save only has the first windows".
+ * So this rebuilds first whenever the paint has changed, and writes nothing at all if that
+ * rebuild is refused (a refusal used to leave the old part in hand to be saved). Exporting an
+ * unchanged mask still writes the build straight out, with no rebuild.
+ *
+ * The status line names the windows and pieces that went into the file, so the numbers can be
+ * checked against the panel without opening the STL.
+ */
+async function exportStencilSTL() {
+  try {
+    if (!requireModel()) return;
+    if (!mask.stats().painted) {
+      setStatus('Nothing painted yet — paint the windows, build the stencil, then export.');
+      return;
+    }
+    let res = stencil.result;
+    let rebuilt = false;
+    if (!res || stencilOutOfDate()) {
+      setStatus('The mask has changed since the last build — building again before exporting…');
+      res = await rebuildStencil();
+      if (!res) return;
+      if (!res.ok) {
+        setStatus(`Nothing exported: the stencil could not be built (${res.warnings[0]}).`);
+        return;
+      }
+      rebuilt = true;
+    }
+    const { buffer, triangles, bytes } = io.buildBinarySTL(res.positions, res.indices);
+    io.downloadBlob(`${io.safeBaseName(modelName)}-paint-stencil.stl`, new Blob([buffer], { type: 'model/stl' }));
+    const s = res.stats;
+    setStatus(
+      `Exported paint stencil: ${fmt(triangles)} triangles (${(bytes / 1048576).toFixed(1)} MB), ` +
+        `${s.windowLoops} window${s.windowLoops === 1 ? '' : 's'} in ` +
+        `${s.components === 1 ? 'one piece' : `${s.components} pieces`}` +
+        (rebuilt
+          ? ' — rebuilt from the current mask first, because the paint had changed since the last build.'
+          : '.'),
+    );
+  } catch (err) {
+    setLoading(false);
+    setStatus(`Export failed: ${err.message}`);
   }
-  const { buffer, triangles, bytes } = io.buildBinarySTL(stencil.result.positions, stencil.result.indices);
-  io.downloadBlob(
-    `${io.safeBaseName(modelName)}-paint-stencil.stl`,
-    new Blob([buffer], { type: 'model/stl' }),
-  );
-  setStatus(`Exported paint stencil: ${fmt(triangles)} triangles (${(bytes / 1048576).toFixed(1)} MB).`);
 }
 
 // -------------------------------------------------------------- exports
@@ -1180,6 +1246,42 @@ function requireModel() {
   return true;
 }
 
+/**
+ * The build settings that are in the panel, for saving with a mask.
+ *
+ * They are not needed to reload the painting, but a session that comes back with the numbers it
+ * was saved with rebuilds the same shell — which is what "save the windows and load them back up
+ * to add more" has to mean when the next step is pressing Build again.
+ */
+function stencilSettings() {
+  const p = stencilParamsFromInputs();
+  return {
+    coverRadius: p.coverRadius,
+    wall: p.wall,
+    standoff: p.standoff,
+    overhang: p.overhang,
+    growIfSplit: !!p.growIfSplit,
+  };
+}
+
+/** Puts saved build settings back into the panel. Returns true when there were any to apply. */
+function applyStencilSettings(s) {
+  if (!s) return false;
+  const put = (id, v) => {
+    if (Number.isFinite(v)) el(id).value = String(v);
+  };
+  put('stencilReach', s.coverRadius);
+  put('stencilWall', s.wall);
+  put('stencilStandoff', s.standoff);
+  put('stencilOverhang', s.overhang);
+  if (typeof s.growIfSplit === 'boolean') el('growIfSplit').checked = s.growIfSplit;
+  return true;
+}
+
+/**
+ * Saves the painting as a session file: the windows (the painted vertices), the palette and the
+ * build settings, so it can be opened again later on the same model and carried on from there.
+ */
 function exportMaskJSON() {
   if (!requireModel()) return;
   const pairs = mask.paintedPairs();
@@ -1187,10 +1289,19 @@ function exportMaskJSON() {
     setStatus('Nothing painted yet — paint a feature first.');
     return;
   }
-  const data = io.buildMaskJSON({ mask, features: state.features, modelName, pairs });
+  const data = io.buildMaskJSON({
+    mask,
+    features: state.features,
+    modelName,
+    pairs,
+    stencil: stencilSettings(),
+  });
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   io.downloadBlob(`${io.safeBaseName(modelName)}-mask.json`, blob);
-  setStatus(`Exported mask: ${fmt(pairs.length / 2)} painted vertices, ${fmt(data.features.length)} features (${(blob.size / 1048576).toFixed(1)} MB).`);
+  setStatus(
+    `Saved mask: ${fmt(pairs.length / 2)} painted vertices, ${fmt(data.features.length)} features ` +
+      `(${(blob.size / 1048576).toFixed(1)} MB). “Open mask (JSON)” brings it back to carry on.`,
+  );
 }
 
 function exportPLY() {
@@ -1208,7 +1319,7 @@ async function importMaskFile(file) {
   if (!requireModel()) return;
   try {
     const text = await file.text();
-    const { data, features, pairs } = io.parseMaskJSON(text);
+    const { data, features, pairs, stencil: savedStencil } = io.parseMaskJSON(text);
     if (data.vertexCount && data.vertexCount !== mask.vertexCount) {
       setStatus(
         `Warning: mask was painted on ${fmt(data.vertexCount)} vertices but this model has ${fmt(mask.vertexCount)}.`,
@@ -1228,7 +1339,15 @@ async function importMaskFile(file) {
     mask.flush();
     renderPalette();
     updateStats();
-    setStatus(`Imported mask: ${fmt(pairs.length / 2)} painted vertices${added ? `, ${added} new features` : ''}.`);
+    // A loaded mask is not the mask the build in the panel was made from, whatever the counts
+    // say, so the panel has to be told to compare them rather than left showing old numbers.
+    updateStencilStats();
+    const settings = applyStencilSettings(savedStencil);
+    setStatus(
+      `Loaded mask: ${fmt(pairs.length / 2)} painted vertices${added ? `, ${added} new feature${added === 1 ? '' : 's'}` : ''}` +
+        `${settings ? ', build settings restored' : ''}, on “${featureById(state.currentFeatureId)?.name || 'feature'}”. ` +
+        'Shift-click more panels with the Part tool, then build again to see the windows.',
+    );
   } catch (err) {
     setStatus(`Import failed: ${err.message}`);
   }

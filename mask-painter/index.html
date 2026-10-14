@@ -197,14 +197,18 @@
     <section>
       <h2>Export / import<a class="help" href="help.html#export" target="_blank" rel="noopener" title="Guide: Export / import">?</a></h2>
       <div class="row">
-        <button class="btn small" id="exportMaskBtn">Mask JSON</button>
+        <button class="btn small" id="exportMaskBtn" title="Save the windows you have marked up (the painted vertices), the palette and the build settings, so you can open the mask again later and keep adding to it">Save mask (JSON)</button>
         <button class="btn small" id="exportPlyBtn">Painted shell PLY</button>
       </div>
       <label class="btn small block">
-        Import mask JSON&hellip;
+        Open mask (JSON)&hellip;
         <input type="file" id="importInput" accept=".json,application/json" hidden>
       </label>
-      <p class="hint" id="exportHint">JSON re-imports into this tool; the PLY is the painted shell with per-vertex colours.</p>
+      <p class="hint" id="exportHint">
+        <b>Save mask (JSON)</b> is the session file: the windows you marked up, plus the palette
+        and the build settings. Load the same model later, <b>Open mask (JSON)&hellip;</b>, and
+        carry on adding windows — the PLY is only the painted shell, in per-vertex colours.
+      </p>
     </section>
   </aside>
 

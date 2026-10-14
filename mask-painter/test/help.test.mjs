@@ -160,6 +160,15 @@ for (const [i, raw] of jsonSamples.entries()) {
 }
 check('guide documents the version field', /"version"/.test(helpHtml));
 check('io.js exports the mask JSON builder the guide describes', /export function buildMaskJSON/.test(ioJs));
+// The session fields are part of the format the guide documents, so the schema in the guide and the
+// writer have to agree on them: a saved mask that carries settings the guide never mentions (or a
+// guide that documents a field nothing writes) is the drift this file exists to catch.
+check(
+  "the guide's schema documents the saved build settings",
+  /"stencil"/.test(helpHtml) && /out\.stencil = stencil/.test(ioJs),
+);
+check('io.js reads them back, and does not require them', /stencil: parseStencilSettings\(data\.stencil\)/.test(ioJs));
+check('the import section explains saving your place', /<h3 id="import-json">[\s\S]{0,4000}?Saving your place and carrying on/.test(helpHtml));
 check('io.js exports the mask JSON parser the guide describes', /export function parseMaskJSON/.test(ioJs));
 check('io.js exports a PLY writer', /export function buildPLY/.test(ioJs));
 check('io.js exports a binary STL writer', /export function buildBinarySTL/.test(ioJs));

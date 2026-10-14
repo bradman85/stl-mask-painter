@@ -288,5 +288,116 @@ check(
   `${sample36.vertexCount} vs ${fmt(maskLayer.vertexCount, 0)}`,
 );
 
+// ------------------------------------------------- the save has to match the screen
+//
+// The report this answers: paint a window, build the stencil, export it, Shift-click more panels,
+// export again — and the second file held only the first round's windows under a fresh timestamp,
+// because the export wrote the build it had in hand rather than the mask on screen. The engine was
+// never the problem, so this pins the two halves the fix rests on: that the shell in hand really is
+// a different, older part after more paint, and that a saved mask can be loaded back and built on.
+const paintedMaskOf = (layer) => {
+  const m = new Uint8Array(layer.vertexCount);
+  let count = 0;
+  for (let i = 0; i < m.length; i += 1) {
+    if (layer.ids[i] !== 0) {
+      m[i] = 1;
+      count += 1;
+    }
+  }
+  return { painted: m, count };
+};
+/** Frontmost surface point in a y band, so a stamp certainly lands on the model. */
+function frontMostIn(yLo, yHi) {
+  let best = null;
+  for (let i = 0; i < maskLayer.vertexCount; i += 1) {
+    const y = positions[i * 3 + 1];
+    if (y < yLo || y > yHi) continue;
+    const z = positions[i * 3 + 2];
+    if (!best || z > best[2]) best = [positions[i * 3], y, z];
+  }
+  return best;
+}
+const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffer);
+
+{
+  const round1 = res; // what the panel had in hand: the two eye windows
+  const chest = frontMostIn(centre.y - size.y * 0.12, centre.y + size.y * 0.02);
+  const added = maskLayer.paintSphere(chest, brush, 3);
+  check(
+    'a second round of painting adds another window to the mask',
+    added > 0,
+    `${fmt(added)} vertices at ${chest.map((n) => n.toFixed(1)).join(', ')}`,
+  );
+
+  const round2 = buildStencil({ topology, painted: paintedMaskOf(maskLayer).painted, params });
+  check(
+    'the new window is its own window in a rebuild, and the parts differ',
+    round2.stats.windowLoops > round1.stats.windowLoops &&
+      Buffer.compare(stlBytes(round1), stlBytes(round2)) !== 0,
+    `${round1.stats.windowLoops} -> ${round2.stats.windowLoops} windows, ` +
+      `${stlBytes(round1).length} -> ${stlBytes(round2).length} bytes`,
+  );
+  // The unit the app compares when it decides a build is stale: painted vertices of the mask
+  // (what `stencil.paintedCount` is set to) against the mask as it stands now.
+  const round1Painted = paintedBefore.length / 2;
+  check(
+    'the shell in hand was built from the smaller mask',
+    round1Painted < paintedMaskOf(maskLayer).count,
+    `built from ${fmt(round1Painted)} painted vertices; the mask now has ` +
+      `${fmt(paintedMaskOf(maskLayer).count)} — the numbers the stale test compares`,
+  );
+
+  // Saving the place and carrying on: the session file, reopened, keeps growing. This is the
+  // "save the windows I have marked up and load them back to add more" flow.
+  const savedStencil = {
+    coverRadius: params.coverRadius,
+    wall: params.wall,
+    standoff: params.standoff,
+    overhang: params.overhang,
+    growIfSplit: false,
+  };
+  const session = JSON.stringify(
+    buildMaskJSON({
+      mask: maskLayer,
+      features,
+      modelName: 'Sprunki Mercuy.stl',
+      pairs: maskLayer.paintedPairs(),
+      stencil: savedStencil,
+    }),
+  );
+  const reopened = parseMaskJSON(session);
+  check(
+    'the session file carries the build settings it was saved with',
+    reopened.stencil !== null &&
+      reopened.stencil.coverRadius === params.coverRadius &&
+      reopened.stencil.growIfSplit === false,
+    JSON.stringify(reopened.stencil),
+  );
+  check(
+    'a file saved before that field existed still loads (no settings, no complaint)',
+    parseMaskJSON(JSON.stringify(sample36)).stencil === null,
+  );
+
+  const resumed = new MaskLayer(geometry, createFeatureList());
+  resumed.setFeatures(reopened.features);
+  resumed.loadPairs(reopened.pairs);
+  let diff = 0;
+  for (let i = 0; i < maskLayer.ids.length; i += 1) if (maskLayer.ids[i] !== resumed.ids[i]) diff += 1;
+  check('a reloaded mask is the mask that was saved, window for window', diff === 0, `${fmt(diff)} vertices differ`);
+
+  const mouth = frontMostIn(centre.y + size.y * 0.06, centre.y + size.y * 0.15);
+  const grew = resumed.paintSphere(mouth, brush, 2);
+  const resumedBuild = buildStencil({ topology, painted: paintedMaskOf(resumed).painted, params });
+  check(
+    'windows added after a reload reach the build',
+    grew > 0 &&
+      resumedBuild.stats.paintedVertices > round2.stats.paintedVertices &&
+      resumedBuild.stats.windowLoops >= round2.stats.windowLoops &&
+      Buffer.compare(stlBytes(resumedBuild), stlBytes(round2)) !== 0,
+    `${fmt(round2.stats.paintedVertices)} -> ${fmt(resumedBuild.stats.paintedVertices)} painted vertices, ` +
+      `${round2.stats.windowLoops} -> ${resumedBuild.stats.windowLoops} windows`,
+  );
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all app-path checks passed'}`);
 process.exit(failures ? 1 : 0);

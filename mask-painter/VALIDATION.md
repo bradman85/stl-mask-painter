@@ -54,7 +54,7 @@ this document is about proving it works.
 | [Mask](help.html#mask) | M1–M8 |
 | [Paint stencil](help.html#stencil) | S1–S12 |
 | [Model & view](help.html#view) | V1–V5 |
-| [Export / import](help.html#export) | X1–X10 |
+| [Export / import](help.html#export) | X1–X11 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
 | [How it works](help.html#howitworks) | N1–N3 |
 | [How it is verified](help.html#tests) | N4 |
@@ -668,12 +668,14 @@ honest warning. `test/app-path.test.mjs` builds with the panel's own defaults.
 
 **Steps**
 1. Build a stencil.
-2. Paint somewhere else without rebuilding.
+2. Paint somewhere else without rebuilding — and then press **Export stencil STL**.
 
 **Expected** The panel says the mask has been repainted since this was built and points at both
 ways out — build again, or **Discard stencil** — because the app never hands you a silently
 stale part. Repainting does not invalidate the geometry you already have. Pressing **Build
-stencil** again reuses the cached weld, so the rebuild is fast.
+stencil** again reuses the cached weld, so the rebuild is fast. Exporting, on the other hand,
+never writes a stale part: it builds again first (S9), so the file matches the mask on screen even
+if you skip the manual build.
 **Guide** [Paint stencil](help.html#stencil)
 **Automated** `test/app-path.test.mjs` (a second build reuses the cached topology).
 **Result** ☐ pass ☐ fail — notes:
@@ -769,19 +771,32 @@ the panel: one pass, far less material, much faster (about 110,676 triangles in 
 around it (2525/2525 probes) with nothing on the far side (14186/14186 bare).
 **Result** ☐ pass ☐ fail — notes:
 
-#### S9 · Export stencil STL
+#### S9 · Export stencil STL, and the save that must match the screen
 
 **Steps**
 1. Before building anything, look at **Export stencil STL**.
-2. Build successfully and press it.
-3. Check the downloaded file's size.
+2. Build successfully, press it, and check the downloaded file's size.
+3. Now Shift-click two more panels (or paint another area), leave the build alone, and press
+   **Export stencil STL** again. Compare the two files: window count in the result panel, and the
+   STL sizes.
+4. Press **Build stencil** and export once more; compare with step 3.
 
 **Expected** Disabled until a build has succeeded (and left disabled after a refused build). It
 writes a binary STL named `<model>-paint-stencil.stl` whose size is exactly
 `84 + 50 × triangles` bytes.
+The second export must contain **every** window, not just the ones from the last build: the app
+notices the paint has moved on, builds again first (the status bar says so while it works), and
+reports `… N windows in M pieces — rebuilt from the current mask first…`. Its file is therefore
+bigger than the first one and matches what step 4 writes. Before this was fixed the second export
+was a byte-for-byte copy of the first, under a fresh timestamp — the reported bug. If that
+rebuild is rejected, nothing is written and the status bar says why rather than leaving an older
+part to be saved.
 **Guide** [Paint stencil](help.html#stencil)
 **Automated** `test/stencil.test.mjs` — byte size equals `84 + 50 × triangles`, and the file
-re-reads into the same watertight, same-volume solid.
+re-reads into the same watertight, same-volume solid. `test/app-path.test.mjs` rounds the real
+model twice: the second round is its own window in a rebuild (2 → 3 windows, 4.9 MB → 10.6 MB)
+while the build in hand still describes the smaller mask; `test/ui-wiring.test.mjs` pins that the
+export rebuilds before writing and writes nothing when the rebuild is refused.
 **Result** ☐ pass ☐ fail — notes:
 
 #### S10 · The exported part in a slicer
@@ -910,16 +925,17 @@ leaves the model's coordinates untouched); `test/ui-wiring.test.mjs` pins that c
 
 # G. Export / import
 
-#### X1 · Mask JSON export
+#### X1 · Save mask (JSON)
 
 **Steps**
-1. With nothing painted, press **Mask JSON**.
+1. With nothing painted, press **Save mask (JSON)**.
 2. Paint something and press it again.
 
 **Expected** With an empty mask it refuses politely in the status bar instead of writing an
 empty file. With paint it downloads `<model>-mask.json` and the status bar reports the painted
-vertex count, the feature count and the file size. It is the only format that can be loaded back
-in.
+vertex count, the feature count and the file size, and points at **Open mask (JSON)**. This is the
+session file: it holds the windows you have marked up *now*, including this round's Shift-clicked
+panels, and it is the only format that can be loaded back in.
 **Guide** [Export / import](help.html#export)
 **Automated** `test/app-path.test.mjs` — export → import of the mask this suite paints
 (6,814 vertices) is exact, vertex for vertex and id for id.
@@ -935,7 +951,9 @@ in.
 `vertexCount` equal to the model's vertex count (1,267,974), `features` with `id`/`name`/`color`,
 `paintedVertices` equal to half the length of `painted`, and `painted` as a flat
 `[vertexIndex, featureId]` pair list holding only painted vertices. Id 0 never appears in the
-list. Sizes scale with the paint: 82,127 painted vertices is a 0.79 MB file.
+list. Sizes scale with the paint: 82,127 painted vertices is a 0.79 MB file. A mask saved by the
+app also carries `stencil` with the build settings that were in the panel (`coverRadius`, `wall`,
+`standoff`, `overhang`, `growIfSplit`); the field is optional, and a file without it still loads.
 **Guide** [Export / import → Mask JSON](help.html#mask-json)
 **Automated** `test/app-path.test.mjs` asserts each field; `test/help.test.mjs` proves the
 embedded sample in the guide parses with the fields the importer reads.
@@ -945,13 +963,35 @@ embedded sample in the guide parses with the fields the importer reads.
 
 **Steps**
 1. Paint several features; note each feature's vertex count in the palette.
-2. **Mask JSON**, then **Clear all**.
-3. **Import mask JSON…** and pick the file you just saved.
+2. **Save mask (JSON)**, then **Clear all**.
+3. **Open mask (JSON)…** and pick the file you just saved.
 
-**Expected** Every feature's count returns to exactly what it was, and the status bar reports
-the imported vertex count.
+**Expected** Every feature's count returns to exactly what it was, and the status bar reports the
+loaded vertex count, any new features, that the build settings were restored, and that
+Shift-clicking more panels is the next step.
 **Guide** [Export / import → Import mask JSON](help.html#import-json)
 **Automated** `test/app-path.test.mjs` — the imported mask reproduces every vertex and id.
+**Result** ☐ pass ☐ fail — notes:
+
+#### X11 · Save your place, reload it and add more windows
+
+**Steps**
+1. Load the example model, pick a feature, mark up two panels with **Part** (Shift-click the
+   second) and press **Save mask (JSON)**.
+2. Reload the page (or load another model and come back), then **Load example model** again.
+3. Press **Open mask (JSON)…** and pick the file. Then Shift-click a third panel, press **Build
+   stencil**, and export.
+
+**Expected** The reloaded mask has both windows exactly where they were (status bar: painted
+vertex count, `build settings restored`, and the next step). The third panel paints onto the
+loaded mask rather than replacing it, and the build reports **3 windows** — including the ones
+from the previous session — so the exported STL has all three. This is the flow the file format is
+for: the mask JSON is the thing you save to keep working, and the stencil export rebuilds from it
+rather than serving a stale build (S9).
+**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Automated** `test/app-path.test.mjs` — a saved session files the build settings, reopens with
+every vertex and id intact, and a window added after the reload reaches the build (3 → 4 windows
+on the bundled model).
 **Result** ☐ pass ☐ fail — notes:
 
 #### X4 · Importing merges palettes by id
@@ -1035,7 +1075,7 @@ exports; the byte-level layout is otherwise manual.
 **Steps**
 1. Copy the *Ready to import* JSON block from the guide (each code block has a **Copy** button).
 2. Paste it into `example-mask.json`.
-3. **Import mask JSON…** and pick it.
+3. **Open mask (JSON)…** and pick it.
 
 **Expected** The block is valid JSON and imports without an error. On a model with 36 vertices
 the four listed vertices come back painted — the first three with feature 1, the fourth with
@@ -1207,7 +1247,7 @@ which is the order the panels are cut in).
 
 **Expected** Seven suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
 `painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (30 checks), `ui-wiring.test.mjs` and
-`help.test.mjs` (203 checks).
+`help.test.mjs` (206 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1252,7 +1292,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 73 |
+| Items run | ___ of 74 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |
