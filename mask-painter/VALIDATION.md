@@ -51,7 +51,7 @@ this document is about proving it works.
 | [Top bar](help.html#topbar) | L1–L7 |
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P17 |
-| [Mask](help.html#mask) | M1–M8 |
+| [Mask](help.html#mask) | M1–M9 |
 | [Paint stencil](help.html#stencil) | S1–S12 |
 | [Model & view](help.html#view) | V1–V5 |
 | [Export / import](help.html#export) | X1–X11 |
@@ -614,31 +614,65 @@ JSON and the stencil build start from, so it must track every edit.
 in the exported JSON).
 **Result** ☐ pass ☐ fail — notes:
 
-#### M8 · Trim islands out of the mask
+#### M8 · Trim windows out of the mask
 
 **Steps**
 1. Load the example model and paint a generous blob on the chest with the brush (or one panel with
    **Part**).
 2. Add two stray dabs: drop the brush radius and click twice well away from the blob — once on a
    limb, once near the head.
-3. Press **Count islands** and read the status bar.
-4. Press **Trim islands**, then `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`, then **Trim islands** again.
+3. Press **List windows** and read the status bar.
+4. Press **Trim windows**, then `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`, then **Trim windows** again.
 
-**Expected** The count reports how many painted islands there are (blob + 2 dabs = 3), the size of
+**Expected** The list reports how many painted windows there are (blob + 2 dabs = 3), the size of
 each, and how many a trim would release at the threshold in the panel — 2% of the model's
 diagonal by default, about 2.6 units on the bundled figure, where the dabs are ~1.9 units across
 and the blob ~27. The trim releases exactly the dabs: the blob keeps its own colour and counts, the
-status bar names how many islands went, how many vertices were released, what share of the mask
-that was and how many islands are left, and the paint stats drop by exactly that count. One undo
+status bar names how many windows went, how many vertices were released, what share of the mask
+that was and how many windows are left, and the paint stats drop by exactly that count. One undo
 step — `Ctrl`+`Z` puts every released vertex back and `Ctrl`+`Shift`+`Z` trims again — and the
-second trim reports that there is nothing to trim. Set the threshold above everything (say 50%)
-and trim: the largest island is kept and the status bar says it was spared, so a threshold set too
-high can shrink a mask to its main region but never wipe it out. With a built stencil in hand the
-message also says the shell is now stale — build again to match the trimmed mask.
+second trim reports that there is nothing to trim. Set the threshold to 99 and trim: it is now
+honoured (it used to be cut to 50 in silence), and with the dabs gone the message names the
+percentage that would release the next window rather than reporting a bare zero. Set 100 and trim
+in a fresh mask with the blob and the dabs: every window but the largest goes and the status bar
+says the largest was spared, so a threshold set too high can shrink a mask to its main region but
+never wipe it out. With a built stencil in hand the message also says the shell is now stale —
+build again to match the trimmed mask.
 **Guide** [Mask](help.html#mask)
 **Automated** `test/cleanup.test.mjs` — islands on a made-up mesh with a known answer and on the
 bundled figure, the released set being exactly the dabs, one undo step with undo and redo, the
-idempotent second trim, and the largest-island rule.
+idempotent second trim, the largest-island rule and the 0–100 threshold range.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M9 · Remove one window by name (the case a threshold cannot reach)
+
+**Steps**
+1. Reload the page, load the example model, and press **Part** (`P`). Click a panel on the face or
+   the chest, then `Shift`-click the panel **next to it** — two selections, one window.
+2. Press **List windows**. Read the header and the rows.
+3. Press **Remove** on that window, then `Ctrl`+`Z`.
+4. Press **List windows** again, then **Keep only** on a row, then `Ctrl`+`Z`.
+5. With the list open, paint one more dab on the model, and look at the list.
+6. In a fresh mask (reload), paint a blob and a small dab well apart, open **List windows** and
+   press **Remove** on the **first** row (the big blob).
+
+**Expected** Step 2 lists **one** window: panels that touch weld into a single painted region, so
+the header says one painter window, its size in units and as a share of the model, the features it
+is painted with (both), and it says in those words that no size threshold can split it — Step 4 of
+M8 confirmed that the trim releases nothing here at 2%, 50% or 99%. Each row carries **Remove**
+and **Keep only**; **Keep only** is disabled while there is a single window (there is nothing else
+to release). **Remove** releases exactly that window — the status bar names the vertex count and
+what share of the mask it was, the paint stats drop by that count, and **one** `Ctrl`+`Z` puts all
+of it back. **Keep only** releases every other window and leaves the one named, also one undo
+step. Step 5: the list is hidden the moment the mask changes — the rows name the vertices behind
+them — and **List windows** rebuilds it from the mask in hand. Step 6: the blob goes and the dab
+stays, which **Trim windows** can never do (it always keeps the largest), and the list shrinks to
+the one remaining window with its numbers updated.
+**Guide** [Mask](help.html#mask)
+**Automated** `test/cleanup.test.mjs` — `maskWindows()` on a made-up mesh with known file-vertex
+lists, per-window feature counts, both panels' vertices in one window on the bundled figure, the
+removal of the largest window (which the trim's rule forbids) and Keep-only; `test/ui-wiring.test.mjs`
+pins the wiring, the disabled button and the list being hidden as soon as the mask changes.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1246,8 +1280,8 @@ which is the order the panels are cut in).
 2. Confirm the exit status is 0 and read the per-suite summaries.
 
 **Expected** Seven suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
-`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (30 checks), `ui-wiring.test.mjs` and
-`help.test.mjs` (206 checks).
+`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (47 checks), `ui-wiring.test.mjs` and
+`help.test.mjs` (208 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1292,7 +1326,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 74 |
+| Items run | ___ of 75 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

@@ -259,23 +259,42 @@ a brush stroke hits a thin lip rather than a wall.
 
 Every separate painted region becomes its own **window** in the shell, and regions that do not
 touch become separate pieces — so the stray dabs a brush always leaves turn into a part with
-extra windows, several loose shells and nothing to hold them together on the print bed. **Trim
-islands** (Mask panel) takes them out before you build, and **Count islands** reports the same
-numbers without changing anything, which is how you pick a threshold rather than guess.
+extra windows, several loose shells and nothing to hold them together on the print bed. There
+are two ways to be rid of one, both in the Mask panel: **Trim windows**, which releases every
+window smaller than a threshold, and **List windows**, which names each one and lets you remove
+the one you mean.
 
-An island is a connected painted region of the **welded** surface, found by walking the vertex
+A window is a connected painted region of the **welded** surface, found by walking the vertex
 adjacency the welder already built (`js/cleanup.js`, dependency-free like the stencil engine).
 Welded because an STL repeats every vertex once per triangle: two triangles that share an edge
 share no vertex index at all, and only the weld makes them neighbours. The threshold is a share
-of the model's diagonal (2% by default) compared with each island's **bounding box**, because a
-speck is a size on the print, not a vertex count — the same speck is 40 vertices on a coarse
-mesh and 4,000 on a dense one.
+of the model's diagonal (2% by default, 0–100) compared with each window's **bounding box**,
+because a speck is a size on the print, not a vertex count — the same speck is 40 vertices on a
+coarse mesh and 4,000 on a dense one.
 
-The trim is one undo step, like every other mask edit, and it always keeps the largest island,
+The trim is one undo step, like every other mask edit, and it always keeps the largest window,
 so a threshold set too high can shrink a mask to its main region but never wipe it out (the
 status bar says when it was spared). On the bundled figure a chest blob with two stray dabs is
 three islands at 27.2, 2.0 and 1.9 units across; the default threshold releases the two dabs —
-429 vertices, exactly the vertices inside them and nothing else — in one 29 ms pass.
+429 vertices, exactly the vertices inside them and nothing else — in one ~60 ms pass.
+
+**A threshold can only say "smaller than this", and only about whole windows.** It skips the
+largest and it cannot split anything, so a mask that is *one* connected region has nothing it
+can ever release, whatever it is set to: two panels that touch (a Shift-click on the panel next
+to the selected one — 552,231 vertices at 90.8 units across on the bundled figure, measured in
+`test/cleanup.test.mjs`), a stroke back and forth, a region fill. That is what **List windows**
+is for. It lists every painted window with its vertex count, its size in units and as a share of
+the model, and the features it is painted with, each row carrying:
+
+- **Remove** — releases that window, the largest included; the row's `fileVertices` (the mask's
+  own indices, joined to the window through the weld) are exactly what the edit releases.
+- **Keep only** — releases every other window, which is how you keep one panel out of several.
+
+Both are one undo step, and the list rebuilds itself from what is left, so the numbers on screen
+are the numbers in the mask. The list is hidden the moment the mask changes — every row names
+the vertices behind it — so it never describes a mask that no longer exists. When a threshold
+can do nothing the status bar says so in those words and names the two things that can, instead
+of reporting zero and looking like a dead button.
 
 ### Clearance: does it fit onto the model?
 
@@ -374,7 +393,7 @@ mask-painter/
   js/io.js          mask JSON + binary PLY + binary STL writers, import parsing
   js/stencil.js     printable-stencil engine: weld, geodesic field, clipping, solid, checks
   js/parts.js       seam-based part segmentation for one-click panel selection
-  js/cleanup.js     painted-island analysis: what a trim would release, and why
+  js/cleanup.js     painted-window analysis: the list to remove from, and what a trim would release
   help.html         the guide: one section per panel + the file formats (linked from the app)
   VALIDATION.md     the same features as a sign-off checklist: steps, expected result, suite
   serve.mjs         tiny static server for the app + neighbouring models
@@ -404,7 +423,12 @@ Measured by `test/cleanup.test.mjs` on the same model:
 
 - islands: a blob plus two dabs come back as three islands (27.2, 2.0 and 1.9 units across); a
   2% threshold releases exactly the 429 vertices inside the dabs, keeps the blob bit for bit, and
-  the whole plan takes 29 ms on the welded mesh.
+  the whole plan takes ~60 ms on the welded mesh.
+- windows: the list names every painted window with the file vertices behind it; two panels that
+  touch come back as **one** window (552,231 vertices, 90.8 units) that no threshold releases at
+  2%, 50% or 99%, and Remove releases exactly it — one undo puts all of it back; the largest
+  window (a 32,578-vertex blob) can be removed while the dab beside it stays, which the trim's
+  largest-island rule forbids, and Keep only does the reverse.
 - centring: the grid offset on the bundled figure is −10.5, 42.1, −26.4 units; applying it centres
   the box and puts its lowest point on the grid, it leaves the model's own coordinates untouched,
   and it is a no-op for a model that is already centred.

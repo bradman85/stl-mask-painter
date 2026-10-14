@@ -121,6 +121,21 @@ for (const [what, id] of required) {
   check(`the ${what} section has prose`, new RegExp(`id="${id}"[\\s\\S]{40,}`).test(helpHtml));
 }
 check('guide mentions the Mask JSON button', helpText.includes('mask json'));
+// The rows of the window list are built in main.js, so index.html cannot declare them and the
+// generic control walk above cannot see them. The Mask section is where a reader finds out what
+// the two buttons on a row do, so both names have to be there, in that section.
+const maskSection = (() => {
+  const from = helpHtml.indexOf('id="mask"');
+  if (from < 0) return '';
+  const next = helpHtml.indexOf('id="stencil"', from);
+  return helpHtml.slice(from, next < 0 ? from + 12000 : next);
+})();
+check('the Mask section documents the window list button', /List windows/.test(maskSection), 'List windows');
+check(
+  'and both buttons on a window row, by the names the rows use',
+  /<b>Remove<\/b>/.test(maskSection) && /<b>Keep only<\/b>/.test(maskSection),
+  '<b>Remove</b> / <b>Keep only</b>',
+);
 check('guide mentions the Painted shell PLY button', helpText.includes('painted shell ply'));
 check('guide mentions the Import mask JSON button', helpText.includes('import mask json'));
 // The copy buttons in the guide are how a reader gets a real file into the

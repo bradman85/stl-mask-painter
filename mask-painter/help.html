@@ -642,33 +642,46 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
     <tr>
-      <td class="k">Trim islands under (% of size)</td>
+      <td class="k">Trim windows under (% of the model)</td>
       <td>
         The size that counts as a speck, as a share of the model's diagonal — 2% by default,
-        about 2.6 units on the bundled figure. A mask is painted with a brush, so it always ends
-        up with company: a dab beside the eye instead of on it, a stamp from a stroke that ran
-        off the edge of the part, a speck left where a fill stopped at a seam. An <b>island</b>
-        is one connected painted area of the <em>welded</em> surface — welded because an STL
-        repeats every vertex once per triangle, so two triangles that share an edge share no
-        vertex index at all and only the weld makes them neighbours.
+        about 2.6 units on the bundled figure, and it runs 0–100: at 100 every window but the
+        largest is under it. A mask is painted with a brush, so it always ends up with company:
+        a dab beside the eye instead of on it, a stamp from a stroke that ran off the edge of the
+        part, a speck left where a fill stopped at a seam. A <b>window</b> is one connected
+        painted area of the <em>welded</em> surface — the same thing the stencil build calls a
+        window. Welded because an STL repeats every vertex once per triangle, so two triangles
+        that share an edge share no vertex index at all and only the weld makes them neighbours.
       </td>
     </tr>
     <tr>
-      <td class="k">Trim islands / Count islands</td>
+      <td class="k">Trim windows / List windows</td>
       <td>
-        <b>Trim islands</b> releases every painted island smaller than the threshold above. One
-        undo step, like every other mask edit. <b>Count islands</b> reports the same numbers
-        without touching the mask: how many islands there are, the largest and the smallest, and
-        how many a trim would release — which is how you choose a threshold instead of guessing.
-        Sizes are the islands' bounding boxes rather than their vertex counts, because a speck is
-        a size on the print: the same speck is 40 vertices on a coarse mesh and 4,000 on a dense
-        one.
-        <br><b>The largest island is always kept</b>, so a threshold set too high can shrink a
+        <b>Trim windows</b> releases every painted window smaller than the threshold above. One
+        undo step, like every other mask edit. Sizes are the windows' bounding boxes rather than
+        their vertex counts, because a speck is a size on the print: the same speck is 40
+        vertices on a coarse mesh and 4,000 on a dense one.
+        <br><b>The largest window is always kept</b>, so a threshold set too high can shrink a
         mask to its main region but never wipe it out (the status bar says when it was spared).
-        Why it matters for the stencil: every separate painted island becomes <em>its own
-        window</em> in the shell, and islands that do not touch become separate pieces — ten
-        specks are ten windows, ten loose shells and nothing to hold them together on the print
-        bed. Trim first, then build.
+        <br><b>A threshold can only say “smaller than this”, and only about whole windows.</b>
+        That leaves one shape of mask it can never help: a mask that is <em>one</em> connected
+        region — two panels that touch, a stroke back and forth, a region fill — has nothing a
+        size test can ever release, however high it is set. The status bar says so in those
+        words rather than looking like a dead button, and <b>List windows</b> is the way
+        through: it lists every painted window on the mask with its size, how much of the model
+        that is, the features it is painted with, and two buttons. <b>Remove</b> releases that
+        one window — the largest included — and <b>Keep only</b> releases every other window,
+        which is how you keep one panel out of the several you painted. Both are one undo step,
+        and the list rebuilds itself from what is left, so the numbers on screen are the numbers
+        in the mask. The header also reports how many windows the threshold would release, which
+        is how you choose one instead of guessing.
+        <br><b>The list is hidden as soon as the mask changes</b> — every row names the vertices
+        behind it, so after another stroke the rows would describe a mask that no longer exists.
+        Press the button again; it only costs the island walk.
+        <br>Why it matters for the stencil: every painted window becomes <em>its own window</em>
+        in the shell, and windows that do not touch become separate pieces — ten specks are ten
+        windows, ten loose shells and nothing to hold them together on the print bed. Trim or
+        remove first, then build.
       </td>
     </tr>
     <tr>
@@ -714,7 +727,8 @@ Panels within 3.2 units of the click; click one to select it instead:
         <br><b>Windows are painted islands.</b> Every painted area that does not touch the next
         one becomes a window of its own, and an island too far away to bridge becomes a piece of
         its own — so a few stray brush dabs are a part with a few extra windows and often several
-        loose shells. <b>Trim islands</b> in the Mask panel takes those out before you build.
+        loose shells. <b>List windows</b> and <b>Trim windows</b> in the Mask panel take those
+        out before you build.
       </td>
     </tr>
     <tr>

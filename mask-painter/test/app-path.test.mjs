@@ -15,6 +15,7 @@ import { MaskLayer } from '../js/mask.js';
 import { createFeatureList } from '../js/features.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal, geodesicField } from '../js/stencil.js';
 import { buildBinarySTL, buildMaskJSON, parseMaskJSON } from '../js/io.js';
+import { maskWindows } from '../js/cleanup.js';
 import { parseBinarySTL, fmt, InsideTester, TriGrid } from './helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -345,6 +346,33 @@ const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffe
     round1Painted < paintedMaskOf(maskLayer).count,
     `built from ${fmt(round1Painted)} painted vertices; the mask now has ` +
       `${fmt(paintedMaskOf(maskLayer).count)} — the numbers the stale test compares`,
+  );
+
+  // The other direction, which is what "remove excess from the stencil" means: take a window out
+  // of the mask the way the window list's Remove row does — dump exactly the file vertices that
+  // window carries, in one undoable stroke — and rebuild. The window has to leave the shell.
+  const windows = maskWindows(topology, maskLayer.ids);
+  const biggest = windows[0];
+  const beforeRemoval = paintedMaskOf(maskLayer).count;
+  maskLayer.beginStroke();
+  const released = maskLayer.paintIndices(biggest.fileVertices, 0);
+  const recordedRemoval = maskLayer.endStroke();
+  maskLayer.flush();
+  const round3 = buildStencil({ topology, painted: paintedMaskOf(maskLayer).painted, params });
+  check(
+    'the window list reaches the built shell: removing a window drops its window from the rebuild',
+    recordedRemoval &&
+      released === biggest.vertices &&
+      beforeRemoval - released === paintedMaskOf(maskLayer).count &&
+      round3.stats.windowLoops === round2.stats.windowLoops - 1,
+    `${fmt(windows.length)} window(s) listed, largest ${fmt(biggest.vertices)} vertices released; ` +
+      `${round2.stats.windowLoops} -> ${round3.stats.windowLoops} window(s) in the shell`,
+  );
+  maskLayer.undo();
+  check(
+    'and one undo puts the window back where it was',
+    paintedMaskOf(maskLayer).count === beforeRemoval,
+    `${fmt(paintedMaskOf(maskLayer).count)} painted again`,
   );
 
   // Saving the place and carrying on: the session file, reopened, keeps growing. This is the

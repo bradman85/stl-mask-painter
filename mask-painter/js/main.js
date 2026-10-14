@@ -6,7 +6,7 @@ import { createFeatureList, nextFeatureId } from './features.js';
 import * as io from './io.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal } from './stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
-import { paintedIslands, planIslandTrim } from './cleanup.js';
+import { paintedIslands, planIslandTrim, maskWindows } from './cleanup.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -101,10 +101,11 @@ window.maskPainter = {
   paintPartAt,
   setSeamAngle,
   invertPaint,
-  trimIslands,
-  countIslands,
+  trimWindows,
+  listWindows,
+  releaseWindows,
   setCentreOnGrid: (on) => viewer.setCentreOnGrid(on),
-  islandIo: { paintedIslands, planIslandTrim },
+  islandIo: { paintedIslands, planIslandTrim, maskWindows },
   pickFeatureUnderPoint: (p, radius) => mask.featureUnderPoint(p, radius ?? maskedPickRadius()),
   openGuide,
   stencilOutOfDate,
@@ -617,6 +618,12 @@ function updateStats() {
     : 'The selected feature has no paint to clear';
   if (stencil.result) updateStencilStats(s.painted);
   updateUndoButtons();
+  // The window list describes the mask as it was when it was built: every row is one connected
+  // painted region with the vertices behind it, so the moment the mask is edited the row sizes
+  // are wrong and the Remove buttons point at regions that no longer exist. Hiding it is the
+  // honest answer — "List windows" rebuilds it from the mask in hand.
+  const windowBox = el('windowList');
+  if (windowBox && !windowBox.hidden) windowBox.hidden = true;
 }
 
 function updateUndoButtons() {
@@ -1380,73 +1387,217 @@ function invertPaint() {
 }
 
 /**
- * The painted islands of the mask, for the count and the trim below.
+ * The painted windows of the mask, plus what the panel's threshold would release.
  *
- * Both go through this so the numbers they report cannot disagree, and the threshold is read
- * from the panel every time rather than remembered, so raising it and pressing the button twice
- * trims harder the second time.
+ * One analysis behind both buttons so the list and the trim cannot disagree about the numbers,
+ * and the threshold is read from the panel every time rather than remembered, so raising it and
+ * pressing the button again trims harder the second time.
+ *
+ * The percentage runs 0–100 of the model's diagonal. It used to stop at 50, which quietly turned
+ * a typed 99 into a 50 and made "raise it until something goes" impossible to reach.
  */
-async function analyseIslands() {
+async function analyseWindows({ quiet = false } = {}) {
   if (!requireModel()) return null;
   const painted = mask.stats().painted;
   if (!painted) {
-    setStatus('Nothing painted yet — paint the area the mask should expose first.');
+    // Quiet when this is a refresh after an edit: the edit has a message of its own and the
+    // caller has already said what happened.
+    if (!quiet) setStatus('Nothing painted yet — paint the area the mask should expose first.');
     return null;
   }
-  const percent = Math.max(0, Math.min(50, Number(el('trimPercent').value) || 0));
+  const percent = Math.max(0, Math.min(100, Number(el('trimPercent').value) || 0));
   const topology = await ensureTopology();
   const t0 = performance.now();
+  const windows = maskWindows(topology, mask.ids);
   const plan = planIslandTrim({
     topology,
     ids: mask.ids,
     minDiagonal: (percent / 100) * topology.diagonal,
   });
-  return { plan, percent, topology, painted, ms: Math.round(performance.now() - t0) };
+  return { windows, plan, percent, topology, painted, ms: Math.round(performance.now() - t0) };
 }
 
 /**
- * The dry run: how many painted islands there are and which of them a trim would release.
- * Sizes are the islands' bounding boxes, because that is what the threshold is measured in —
- * a spec is a size on the print, not a vertex count (the same spec is 40 vertices on a coarse
- * mesh and 4,000 on a dense one).
+ * The window list: every connected painted region, with two ways to take one out.
+ *
+ * This is what a size threshold cannot be. Two panels that touch weld into one window, so a mask
+ * built by Shift-clicking neighbours is a single island and no threshold, however high, will
+ * ever release part of it — the trim only ever releases islands *other* than the largest. Here
+ * each window has a name, a size and its own buttons: **Remove** releases the window that row
+ * names (the largest included), and **Keep only** releases every other window, which is the way
+ * to keep one panel out of the several that were painted.
+ *
+ * Both are one undo step, like every other mask edit, and the list rebuilds itself from what is
+ * left afterwards, so the numbers on screen are the numbers in the mask.
  */
-async function countIslands() {
-  const got = await analyseIslands();
-  if (!got) return;
-  const { plan, percent, topology, ms } = got;
-  const largest = plan.details[0];
-  const smallest = plan.details[plan.details.length - 1];
+function renderWindowList({ windows, topology: topo, painted }) {
+  const box = el('windowList');
+  const list = el('windowRows');
+  list.textContent = '';
+  if (!windows.length) {
+    box.hidden = true;
+    return;
+  }
+  el('windowHint').textContent =
+    `${fmt(windows.length)} painted window${windows.length === 1 ? '' : 's'} on the mask (${fmt(painted)} vertices) — ` +
+    'each one is an opening in the built stencil. Remove takes one out by name, whatever its size:';
+  windows.forEach((w, k) => {
+    const row = document.createElement('div');
+    row.className = 'candidate window-row';
+    const label = document.createElement('b');
+    label.textContent = `Window ${k + 1}`;
+    const info = document.createElement('small');
+    info.textContent =
+      `${fmt(w.vertices)} vertices · ${w.diagonal.toFixed(2)} units across ` +
+      `(${((w.diagonal / topo.diagonal) * 100).toFixed(1)}% of the model) · ${featureListText(w.features)}`;
+    const actions = document.createElement('span');
+    actions.className = 'window-actions';
+    const remove = document.createElement('button');
+    remove.className = 'btn small';
+    remove.textContent = 'Remove';
+    remove.title =
+      `Release window ${k + 1} (${fmt(w.vertices)} vertices) from the mask — one undo step, every other window kept`;
+    remove.addEventListener('click', () =>
+      releaseWindows([w], `Removed window ${k + 1} (${fmt(w.vertices)} vertices)`),
+    );
+    const only = document.createElement('button');
+    only.className = 'btn small';
+    only.textContent = 'Keep only';
+    only.title =
+      windows.length === 1
+        ? `Window ${k + 1} is the only window — there is nothing else to release`
+        : `Release the other ${windows.length - 1} window${windows.length === 2 ? '' : 's'} and keep window ${k + 1}`;
+    only.disabled = windows.length === 1;
+    only.addEventListener('click', () =>
+      releaseWindows(
+        windows.filter((other) => other !== w),
+        `Kept only window ${k + 1} (${fmt(w.vertices)} vertices)`,
+      ),
+    );
+    actions.append(remove, only);
+    row.append(label, info, actions);
+    list.appendChild(row);
+  });
+  const hide = document.createElement('button');
+  hide.className = 'candidate';
+  hide.innerHTML = '<small>Hide this list</small>';
+  hide.title = 'Hide the window list — List windows brings it back';
+  hide.addEventListener('click', () => {
+    box.hidden = true;
+  });
+  list.appendChild(hide);
+  box.hidden = false;
+}
+
+/** The features a window is painted with, as the palette names them. */
+function featureListText(features) {
+  return features
+    .map((f) => `${featureById(f.id)?.name || `feature ${f.id}`} ${fmt(f.vertices)}v`)
+    .join(' + ');
+}
+
+/**
+ * Releases whole windows from the mask: one stroke, one undo step, then the list rebuilds itself
+ * from what is left.
+ */
+async function releaseWindows(targets, what) {
+  const released = [];
+  for (const w of targets) released.push(...w.fileVertices);
+  if (!released.length) {
+    setStatus(`${what}: there was nothing painted left to release.`);
+    return;
+  }
+  const before = mask.stats().painted;
+  mask.beginStroke();
+  const changed = mask.paintIndices(released, 0);
+  const recorded = mask.endStroke();
+  mask.flush();
+  updateStats();
+  updateStencilStats();
   setStatus(
-    `${fmt(plan.islands)} painted island${plan.islands === 1 ? '' : 's'} (${fmt(got.painted)} vertices): ` +
+    `${what}: ${fmt(changed)} vertices released (${((changed / before) * 100).toFixed(1)}% of the mask), ` +
+      `${fmt(mask.stats().painted)} left. Ctrl+Z brings them back.` +
+      (stencil.result ? ' The built stencil is still in the viewport — build again to match the trimmed mask.' : ''),
+  );
+  if (!recorded) setStatus(`${what}: nothing changed — those vertices were already released.`);
+  await listWindows({ quiet: true });
+}
+
+/**
+ * Lists the painted windows and says which of them the threshold would release.
+ *
+ * The dry-run half is worth its own button because the sizes are the only way to choose a
+ * threshold that does anything: a mask that is one connected region has nothing to release. The
+ * list is the half that can act on what it reports.
+ */
+async function listWindows({ quiet = false } = {}) {
+  let got = null;
+  try {
+    got = await analyseWindows({ quiet });
+  } catch (err) {
+    setStatus(`Could not list the windows: ${err.message}`);
+    return;
+  }
+  if (!got) {
+    // Nothing painted: there is no list to show, and any list still on screen describes a mask
+    // that has just been emptied.
+    el('windowList').hidden = true;
+    return;
+  }
+  renderWindowList(got);
+  if (quiet) return;
+  const { windows, plan, percent, topology: topo, painted, ms } = got;
+  const largest = windows[0];
+  const smallest = windows[windows.length - 1];
+  setStatus(
+    `${fmt(windows.length)} painted window${windows.length === 1 ? '' : 's'} (${fmt(painted)} vertices): ` +
       `largest ${fmt(largest.vertices)} vertices, ${largest.diagonal.toFixed(2)} units across; smallest ` +
-      `${fmt(smallest.vertices)} vertices, ${smallest.diagonal.toFixed(2)} across. At under ` +
-      `${plan.threshold.toFixed(2)} units (${percent}% of the model's ${topology.diagonal.toFixed(1)}-unit diagonal) ` +
-      `a trim would release ${fmt(plan.doomedIslands)} of them` +
-      `${plan.doomedIslands ? ` (${fmt(plan.doomedVertices)} vertices)` : ''} — each island is its own window ` +
-      `in the built stencil. (${ms} ms)`,
+      `${fmt(smallest.vertices)}, ${smallest.diagonal.toFixed(2)} across. ` +
+      (windows.length === 1
+        ? 'Everything painted is one window, so no size threshold can split it — Remove takes the whole of it ' +
+          'out, and the erase brush takes part of it back.'
+        : `At under ${plan.threshold.toFixed(2)} units (${percent}% of the model's ` +
+          `${topo.diagonal.toFixed(1)}-unit diagonal) Trim windows would release ${fmt(plan.doomedIslands)} of them ` +
+          `(${fmt(plan.doomedVertices)} vertices).`) +
+      ` (${ms} ms)`,
   );
 }
 
 /**
- * Releases the painted islands a printer cannot use: the specks and stray dabs that would
+ * Releases the painted windows a printer cannot use: the specks and stray dabs that would
  * otherwise each become another window, and often another loose piece, in the exported stencil.
  *
- * One undo step, like every other mask edit, and the largest island is always kept — a threshold
+ * One undo step, like every other mask edit, and the largest window is always kept — a threshold
  * set too high can shrink a mask to its main region but never wipe it out. The rest of the mask
  * is untouched, and a built stencil is left in the viewport with the panel saying it is stale.
+ *
+ * A threshold can only ever say "smaller than this", so the refusal below names the two things
+ * that can do the job when it cannot: the window list for a whole window, the erase brush for
+ * part of one.
  */
-async function trimIslands() {
-  const got = await analyseIslands();
+async function trimWindows() {
+  let got = null;
+  try {
+    got = await analyseWindows();
+  } catch (err) {
+    setStatus(`Trim failed: ${err.message}`);
+    return;
+  }
   if (!got) return;
-  const { plan, percent, topology } = got;
+  const { plan, percent, topology: topo, windows, painted } = got;
   const plural = (n) => (n === 1 ? '' : 's');
   if (!plan.doomedIslands) {
-    const smallest = plan.details[plan.details.length - 1];
+    const smallest = windows[windows.length - 1];
+    const wouldNeed = (smallest.diagonal / topo.diagonal) * 100;
     setStatus(
-      `Nothing to trim: ${fmt(plan.islands)} island${plural(plan.islands)}, the smallest ` +
-        `${smallest.diagonal.toFixed(2)} units across, and none is under ${plan.threshold.toFixed(2)} ` +
-        `(${percent}% of the model's ${topology.diagonal.toFixed(1)}-unit diagonal). Raise the threshold ` +
-        'to trim harder, or press “Count islands” to see their sizes.'
+      windows.length === 1
+        ? `Nothing to trim: the whole mask is one painted window (${fmt(painted)} vertices), and a size ` +
+          'threshold can only release whole windows. “List windows” removes it, or the erase brush takes ' +
+          'part of it back.'
+        : `Nothing to trim under ${plan.threshold.toFixed(2)} units (${percent}% of the model's ` +
+          `${topo.diagonal.toFixed(1)}-unit diagonal): ${fmt(windows.length)} windows, the smallest ` +
+          `${smallest.diagonal.toFixed(2)} units across (${wouldNeed.toFixed(1)}% of the model). A threshold over ` +
+          `${Math.ceil(wouldNeed * 10) / 10}% would release it — or press “List windows” to remove a particular one.`,
     );
     return;
   }
@@ -1458,14 +1609,14 @@ async function trimIslands() {
   updateStencilStats();
   const kept = plan.islands - plan.doomedIslands;
   setStatus(
-    `Trimmed ${fmt(plan.doomedIslands)} island${plural(plan.doomedIslands)} under ` +
-      `${plan.threshold.toFixed(2)} units (${percent}% of size): ${fmt(changed)} vertices released, ` +
-      `${((changed / got.painted) * 100).toFixed(1)}% of the mask. ${fmt(kept)} island${plural(kept)} left, ` +
+    `Trimmed ${fmt(plan.doomedIslands)} window${plural(plan.doomedIslands)} under ` +
+      `${plan.threshold.toFixed(2)} units (${percent}% of the model's size): ${fmt(changed)} vertices released, ` +
+      `${((changed / got.painted) * 100).toFixed(1)}% of the mask. ${fmt(kept)} window${plural(kept)} left, ` +
       `the largest ${fmt(plan.largestVertices)} vertices. Ctrl+Z brings them back.` +
-      (plan.sparedLargest ? ' The largest island is under the threshold too, so it was kept.' : '') +
+      (plan.sparedLargest ? ' The largest window is under the threshold too, so it was kept.' : '') +
       (stencil.result ? ' The built stencil is still in the viewport — build again to match the trimmed mask.' : ''),
   );
-  if (!recorded) setStatus('Nothing was released — the islands were already unpainted.');
+  if (!recorded) setStatus('Nothing was released — the windows were already unpainted.');
 }
 
 function screenshot() {
@@ -1646,8 +1797,8 @@ el('hideAllBtn').addEventListener('click', () => {
 });
 
 el('invertBtn').addEventListener('click', invertPaint);
-el('trimBtn').addEventListener('click', trimIslands);
-el('islandInfoBtn').addEventListener('click', countIslands);
+el('trimBtn').addEventListener('click', trimWindows);
+el('windowsBtn').addEventListener('click', () => listWindows());
 el('centreOnGrid').addEventListener('change', onCentreToggle);
 
 el('stencilBuildBtn').addEventListener('click', buildStencilClicked);

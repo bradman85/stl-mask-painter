@@ -116,13 +116,17 @@
         <button class="btn small danger" id="clearAllBtn">Clear all</button>
       </div>
       <label class="row">
-        <span class="dim">Trim islands under (% of size)</span>
-        <input type="number" id="trimPercent" step="0.5" min="0" max="50" value="2"
-               title="Islands whose bounding box is smaller than this share of the model's diagonal count as specks">
+        <span class="dim">Trim windows under (% of the model)</span>
+        <input type="number" id="trimPercent" step="0.5" min="0" max="100" value="2"
+               title="A painted window whose bounding box is smaller than this share of the model's diagonal counts as a speck. 0–100% of the model's diagonal; the largest window is always kept">
       </label>
       <div class="row">
-        <button class="btn small" id="trimBtn" title="Release the painted islands smaller than the threshold above — the specks that become extra windows and loose pieces in the exported stencil. One undo step; the largest island is always kept">Trim islands</button>
-        <button class="btn small" id="islandInfoBtn" title="Report the painted islands and their sizes without changing the mask">Count islands</button>
+        <button class="btn small" id="windowsBtn" title="List every painted window — each connected painted area is one opening in the built stencil — with a Remove button on every row, so a window can be taken out by name instead of by size">List windows</button>
+        <button class="btn small" id="trimBtn" title="Release every painted window smaller than the threshold above — the specks that become extra windows and loose pieces in the exported stencil. One undo step; the largest window is always kept, and a mask that is one connected window has nothing a size threshold can release">Trim windows</button>
+      </div>
+      <div id="windowList" class="candidates" hidden>
+        <p class="hint" id="windowHint">Painted windows:</p>
+        <div class="candidate-list" id="windowRows"></div>
       </div>
       <p class="stats" id="paintStats">No model loaded.</p>
     </section>

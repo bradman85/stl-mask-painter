@@ -8,6 +8,11 @@
 // blob where the mask belongs plus two stray dabs — where it has to release exactly the dabs,
 // keep the blob's vertices bit for bit, and land in the undo history as one step.
 //
+// The window list is checked on the two cases a size threshold cannot reach at all: a mask that
+// is one connected region — two panels that touch, which is exactly what Shift-clicking the
+// neighbouring panel produces, and what made "Trim islands" look like a dead button — and the
+// largest window itself, which the trim is forbidden from releasing and the list has to.
+//
 // The centring transform is checked as arithmetic on real boxes: the model group moves, and the
 // geometry it holds does not, because the mask is per vertex, the panels are per face and every
 // export is written in the file's own coordinates.
@@ -19,7 +24,8 @@ import * as THREE from '../vendor/three.module.js';
 import { MaskLayer } from '../js/mask.js';
 import { createFeatureList } from '../js/features.js';
 import { buildTopology } from '../js/stencil.js';
-import { paintedIslands, planIslandTrim } from '../js/cleanup.js';
+import { paintedIslands, planIslandTrim, maskWindows } from '../js/cleanup.js';
+import { buildParts, partSoupVertices, DEFAULT_SEAM_ANGLE } from '../js/parts.js';
 import { centreTranslation } from '../js/viewer.js';
 import { parseBinarySTL, paintSpheres, fmt } from './helpers.mjs';
 
@@ -135,6 +141,54 @@ function syntheticSoup() {
     bow.islands === 1 && bow.doomedIslands === 0,
     `${bow.islands} island(s), ${bow.doomedIslands} doomed`,
   );
+
+  // --- the window list: every island with the file vertices behind it
+  const windows = maskWindows(topo, all);
+  check(
+    'the list names every window with the file vertices behind it, largest first',
+    windows.length === 3 &&
+      windows[0].fileVertices.join(',') === '0,1,2,3,4,5' &&
+      windows[1].fileVertices.join(',') === small.join(',') &&
+      windows[2].fileVertices.join(',') === speck.join(','),
+    windows.map((w) => `${w.vertices}v/${w.diagonal.toFixed(2)}d`).join(' '),
+  );
+  check(
+    'a window carries its size and the box it spans',
+    Math.abs(windows[0].diagonal - Math.hypot(4, 0, 4)) < 1e-6 &&
+      windows[0].centre.every((n, k) => Math.abs(n - [2, 0, 2][k]) < 1e-6),
+    `centre ${windows[0].centre.join(', ')}`,
+  );
+  check(
+    'a window knows which feature painted it',
+    windows[0].features.length === 1 && windows[0].features[0].id === 1 && windows[0].features[0].vertices === 6,
+    windows[0].features.map((f) => `${f.id}:${f.vertices}`).join(' '),
+  );
+  const mixed = Int16Array.from(all);
+  mixed[0] = 2;
+  mixed[1] = 2;
+  check(
+    'a window painted with two features reports both, biggest group first',
+    (() => {
+      const w = maskWindows(topo, mixed)[0];
+      return w.features.length === 2 && w.features[0].id === 1 && w.features[0].vertices === 4 && w.features[1].id === 2 && w.features[1].vertices === 2;
+    })(),
+    maskWindows(topo, mixed)[0].features.map((f) => `${f.id}:${f.vertices}`).join(' '),
+  );
+  check(
+    'the list and the trim describe the same islands',
+    windows.length === all3.islands.length &&
+      windows.map((w) => w.diagonal.toFixed(3)).join() === all3.islands.map((i) => i.diagonal.toFixed(3)).join(),
+  );
+  // The list is the way to reach the island the trim is forbidden to touch: the largest.
+  const removed = new Int16Array(all);
+  for (const i of windows[0].fileVertices) removed[i] = 0;
+  const afterRemove = paintedIslands(topo, removed);
+  check(
+    'releasing the largest window\'s vertices takes out that window and nothing else',
+    afterRemove.islands.length === 2 &&
+      afterRemove.islands.every((isl) => isl.vertices === 4 || isl.vertices === 3) &&
+      removed.join(',') !== all.join(','),
+    `${afterRemove.islands.length} island(s) left, ${fmt(removed.reduce((n, v) => n + (v ? 1 : 0), 0))} vertices`, );
 }
 
 // ---------------------------------------------------------------- the bundled model
@@ -261,6 +315,162 @@ function frontMost(centreY, spreadY) {
   mask.redo();
   check('and redo trims again', mask.stats().painted === painted - plan.doomedVertices, `${fmt(mask.stats().painted)} painted`);
   mask.undo();
+}
+
+// ------------------------------------------------- the window list on the bundled figure
+//
+// Two shapes of mask, both of which a size threshold fails on — the report that started this:
+//
+//   a) two panels that touch (a Shift-click on the panel next to the one selected) weld into a
+//      single painted region, so "Trim islands", at 2%, 50% or 99%, releases nothing at all and
+//      the button reads as dead. It is not: there is one window, and the only way to be rid of
+//      part of it is to name it.
+//   b) the largest window, which the trim is deliberately never allowed to release — "the mask
+//      is right except for the big lump" is exactly the case it refuses.
+{
+  const parts = buildParts(topo, { seamAngleDeg: DEFAULT_SEAM_ANGLE });
+  // Panels that touch: two panels are neighbours when their faces share a welded vertex. (In an
+  // STL soup adjacent triangles share no vertex index, which is why this has to go through the
+  // weld — the same reason the islands do.)
+  const owner = new Map();
+  const touch = new Map();
+  for (let f = 0; f < parts.facePart.length; f += 1) {
+    const p = parts.facePart[f];
+    for (let k = 0; k < 3; k += 1) {
+      const w = topo.faces[f * 3 + k];
+      const seen = owner.get(w);
+      if (seen === undefined) {
+        owner.set(w, p);
+        continue;
+      }
+      if (seen === p) continue;
+      if (!touch.has(p)) touch.set(p, new Set());
+      if (!touch.has(seen)) touch.set(seen, new Set());
+      touch.get(p).add(seen);
+      touch.get(seen).add(p);
+    }
+  }
+  const order = parts.partSizes.map((n, i) => [n, i]).sort((a, b) => b[0] - a[0]);
+  const pick = order.find(([n, i]) => n > 1500 && n < 6000 && touch.get(i) && touch.get(i).size > 0);
+  check('the figure has a mid-size panel with a neighbour to Shift-click', !!pick, pick ? `${fmt(pick[0])} faces` : 'none found');
+  const panel = pick[1];
+  const neighbour = [...touch.get(panel)].sort((a, b) => parts.partSizes[b] - parts.partSizes[a])[0];
+  const paintPanel = (m, id, which) => {
+    m.beginStroke();
+    m.paintIndices(partSoupVertices(parts, which, []), id);
+    m.endStroke();
+  };
+
+  // --- a) two panels that touch are one window
+  const touching = new MaskLayer(geometry, createFeatureList());
+  paintPanel(touching, 1, panel);
+  paintPanel(touching, 2, neighbour);
+  const paintedTouching = touching.stats().painted;
+  const touchingWindows = maskWindows(topo, touching.ids);
+  console.log(
+    `      panels ${panel + 1} (${fmt(parts.partSizes[panel])} faces) + ${neighbour + 1} ` +
+      `(${fmt(parts.partSizes[neighbour])}): ${fmt(paintedTouching)} vertices, ` +
+      `${touchingWindows.length} window(s) ${touchingWindows[0].diagonal.toFixed(1)} units across`,
+  );
+  check(
+    'two panels that touch are one painted window, not two',
+    touchingWindows.length === 1,
+    `${touchingWindows.length} window(s)`,
+  );
+  check(
+    'so no threshold releases anything here — 2%, 50% and 99% included',
+    [0, 2, 50, 99, 100].every(
+      (pct) =>
+        planIslandTrim({ topology: topo, ids: touching.ids, minDiagonal: (pct / 100) * topo.diagonal }).doomedIslands === 0,
+    ),
+    `island diagonals: ${touchingWindows.map((w) => w.diagonal.toFixed(1)).join(', ')}`,
+  );
+  check(
+    'and the window names both panels and both features, so it can be acted on',
+    touchingWindows[0].features.length === 2 &&
+      touchingWindows[0].fileVertices.length === paintedTouching &&
+      [...touch.get(panel)].includes(neighbour),
+    touchingWindows[0].features.map((f) => `${f.id}:${fmt(f.vertices)}`).join(' + '),
+  );
+  // Remove: the vertices the row carries, released in one undo step, exactly.
+  const touchingBefore = Int16Array.from(touching.ids);
+  touching.beginStroke();
+  const removedTouching = touching.paintIndices(touchingWindows[0].fileVertices, 0);
+  const recordedTouching = touching.endStroke();
+  touching.flush();
+  check(
+    'Remove releases exactly that window — the one the trim could never touch',
+    recordedTouching && removedTouching === paintedTouching && touching.stats().painted === 0,
+    `${fmt(removedTouching)} of ${fmt(paintedTouching)} vertices, ${touching.history.length} undo step(s)`,
+  );
+  touching.undo();
+  let touchingDiff = 0;
+  for (let i = 0; i < touchingBefore.length; i += 1) if (touchingBefore[i] !== touching.ids[i]) touchingDiff += 1;
+  check('and one undo puts every vertex back', touching.stats().painted === paintedTouching && touchingDiff === 0, `${touchingDiff} differ`);
+
+  // --- b) blob + two dabs: the window list reaches the largest window too
+  const mask = new MaskLayer(geometry, createFeatureList());
+  const blob = frontMost(centre.y + size.y * 0.05, size.y * 0.12);
+  const dabA = frontMost(centre.y - size.y * 0.36, size.y * 0.03);
+  mask.beginStroke();
+  mask.paintSphere(blob, topo.diagonal * 0.075, 1);
+  mask.endStroke();
+  mask.beginStroke();
+  mask.paintSphere(dabA, topo.diagonal * 0.006, 2);
+  mask.endStroke();
+  const painted = mask.stats().painted;
+  const windows = maskWindows(topo, mask.ids);
+  check(
+    'the list comes back largest first, with the dabs after the blob',
+    windows.length === 2 && windows[0].features[0].id === 1 && windows[1].features[0].id === 2,
+    windows.map((w) => `${fmt(w.vertices)}v/${w.diagonal.toFixed(2)}d/${w.features[0].id}`).join(' '),
+  );
+  check(
+    'every file vertex of the mask is in exactly one window',
+    windows.reduce((n, w) => n + w.vertices, 0) === painted &&
+      new Set(windows.flatMap((w) => w.fileVertices)).size === painted,
+    `${fmt(painted)} painted, ${fmt(windows.reduce((n, w) => n + w.vertices, 0))} across ${windows.length} window(s)`,
+  );
+  // The largest window goes, and the dabs stay: the trim's rule forbids exactly this.
+  const keptDab = Int16Array.from(mask.ids);
+  mask.beginStroke();
+  const removedBlob = mask.paintIndices(windows[0].fileVertices, 0);
+  mask.endStroke();
+  mask.flush();
+  const left = maskWindows(topo, mask.ids);
+  check(
+    'Remove takes out the largest window and keeps the rest',
+    removedBlob === windows[0].vertices && left.length === 1 && left[0].features[0].id === 2 &&
+      left[0].diagonal.toFixed(3) === windows[1].diagonal.toFixed(3),
+    `removed ${fmt(removedBlob)} vertices, ${left.length} window(s) left`,
+  );
+  const widest = planIslandTrim({ topology: topo, ids: keptDab, minDiagonal: topo.diagonal });
+  check(
+    'a threshold at every setting could not have done that — it spares the largest by rule',
+    widest.sparedLargest && widest.doomedIslands === 1 &&
+      widest.released.length === windows[1].vertices &&
+      !widest.released.includes(windows[0].fileVertices[0]),
+    `${fmt(widest.doomedVertices)} vertices released, largest spared`,
+  );
+  // Keep only: every other window released, leaving exactly this one.
+  const keepOnly = Int16Array.from(keptDab);
+  mask.undo();
+  mask.beginStroke();
+  const others = maskWindows(topo, mask.ids).filter((w) => w.features[0].id !== 2);
+  const removedOthers = mask.paintIndices(others.flatMap((w) => w.fileVertices), 0);
+  mask.endStroke();
+  mask.flush();
+  const kept = maskWindows(topo, mask.ids);
+  check(
+    'Keep only leaves exactly the window it names',
+    kept.length === 1 && kept[0].features[0].id === 2 && removedOthers === painted - kept[0].vertices,
+    `${fmt(removedOthers)} released, ${fmt(kept[0].vertices)} kept (mask had ${fmt(painted)})`,
+  );
+  check(
+    'and the mask it leaves is the dab, not the blob',
+    kept[0].diagonal.toFixed(3) === maskWindows(topo, keepOnly)[1].diagonal.toFixed(3),
+    `${kept[0].diagonal.toFixed(2)} units across`,
+  );
 }
 
 // ---------------------------------------------------------------- centring on the grid

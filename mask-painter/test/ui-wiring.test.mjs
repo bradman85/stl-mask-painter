@@ -183,34 +183,81 @@ check('the parts module exposes it', /export function partsNearPoint/.test(
   fs.readFileSync(path.resolve(here, '../js/parts.js'), 'utf8'),
 ));
 
-// ------------------------------------------------- islands: the trim, and centring the model
+// --------------------------------- islands: the trim, the window list, and centring the model
 //
-// Two things a painted mask needs that are not painting: taking back the specks a brush always
-// leaves (each one becomes another window, and often another loose piece, in the exported
-// stencil), and bringing a model back to the grid when the file's exporter left it hundreds of
-// units away. Both are checked here for the parts that can go wrong silently: the threshold
-// being read, the edit being one undo step, the largest island being kept, and centring moving
-// the model group rather than the coordinates the mask and every export are written in.
+// Two things a painted mask needs that are not painting: getting rid of the parts of it that
+// would only become extra windows and loose pieces in the exported stencil, and bringing a model
+// back to the grid when the file's exporter left it hundreds of units away. Both are checked
+// here for the parts that can go wrong silently: the threshold being read, the edit being one
+// undo step, the largest island being kept, and centring moving the model group rather than the
+// coordinates the mask and every export are written in.
+//
+// The window list is the half of the trim that a size threshold cannot be: a threshold can only
+// release whole islands *other* than the largest, so a mask that is one connected region has
+// nothing it can ever release. The list names every window and hands back the vertices behind
+// the one to remove — including the largest — which is what "remove or designate and remove"
+// needs. These checks pin the wiring of that, the disabled button where there is nothing to do,
+// and that the list cannot outlive the mask it describes.
 const cleanupSrc = fs.readFileSync(path.resolve(here, '../js/cleanup.js'), 'utf8');
-check('the mask panel carries the trim controls', ['trimBtn', 'islandInfoBtn', 'trimPercent'].every((id) => declared.has(id)));
+check(
+  'the mask panel carries the trim controls and the window list',
+  ['trimBtn', 'windowsBtn', 'trimPercent', 'windowList', 'windowRows', 'windowHint'].every((id) => declared.has(id)),
+);
+check('the window list starts hidden', /id="windowList" class="candidates" hidden/.test(html));
 check(
   'the island engine exports what the app imports',
-  /export function paintedIslands\(/.test(cleanupSrc) && /export function planIslandTrim\(/.test(cleanupSrc),
+  /export function paintedIslands\(/.test(cleanupSrc) &&
+    /export function planIslandTrim\(/.test(cleanupSrc) &&
+    /export function maskWindows\(/.test(cleanupSrc),
 );
-check('main.js imports the island engine', /import \{ paintedIslands, planIslandTrim \} from '\.\/cleanup\.js'/.test(js));
+check('main.js imports the island engine', /import \{ paintedIslands, planIslandTrim, maskWindows \} from '\.\/cleanup\.js'/.test(js));
 check('the engine has no dependency on three or the DOM', !/from 'three|document\.|window\./.test(cleanupSrc));
-check('the trim button runs the trim', /el\('trimBtn'\)\.addEventListener\('click', trimIslands\)/.test(js));
-const countFn = js.slice(js.indexOf('async function countIslands()'), js.indexOf('async function trimIslands()'));
-check('the dry run is its own button', /el\('islandInfoBtn'\)\.addEventListener\('click', countIslands\)/.test(js) && countFn.length > 0);
-check(
-  'the dry run only reports — no stroke, no edit',
-  countFn.length > 0 && !/paintIndices|beginStroke/.test(countFn),
-  countFn.slice(0, 60).replace(/\n/g, ' '),
-);
+check('the trim button runs the trim', /el\('trimBtn'\)\.addEventListener\('click', trimWindows\)/.test(js));
+check('the window list is its own button', /el\('windowsBtn'\)\.addEventListener\('click', \(\) => listWindows\(\)\)/.test(js));
 check('the threshold is read from the panel every time, not remembered', /Number\(el\('trimPercent'\)\.value\)/.test(js));
 check(
+  'the threshold runs to 100% of the model, so a typed 99 is not silently cut to 50',
+  /Math\.min\(100, Number\(el\('trimPercent'\)\.value\)/.test(js) && /id="trimPercent"[^>]*max="100"/.test(html) &&
+    !/Math\.min\(50, Number\(el\('trimPercent'\)/.test(js),
+);
+check(
   'both go through one analysis, so the numbers cannot disagree',
-  (js.match(/await analyseIslands\(\)/g) || []).length === 2 && /minDiagonal: \(percent \/ 100\) \* topology\.diagonal/.test(js),
+  (js.match(/await analyseWindows\(/g) || []).length === 2 && /minDiagonal: \(percent \/ 100\) \* topology\.diagonal/.test(js),
+);
+check(
+  'a button that cannot help says which shape of mask it cannot help with',
+  /Nothing to trim: the whole mask is one painted window/.test(js) &&
+    /“List windows” removes it, or the erase brush takes/.test(js),
+);
+check(
+  'and a threshold that is merely too low names the percentage that would work',
+  /A threshold over[\s\S]{0,120}?would release it/.test(js) && /wouldNeed = \(smallest\.diagonal \/ topo\.diagonal\) \* 100/.test(js),
+);
+const rowFn = js.slice(js.indexOf('function renderWindowList('), js.indexOf('function featureListText('));
+check(
+  'every window gets a row naming its size and the features it is painted with',
+  rowFn.length > 0 && /w\.diagonal\.toFixed\(2\)/.test(rowFn) && /featureListText\(w\.features\)/.test(rowFn),
+);
+check(
+  'the row buttons are the two the guide names',
+  /textContent = 'Remove'/.test(rowFn) && /textContent = 'Keep only'/.test(rowFn),
+);
+check('Remove releases exactly the window its row names', /releaseWindows\(\[w\], `Removed window/.test(rowFn));
+check('Keep only releases every other window', /windows\.filter\(\(other\) => other !== w\)/.test(rowFn));
+check('a button with nothing to do is disabled rather than misleading', /only\.disabled = windows\.length === 1/.test(rowFn));
+check(
+  'a release is exactly the vertices the window carries',
+  /for \(const w of targets\) released\.push\(\.\.\.w\.fileVertices\)/.test(js) &&
+    /fileVertices: fileVertices\[k\]/.test(cleanupSrc),
+);
+check(
+  'releasing a window is one undo step, like every other mask edit',
+  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(released, 0\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+);
+check('the list rebuilds itself from what is left', /await listWindows\(\{ quiet: true \}\)/.test(js));
+check(
+  'the list is hidden the moment the mask it describes changes',
+  /if \(windowBox && !windowBox\.hidden\) windowBox\.hidden = true/.test(js),
 );
 check(
   'the trim lands as one undo step that releases exactly the planned vertices',
@@ -228,10 +275,13 @@ check(
 );
 check('a trim points at the build it leaves behind', /build again to match the trimmed mask/.test(js));
 check(
-  'the released vertices are file vertices, joined to the islands through the weld',
-  /doomedWelds\[weldOf\[i\]\]/.test(cleanupSrc),
+  'the vertices a trim and a removal release are file vertices, joined to the islands through the weld',
+  /doomedWelds\[weldOf\[i\]\]/.test(cleanupSrc) && /label\[weldOf\[i\]\]/.test(cleanupSrc),
 );
-check('main.js exposes the island engine for scripted checks', /islandIo: \{ paintedIslands, planIslandTrim \}/.test(js));
+check(
+  'main.js exposes the island engine for scripted checks',
+  /islandIo: \{ paintedIslands, planIslandTrim, maskWindows \}/.test(js),
+);
 
 check('the centring control exists', declared.has('centreOnGrid'));
 check('it starts checked, so a fresh model is centred by default', /id="centreOnGrid" checked/.test(html));
