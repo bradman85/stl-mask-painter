@@ -800,6 +800,25 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
     <tr>
+      <td class="k">Sit the exported part on the bed (Z = 0)</td>
+      <td>
+        On by default. A slicer reads <b>Z = 0 as the plate</b>, and an STL keeps whatever
+        coordinates its exporter used — so a shell built around, say, the face of a figure that
+        stands 41 mm above its own origin lands in the slicer floating 41 mm in the air, and the
+        part has to be dragged down before it can be printed. The viewport cannot show you that,
+        because <b>Centre model on the grid</b> moves the <em>view</em> rather than the mesh: what
+        you see sitting on the grid is not where the file says the part is.
+        <br>With the box ticked, the exported file is moved so its lowest point is Z 0. <b>Only Z
+        moves, and only in the copy that gets written</b> — X and Y stay where the model has them
+        (the slicer's own arrange puts the part on the plate), and the mask, the panels, the
+        preview and the built shell are untouched, so nothing you see or paint changes. The
+        status line always says which of the three happened: it was moved (and by how far), it was
+        already on Z 0, or the box was unticked and the file keeps the model's own coordinates.
+        <br>Untick it when the Z matters: lining the mask up against the figure in a slicer, or
+        printing mask and model in one job at the coordinates they were authored in.
+      </td>
+    </tr>
+    <tr>
       <td class="k">Export stencil STL</td>
       <td>
         Writes the built shell as a binary STL (the
@@ -1147,10 +1166,11 @@ end_header
   </p>
   <table>
     <tr><th>Detail</th><th>Behaviour</th></tr>
-    <tr><td class="k">Units</td><td>Untouched: the shell is in the model's own units, in the model's own coordinate frame, so importing it next to the figure in a slicer lines the two up.</td></tr>
+    <tr><td class="k">Units</td><td>Untouched: the shell is in the model's own units, in the model's own coordinate frame.</td></tr>
+    <tr><td class="k">Z position</td><td>The vertices are written with the part's lowest point at <b>Z 0</b> unless <a href="#stencil">Sit the exported part on the bed</a> is unticked. X and Y are never moved, so a mask still lines up with the figure if you untick it and import both into a slicer together.</td></tr>
     <tr><td class="k">Watertight</td><td>The build only reports success after checking that every edge is used by exactly two triangles with consistent winding. A refused build leaves export disabled.</td></tr>
     <tr><td class="k">Size</td><td>Exactly <code>84 + 50 × triangles</code> bytes — the tests assert this, re-read the file and re-check it welds back into the same watertight, same-volume solid.</td></tr>
-    <tr><td class="k">Orientation</td><td>Whatever up axis you are viewing with is <em>not</em> baked in: the mesh is written in model coordinates, so rotate it in the slicer if your printer expects Z up.</td></tr>
+    <tr><td class="k">Orientation</td><td>Whatever up axis you are viewing with is <em>not</em> baked in: the mesh is written in model coordinates, so rotate it in the slicer if your printer expects Z up. Only the Z <em>position</em> is moved onto the plate (see above).</td></tr>
   </table>
 </section>
 

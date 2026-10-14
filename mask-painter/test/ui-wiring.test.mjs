@@ -321,7 +321,8 @@ check(
 );
 check(
   'and writes the fresh result, never the old one',
-  /const \{ buffer, triangles, bytes \} = io\.buildBinarySTL\(res\.positions, res\.indices\)/.test(js) &&
+  /const written = onBed \? io\.setOnBed\(res\.positions\)\.positions : res\.positions;/.test(js) &&
+    /const \{ buffer, triangles, bytes \} = io\.buildBinarySTL\(written, res\.indices\)/.test(js) &&
     !/buildBinarySTL\(stencil\.result/.test(js),
 );
 check('a refused rebuild writes no file at all', /Nothing exported: the stencil could not be built/.test(js));
@@ -330,6 +331,43 @@ check(
   /\$\{s\.windowLoops\} window\$\{s\.windowLoops === 1 \? '' : 's'\} in/.test(js),
 );
 check('the export button still calls it', /el\('stencilExportBtn'\)\.addEventListener\('click', exportStencilSTL\)/.test(js));
+
+// -------------------------------------------------------- the part has to land on the bed
+//
+// The report: the exported stencil floats in the slicer, and the Z has to be hunted for. A slicer
+// reads Z = 0 as the plate and an STL keeps its exporter's coordinates, so the file is the only
+// place the part can be put on the bed — the viewport never shows the problem, because centring
+// moves the view rather than the mesh. These pin the three halves that can go wrong silently:
+// the option being read from the panel, only the written copy moving, and only Z moving in it.
+const ioSrc = fs.readFileSync(path.resolve(here, '../js/io.js'), 'utf8');
+check('the stencil panel carries the bed option', declared.has('stencilOnBed'));
+check('it is on by default, so an export lands on the plate', /id="stencilOnBed" checked/.test(html));
+check(
+  'the export reads it every time instead of remembering it',
+  /const onBed = el\('stencilOnBed'\)\.checked;/.test(js),
+);
+check(
+  'checked, the written points are the ones setOnBed() moved; unticked, the build\'s own',
+  /onBed \? io\.setOnBed\(res\.positions\)\.positions : res\.positions/.test(js),
+);
+check(
+  'the solid is moved by a copy, so the panel and the preview keep their own vertices',
+  /export function setOnBed\(positions\)[\s\S]{0,300}?positions\.slice\(\)/.test(ioSrc),
+);
+check(
+  'and only Z is moved in it — X and Y stay where the model has them',
+  /for \(let i = 2; i < out\.length; i \+= 3\) out\[i\] -= drop;/.test(ioSrc) &&
+    !/out\[i \+= 1\]|out\[i \+ 1\] -=/.test(ioSrc.split('export function setOnBed')[1] || ''),
+);
+check(
+  'a part already on Z 0 is not copied or moved at all',
+  /const drop = lowestZ\(positions\);\s*\n\s*if \(drop === 0\) return \{ positions, drop: 0 \};/.test(ioSrc),
+);
+check(
+  'the status line says what happened to Z, either way',
+  /sat on the bed:[\s\S]{0,160}?lowest Z is 0/.test(js) && /already on Z 0, so nothing moved/.test(js) &&
+    /left in the model's own coordinates \(lowest Z/.test(js),
+);
 
 // ------------------------------------------------- the session file
 // Saving the windows and loading them back to add more is the mask JSON; what it has to carry to

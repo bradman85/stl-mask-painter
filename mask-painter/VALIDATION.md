@@ -52,7 +52,7 @@ this document is about proving it works.
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P17 |
 | [Mask](help.html#mask) | M1–M9 |
-| [Paint stencil](help.html#stencil) | S1–S12 |
+| [Paint stencil](help.html#stencil) | S1–S13 |
 | [Model & view](help.html#view) | V1–V5 |
 | [Export / import](help.html#export) | X1–X11 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
@@ -839,11 +839,14 @@ export rebuilds before writing and writes nothing when the rebuild is refused.
 1. Load the exported STL beside the figure in your slicer.
 2. Slice it without repair.
 
-**Expected** It is a single watertight solid, in the model's own units and coordinate frame, so
-it lines up with the figure without scaling. Up axis is *not* baked in — rotate it in the slicer
-if your printer expects Z up. The painted area is a hole, not a thin wall.
+**Expected** It is a single watertight solid, in the model's own units: X and Y in the model's own
+coordinate frame, so it lines up with the figure without scaling, and — with **Sit the exported
+part on the bed** ticked (the default, S13) — its lowest point on **Z 0**, so the slicer puts it on
+the plate instead of leaving it floating. Up axis is *not* baked in — rotate it in the slicer if
+your printer expects Z up. The painted area is a hole, not a thin wall.
 **Guide** [Paint stencil → Stencil STL](help.html#stl)
 **Automated** `test/stencil.test.mjs` (watertight and consistent winding, re-read from the file);
+`test/app-path.test.mjs` measures the written file's lowest Z;
 **not** automated for slicer behaviour.
 **Result** ☐ pass ☐ fail — notes:
 
@@ -877,6 +880,38 @@ the model again.
 **Guide** [Paint stencil](help.html#stencil)
 **Automated** `test/ui-wiring.test.mjs` — the button exists, its handler is `discardStencil`, and
 that function clears the preview, drops the result and disables the export.
+**Result** ☐ pass ☐ fail — notes:
+
+#### S13 · The exported part sits on the bed
+
+**Steps**
+1. Load the example model, paint a face window (the eyes are the quickest), build the stencil and
+   read the result panel's size line.
+2. Leave **Sit the exported part on the bed (Z = 0)** ticked and press **Export stencil STL**.
+   Read the status bar.
+3. Open the file in a slicer: it must land flat on the plate with no dragging.
+4. Untick the box, export again, and compare the two files in the slicer next to the figure.
+5. Tick it, load a model that already sits on its own Z 0 (or a **Z up** CAD part), and export:
+   the status bar should say nothing moved.
+
+**Expected** With the box ticked the written file's **lowest vertex is exactly Z 0** — the status
+bar says `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and Y untouched)` for
+the example face mask, which in model coordinates has its lowest point at Z 41.0 and therefore
+floats 41 mm in the air in a slicer. The part is otherwise identical: same triangles, same size,
+still one watertight piece, and X/Y unchanged, so it still lines up with the figure. **Only the
+written copy moves** — the mask, the panels, the preview and the result panel are untouched (paint
+and build once, then export with the box on and off: the viewport must not change either time).
+Unticked, the status bar says `left in the model's own coordinates (lowest Z 41.00)` and the file
+is the shell exactly where it sits on the model, which is what you want for lining the mask up
+against the figure in a slicer. A part already on Z 0 reports `its lowest point was already on
+Z 0, so nothing moved`.
+**Guide** [Paint stencil](help.html#stencil), [Stencil STL format](help.html#stl)
+**Automated** `test/app-path.test.mjs` — the transform as arithmetic (floating, sunk −3 → 0, and
+already-on-the-plate returned unchanged), that the array it is given is never edited, and the real
+export: the file's lowest Z is 0 exactly, it spans Z 0…12.27, min X matches the build's, and it
+re-reads as the same watertight solid (98,820 triangles, volume 2,110.9) — plus that unticking
+leaves the file at the build's own 41.002. `test/ui-wiring.test.mjs` pins the control, its default,
+and that only the written copy is moved.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1281,7 +1316,7 @@ which is the order the panels are cut in).
 
 **Expected** Seven suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
 `painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (47 checks), `ui-wiring.test.mjs` and
-`help.test.mjs` (208 checks).
+`help.test.mjs` (209 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1326,7 +1361,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 75 |
+| Items run | ___ of 76 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

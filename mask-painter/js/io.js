@@ -150,6 +150,42 @@ export function buildPLY(mask) {
 }
 
 /**
+ * The same solid, moved so its lowest point rests on the print bed.
+ *
+ * A slicer treats Z = 0 as the plate, and an STL keeps whatever coordinates its exporter used.
+ * A shell built on a model that is authored 40 mm above its own Z = 0 therefore lands in the
+ * slicer floating 40 mm up, and the part has to be dragged down (or the plate lifted) before it
+ * can be printed. The viewport does not show that, because centring the model on the grid moves
+ * the view rather than the mesh — the written file is the only place the part can be put on the
+ * bed.
+ *
+ * Only Z moves, and only the copy that gets written: X and Y stay exactly where the model has
+ * them (the slicer's own arrange puts the part on the plate), the mask, the panels, the preview
+ * and every other export keep the model's coordinates. `drop` is how far the part moved — the
+ * lowest Z it had — which is what the status line reports. A part already sitting on Z 0 is
+ * returned as it is, so nothing is copied for the common case.
+ *
+ * @param {Float32Array|number[]} positions flat xyz, the solid's own vertices
+ * @returns {{ positions: Float32Array|number[], drop: number }} `drop` is the lowest Z the part
+ *   had: positive when it was floating, negative when it was sunk into the plate, 0 when it was
+ *   already sitting on it.
+ */
+export function setOnBed(positions) {
+  const drop = lowestZ(positions);
+  if (drop === 0) return { positions, drop: 0 };
+  const out = positions.slice();
+  for (let i = 2; i < out.length; i += 3) out[i] -= drop;
+  return { positions: out, drop };
+}
+
+/** The lowest Z of a solid's own vertices — how high its lowest point floats over Z = 0. */
+export function lowestZ(positions) {
+  let minZ = Infinity;
+  for (let i = 2; i < positions.length; i += 3) if (positions[i] < minZ) minZ = positions[i];
+  return Number.isFinite(minZ) ? minZ : 0;
+}
+
+/**
  * Binary STL of an indexed triangle mesh — the format 3D printing tools want.
  * `positions` is a flat xyz array, `indices` a flat triangle index array.
  */

@@ -14,7 +14,7 @@ import * as THREE from '../vendor/three.module.js';
 import { MaskLayer } from '../js/mask.js';
 import { createFeatureList } from '../js/features.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal, geodesicField } from '../js/stencil.js';
-import { buildBinarySTL, buildMaskJSON, parseMaskJSON } from '../js/io.js';
+import { buildBinarySTL, buildMaskJSON, parseMaskJSON, setOnBed, lowestZ } from '../js/io.js';
 import { maskWindows } from '../js/cleanup.js';
 import { parseBinarySTL, fmt, InsideTester, TriGrid } from './helpers.mjs';
 
@@ -124,6 +124,107 @@ check(
   v2.watertight === true && v2.components === 1 && Math.abs(v2.volume - v.volume) < 1e-3 * Math.max(1, v.volume),
   `${v2.components} piece(s), volume ${fmt(v2.volume, 1)} vs ${fmt(v.volume, 1)}`,
 );
+
+// ------------------------------------------------- sitting the part on the print bed
+//
+// The report this answers: the exported stencil floats in the slicer, because an STL keeps the
+// coordinates its exporter used and the slicer reads Z = 0 as the plate. The viewport cannot
+// show that — centring the model on the grid moves the view, not the mesh — so the file is the
+// only place it can be put right. Two halves: the transform itself as arithmetic on a known
+// solid, and the real exported file re-read with its lowest Z measured off the vertices.
+{
+  const pushed = Float32Array.from([3, 4, 5, 3, 5, 7, 4, 4, 9]);
+  const placed = setOnBed(pushed);
+  check(
+    'setOnBed moves the lowest Z to 0 and reports how far it moved',
+    placed.drop === 5 && placed.positions[2] === 0 && placed.positions[5] === 2 && placed.positions[8] === 4,
+    `drop ${placed.drop}, Z now ${placed.positions[2]}, ${placed.positions[5]}, ${placed.positions[8]}`,
+  );
+  check(
+    'it moves Z only — X and Y keep the model’s own coordinates',
+    placed.positions[0] === 3 && placed.positions[1] === 4 && placed.positions[3] === 3 && placed.positions[4] === 5 && placed.positions[6] === 4 && placed.positions[7] === 4,
+    `X/Y ${placed.positions.filter((_, i) => i % 3 !== 2).join(', ')}`,
+  );
+  check(
+    'and it never edits the solid it was given (the preview and the panel share it)',
+    pushed[2] === 5 && pushed[5] === 7 && lowestZ(pushed) === 5,
+    `the original still starts at Z ${pushed[2]}`,
+  );
+  const sunk = setOnBed(Float32Array.from([0, 0, -3, 1, 0, 1]));
+  check(
+    'a part sunk below the plate is lifted onto it',
+    sunk.drop === -3 && sunk.positions[2] === 0 && sunk.positions[5] === 4,
+    `drop ${sunk.drop}, Z now ${sunk.positions[2]} and ${sunk.positions[5]}`,
+  );
+  const onBed = Float32Array.from([0, 0, 0, 1, 0, 2]);
+  const untouched = setOnBed(onBed);
+  check(
+    'a part already sitting on Z 0 is handed back as it is, with nothing copied',
+    untouched.drop === 0 && untouched.positions === onBed,
+    `drop ${untouched.drop}, same array: ${untouched.positions === onBed}`,
+  );
+  check(
+    'a solid with no vertices is not a NaN',
+    lowestZ(new Float32Array(0)) === 0 && setOnBed(new Float32Array(0)).drop === 0,
+  );
+
+  // The real file: what the export button writes, with the box ticked and unticked.
+  const solidLowest = lowestZ(res.positions);
+  const dropped = setOnBed(res.positions);
+  const droppedFile = parseBinarySTL(new Uint8Array(buildBinarySTL(dropped.positions, res.indices).buffer));
+  let fileLowest = Infinity;
+  let fileHighest = -Infinity;
+  let minX = Infinity;
+  for (let i = 0; i < droppedFile.positions.length; i += 3) {
+    if (droppedFile.positions[i + 2] < fileLowest) fileLowest = droppedFile.positions[i + 2];
+    if (droppedFile.positions[i + 2] > fileHighest) fileHighest = droppedFile.positions[i + 2];
+    if (droppedFile.positions[i] < minX) minX = droppedFile.positions[i];
+  }
+  let layoutMinX = Infinity;
+  for (let i = 0; i < res.positions.length; i += 3) if (res.positions[i] < layoutMinX) layoutMinX = res.positions[i];
+  console.log(
+    `      the built shell's lowest Z in model coordinates is ${solidLowest.toFixed(3)}; ` +
+    `written to the bed it spans Z 0…${(fileHighest - fileLowest).toFixed(2)} (${fmt(droppedFile.triCount)} triangles)`,
+  );
+  check(
+    'the exported file’s lowest vertex is Z 0 — not near it, exactly it',
+    Math.abs(fileLowest) < 1e-5 && fileHighest > fileLowest,
+    `lowest Z ${fileLowest.toExponential(1)}, highest ${fileHighest.toFixed(3)}`,
+  );
+  check(
+    'and dropping it moved only Z, so the part is the same shape in the plate plane',
+    Math.abs(minX - layoutMinX) < 1e-5 && droppedFile.triCount === stl.triangles,
+    `min X ${minX.toFixed(3)} vs ${layoutMinX.toFixed(3)}, ${fmt(droppedFile.triCount)} triangles`,
+  );
+  const droppedBack = (() => {
+    const t = buildTopology(droppedFile.positions, droppedFile.positions.length / 3);
+    const idx = new Int32Array(droppedFile.triCount * 3);
+    for (let i = 0; i < idx.length; i += 1) idx[i] = t.weldOf[i];
+    return validateSolid({ positions: t.positions, indices: idx });
+  })();
+  check(
+    'the part on the bed is the same watertight solid, same volume, same window',
+    droppedBack.watertight === true &&
+      droppedBack.components === v.components &&
+      Math.abs(droppedBack.volume - v.volume) < 1e-3 * Math.max(1, v.volume),
+    `volume ${fmt(droppedBack.volume, 1)} vs ${fmt(v.volume, 1)}, ${droppedBack.components} piece(s)`,
+  );
+  check(
+    'the drop is exactly the lowest Z the build had',
+    Math.abs(dropped.drop - solidLowest) < 1e-6,
+    `dropped ${dropped.drop.toFixed(3)}, build's lowest ${solidLowest.toFixed(3)}`,
+  );
+  // Unticked: the file is the shell where it sits on the model, floating and all — the escape
+  // hatch for lining the mask up against the figure in the slicer.
+  const keptFile = parseBinarySTL(new Uint8Array(buildBinarySTL(res.positions, res.indices).buffer));
+  let keptLowest = Infinity;
+  for (let i = 2; i < keptFile.positions.length; i += 3) if (keptFile.positions[i] < keptLowest) keptLowest = keptFile.positions[i];
+  check(
+    'unticked, the file keeps the model’s own coordinates (that is what the box is for)',
+    Math.abs(keptLowest - solidLowest) < 1e-5,
+    `lowest Z ${keptLowest.toFixed(3)} — the same as the build's`,
+  );
+}
 
 // ------------------------------------------------- the window really is the painted area
 

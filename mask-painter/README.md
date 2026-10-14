@@ -255,6 +255,33 @@ Numbers are in model units, which are millimetres for a model exported at final 
 window edge itself is deliberately thinner (`edgeLip`, ~0.4) than the rest of the sheet, so
 a brush stroke hits a thin lip rather than a wall.
 
+### Sitting the exported part on the bed
+
+A slicer reads **Z = 0 as the plate**, and an STL keeps the coordinates its exporter used — so a
+shell built on a figure whose origin is somewhere else lands in the slicer floating, and the part
+has to be dragged down before it will print. The viewport never shows this: **Centre model on the
+grid** moves the *view*, not the mesh, so what looks like it is standing on the grid is not where
+the file says it is. Measured on the example model, a mask built around the face has its lowest
+vertex at **Z 41.0** in model coordinates — 41 mm of air under it in a slicer, which is what
+"the Z is not zeroed out" looks like.
+
+**Sit the exported part on the bed (Z = 0)** (on by default) fixes it in the file, where it has
+to be fixed: `io.setOnBed(positions)` returns a copy of the solid with its lowest Z moved to 0
+(`io.lowestZ` reports what it was — the amount moved, positive when the part was floating, negative
+when it was sunk into the plate). Only Z moves, and only in the copy that is written: X and Y stay
+where the model has them (the slicer's own arrange puts the part on the plate), and the mask, the
+panels, the built shell and the preview keep the model's coordinates, so nothing on screen or in
+any other export changes. A part already on Z 0 is handed back without being copied. Untick the box
+to get the model's own coordinates back, which is what you want when the mask has to line up
+against the figure in a slicer — or when mask and model are printed in one job. The status line
+always says which of the three happened.
+
+| What the status line says | Meaning |
+| --- | --- |
+| `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and Y untouched)` | the box was ticked and the part was floating |
+| `its lowest point was already on Z 0, so nothing moved` | ticked, and the model was authored on its own Z 0 |
+| `left in the model's own coordinates (lowest Z 41.00)` | unticked |
+
 ### Trimming the specks that would become extra windows
 
 Every separate painted region becomes its own **window** in the shell, and regions that do not
@@ -360,7 +387,9 @@ that model; the welded topology is cached and reused by later builds.
   Blender, CloudCompare and friends.
 - **Stencil STL** — binary STL of the printable mask, rebuilt from the mask as it stands on
   screen: if the paint has changed since the last build, the export builds again first (and says
-  so), so the file always holds every window rather than last round's. A copy of the build can be
+  so), so the file always holds every window rather than last round's. The lowest point of the
+  written file is Z 0 unless **Sit the exported part on the bed** is unticked, so it lands on the
+  slicer's plate instead of floating at the model's own Z. A copy of the build can be
   kept in the viewport as a preview (double-sided, semi-transparent, toggled by **Preview**, or
   removed with **Discard stencil**). The preview is drawn *under* the
   paint layer, so painted areas stay in their exact colours while the shell reads clearly on
@@ -432,6 +461,13 @@ Measured by `test/cleanup.test.mjs` on the same model:
 - centring: the grid offset on the bundled figure is −10.5, 42.1, −26.4 units; applying it centres
   the box and puts its lowest point on the grid, it leaves the model's own coordinates untouched,
   and it is a no-op for a model that is already centred.
+- the bed: the built shell around the example face has its lowest vertex at **Z 41.0** in model
+  coordinates (it would float 41 mm in a slicer); the exported file with the option on measures
+  **lowest Z = 0 exactly** and spans Z 0…12.27, re-reads as the same watertight solid (98,820
+  triangles, volume 2,110.9 both ways, 1 piece), and its min X is unchanged — Z only; with the box
+  unticked the file's lowest Z is the build's own 41.002 again. The transform itself is checked as
+  arithmetic: floating, sunk (−3 → 0) and already-on-the-plate solids, and that the array it is given
+  is never edited (the preview and the panel share it).
 - rendering: 6.5% of viewport pixels classify as the Head colour, 2.7% Body, plus Eyes and
   Mouth dabs, matching the painted vertex counts.
 - JSON round trip: export → import reproduces every vertex and feature id exactly
