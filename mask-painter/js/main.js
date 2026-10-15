@@ -7,6 +7,7 @@ import * as io from './io.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal } from './stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
 import { paintedIslands, planIslandTrim, maskWindows } from './cleanup.js';
+import { normaliseRect, rectSize } from './boxselect.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -14,7 +15,7 @@ const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
 const el = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
-const TOOL_NAMES = { brush: 'Brush', fill: 'Region fill', part: 'Part', erase: 'Erase', picker: 'Pick' };
+const TOOL_NAMES = { brush: 'Brush', fill: 'Region fill', part: 'Part', box: 'Box select', erase: 'Erase', picker: 'Pick' };
 
 const state = {
   features: createFeatureList(),
@@ -39,6 +40,7 @@ viewer.onFps = (fps) => {
 let mask = null;
 let modelName = '';
 let stroke = null;
+let boxDrag = null;
 
 // The paint stencil: an optional solid built from the painted mask. The welded topology is
 // expensive on a big model, so it is cached per loaded model and reused across rebuilds.
@@ -385,12 +387,21 @@ let lastWorldPoint = null;
  * must be ignored *here*, after this test, or Alt-click never reaches the Part tool.
  */
 function modifierClickIgnored(e) {
-  return (e.altKey || e.ctrlKey || e.metaKey) && state.tool !== 'part';
+  // Box select is the second tool that means something by a modifier: Alt/Ctrl turns the drag
+  // into an erase. Every other tool treats it as "not painting", here, so the modifier reaches
+  // the tools that use it.
+  return (e.altKey || e.ctrlKey || e.metaKey) && state.tool !== 'part' && state.tool !== 'box';
 }
 
 function onPointerDown(e) {
   if (!mask) return;
   if (e.button !== 0 || state.navigate || modifierClickIgnored(e)) return;
+  // The box is the one tool that does not need the model under the cursor: a rectangle may be
+  // started on the background and dragged over the part of the model you want.
+  if (state.tool === 'box') {
+    startBoxSelect(e);
+    return;
+  }
   const hit = viewer.pick(e.clientX, e.clientY);
   if (!hit) {
     if (state.tool === 'picker') setStatus('Nothing under the cursor — click on the model surface.');
@@ -445,6 +456,10 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   if (!mask) return;
+  if (boxDrag) {
+    moveBoxSelect(e);
+    return;
+  }
   if (stroke) {
     paintSegment(stroke.last, { x: e.clientX, y: e.clientY });
     stroke.last = { x: e.clientX, y: e.clientY };
@@ -474,6 +489,10 @@ function cursorText(p) {
 }
 
 function endStroke() {
+  if (boxDrag) {
+    finishBoxSelect();
+    return;
+  }
   if (!stroke) return;
   releasePointer(stroke.pointerId);
   stroke = null;
@@ -481,6 +500,113 @@ function endStroke() {
   mask.flush();
   if (recorded) updateStats();
   updateUndoButtons();
+}
+
+// ------------------------------------------------------ box select (rubber band)
+
+/**
+ * The rectangle a drag is drawing, in the pixels the viewer's selection is measured in.
+ *
+ * The app's own coordinates everywhere else are the file's, and they are not what a rubber band
+ * is drawn in: the drag is in pixels, canvas-relative (`clientX/Y` minus the canvas rect), and the
+ * inverse transform — `viewer.selectInScreenRect` — is what turns those pixels back into the
+ * vertices underneath them.
+ */
+function canvasPoint(e) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+}
+
+function showBoxRect(from, to) {
+  const node = el('boxSelect');
+  const r = normaliseRect(from, to);
+  const canvasRect = canvas.getBoundingClientRect();
+  const viewRect = el('viewport').getBoundingClientRect();
+  node.hidden = false;
+  node.style.left = `${canvasRect.left - viewRect.left + r.x0}px`;
+  node.style.top = `${canvasRect.top - viewRect.top + r.y0}px`;
+  node.style.width = `${r.x1 - r.x0}px`;
+  node.style.height = `${r.y1 - r.y0}px`;
+}
+
+function hideBoxRect() {
+  const node = el('boxSelect');
+  if (node) node.hidden = true;
+}
+
+function startBoxSelect(e) {
+  e.preventDefault();
+  capturePointer(e.pointerId);
+  const p = canvasPoint(e);
+  boxDrag = { pointerId: e.pointerId, from: p, to: p, erase: e.altKey || e.ctrlKey || e.metaKey };
+  viewer.hideCursor();
+  showBoxRect(p, p);
+  setStatus(
+    `Box select: drag a rectangle over what to ${boxDrag.erase ? 'release' : 'paint'} — ` +
+      'only the surface facing you is taken (Esc cancels).',
+  );
+}
+
+function moveBoxSelect(e) {
+  const p = canvasPoint(e);
+  boxDrag.to = p;
+  showBoxRect(boxDrag.from, p);
+  const { width, height } = rectSize(normaliseRect(boxDrag.from, p));
+  el('statusCursor').textContent = `${Math.round(width)} × ${Math.round(height)} px`;
+}
+
+function cancelBoxSelect() {
+  if (!boxDrag) return;
+  releasePointer(boxDrag.pointerId);
+  boxDrag = null;
+  hideBoxRect();
+  viewer.hideCursor();
+  setStatus('Box select cancelled — nothing painted.');
+}
+
+/**
+ * Applies the rectangle that was just released: the vertices under it, painted with the current
+ * feature (or released, if the drag was Alt/Ctrl), in one undo step.
+ *
+ * The counts the status line reports are the honest part of a screen-space selection: how many
+ * vertices were under the rectangle at all, how many of those faced away and were left alone, and
+ * how many came from the mirrored box, so a surprising result can be read off the status bar
+ * instead of guessed at.
+ */
+function finishBoxSelect() {
+  const drag = boxDrag;
+  boxDrag = null;
+  releasePointer(drag.pointerId);
+  hideBoxRect();
+  if (!mask) return;
+
+  const sel = viewer.selectInScreenRect(normaliseRect(drag.from, drag.to), {
+    mirror: state.mirrorX ? { planeX: state.mirrorPlaneX } : null,
+  });
+  if (!sel.count) {
+    setStatus(
+      sel.covered
+        ? `Box select: all ${fmt(sel.covered)} vertices in the rectangle face away — nothing painted.`
+        : 'Box select: nothing under the rectangle — drag it over the model.',
+    );
+    return;
+  }
+
+  const id = drag.erase ? 0 : paintId();
+  mask.beginStroke();
+  const changed = mask.paintIndices(sel.vertices, id);
+  const recorded = mask.endStroke();
+  mask.flush();
+  updateStats();
+  updateUndoButtons();
+  const name = featureById(state.currentFeatureId)?.name || 'feature';
+  setStatus(
+    `Box select: ${fmt(changed)} vertices ${drag.erase ? 'released' : `painted as “${name}”`} — ` +
+      `${fmt(sel.count)} of the ${fmt(sel.covered)} in the rectangle face the camera` +
+      (sel.hidden ? ` (${fmt(sel.hidden)} face away and were left alone)` : '') +
+      (sel.mirrored ? `, plus ${fmt(sel.mirrored)} mirrored across X` : '') +
+      (recorded ? '.' : ' — every one of them already had that paint.'),
+  );
 }
 
 function updateCursor(hit) {
@@ -651,9 +777,17 @@ function setTool(tool) {
   }
   el('fillOptions').classList.toggle('on', tool === 'fill');
   el('seamOptions').classList.toggle('on', tool === 'fill' || tool === 'part');
+  el('boxOptions').classList.toggle('on', tool === 'box');
   hoverPick = null;
   // The panel list belongs to the click that produced it, not to the next tool.
   if (tool !== 'part') hidePartCandidates();
+  // A rectangle belongs to the tool that started it: switching tools mid-drag throws it away
+  // rather than finishing a selection the user has already stopped asking for.
+  if (tool !== 'box' && boxDrag) {
+    releasePointer(boxDrag.pointerId);
+    boxDrag = null;
+  }
+  if (tool !== 'box') hideBoxRect();
   updateHud();
 }
 
@@ -1873,6 +2007,10 @@ window.addEventListener('keydown', (e) => {
     case 'b': setTool('brush'); break;
     case 'f': setTool('fill'); break;
     case 'e': setTool('erase'); break;
+    case 'x': setTool('box'); break;
+    case 'escape':
+      if (boxDrag) cancelBoxSelect();
+      break;
     case 'i':
       // Shift+I is the invert; I on its own is the eyedropper.
       if (e.shiftKey) invertPaint();

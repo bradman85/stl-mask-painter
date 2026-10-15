@@ -97,8 +97,10 @@ check('an empty hover is distinguishable from "no paint at all"', /hoverPick\.pa
 // The bug this pins: Alt/Ctrl-click used to be filtered out before the Part tool ran, so the
 // documented "Alt-click removes a panel" never worked.
 check('modifier clicks are filtered by a named guard', /function modifierClickIgnored\(e\)/.test(js));
-check('the guard exempts the Part tool so Alt-click reaches it',
-  /function modifierClickIgnored\(e\) \{\s*\n\s*return \(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) && state\.tool !== 'part';/.test(js));
+check(
+  'the guard exempts the tools that mean something by a modifier: Part and Box select',
+  /function modifierClickIgnored\(e\) \{\s*\n\s*(?:\/\/[^\n]*\n\s*)*return \(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) &&\s*\n?\s*state\.tool !== 'part' && state\.tool !== 'box';/.test(js),
+);
 check('pointerdown uses the guard rather than testing modifiers inline',
   /if \(e\.button !== 0 \|\| state\.navigate \|\| modifierClickIgnored\(e\)\) return;/.test(js));
 check('the Part tool still reads its own modifiers', /add: e\.shiftKey/.test(js) && /remove: e\.altKey/.test(js));
@@ -392,6 +394,74 @@ check(
 check(
   'the panel option says it covers every piece',
   /id="stencilOnBed" checked title="[^"]*every piece/.test(html),
+);
+
+// ------------------------------------------------------- the box select tool
+//
+// Drag a rectangle and paint what it covers. The half that cannot be checked statically is the
+// projection itself (`test/boxselect.test.mjs` measures that against three.js' own `project()`),
+// so what is pinned here is every join that could silently come apart: the tool in the toolbar,
+// the key, the overlay element and the drag path, the inverse transform being handed the right
+// three matrices, and the selection landing on the mask as one undo step.
+const boxSrc = fs.readFileSync(path.resolve(here, '../js/boxselect.js'), 'utf8');
+const boxViewerSrc = fs.readFileSync(path.resolve(here, '../js/viewer.js'), 'utf8');
+const cssSrc = fs.readFileSync(path.resolve(here, '../css/style.css'), 'utf8');
+check('the paint panel carries the box tool', /<button class="tool" data-tool="box"/.test(html));
+check('main.js names it, so the HUD and the status lines can say what is active', /box: 'Box select'/.test(js));
+check('and X selects it', /case 'x': setTool\('box'\); break;/.test(js));
+check('the rectangle being dragged is drawn', declared.has('boxSelect') && /\.box-select\b/.test(cssSrc) && /\.box-select\[hidden\]/.test(cssSrc));
+check('its options panel exists and is shown for that tool', declared.has('boxOptions') && /el\('boxOptions'\)\.classList\.toggle\('on', tool === 'box'\)/.test(js));
+check(
+  'the drag starts without needing the model under the cursor, and before any paint path',
+  /if \(state\.tool === 'box'\) \{\s*\n\s*startBoxSelect\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
+    /function startBoxSelect\(e\)[\s\S]{0,900}?boxDrag = \{ pointerId: e\.pointerId, from: p, to: p, erase: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey \};/.test(js),
+);
+check(
+  'dragging updates the rectangle, and releasing applies it',
+  /if \(boxDrag\) \{\s*\n\s*moveBoxSelect\(e\);/.test(js) && /if \(boxDrag\) \{\s*\n\s*finishBoxSelect\(\);\s*\n\s*return;/.test(js),
+);
+check('Esc throws a pending rectangle away', /case 'escape':[\s\S]{0,80}?if \(boxDrag\) cancelBoxSelect\(\);/.test(js));
+check(
+  'the Alt/Ctrl drag is the eraser here, so it is not swallowed as "not painting"',
+  /state\.tool !== 'part' && state\.tool !== 'box'/.test(js) && /const id = drag\.erase \? 0 : paintId\(\);/.test(js),
+);
+check(
+  'the selection itself is the inverse transform, taken in canvas pixels',
+  /const p = canvasPoint\(e\);/.test(js) && /function canvasPoint\(e\)[\s\S]{0,220}?canvas\.getBoundingClientRect\(\)/.test(js) &&
+    /viewer\.selectInScreenRect\(normaliseRect\(drag\.from, drag\.to\)/.test(js),
+);
+check(
+  'mirroring is handed to the selection, so the box is taken on the other side too',
+  /mirror: state\.mirrorX \? \{ planeX: state\.mirrorPlaneX \} : null/.test(js),
+);
+check(
+  'the viewer composes projection × view × model and hands it to the selection maths',
+  /selectInScreenRect\(rect, \{ mirror = null, facingOnly = true \} = \{\}\)/.test(boxViewerSrc) &&
+    /screenMatrix\(\s*\n\s*this\.camera\.projectionMatrix\.elements,\s*\n\s*this\.camera\.matrixWorldInverse\.elements,\s*\n\s*this\.baseMesh\.matrixWorld\.elements,/.test(boxViewerSrc) &&
+    /import \{ screenMatrix, verticesInScreenRect \} from '\.\/boxselect\.js'/.test(boxViewerSrc),
+);
+check(
+  'the camera and the normals are taken in the mesh\'s own coordinates, which is what the mask counts in',
+  /worldToLocal\(this\.camera\.position\.clone\(\)\)/.test(boxViewerSrc) &&
+    /positions: geometry\.attributes\.position\.array/.test(boxViewerSrc),
+);
+check(
+  'a whole drag lands on the mask as one undo step',
+  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(sel\.vertices, id\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+);
+check(
+  'the status line admits what the box could not take',
+  /face the camera/.test(js) && /face away and were left alone/.test(js) && /mirrored across X/.test(js) &&
+    /nothing under the rectangle — drag it over the model/.test(js),
+);
+check(
+  'boxselect.js keeps the rules a screen-space box needs, and exports them',
+  /export function verticesInScreenRect/.test(boxSrc) &&
+    /export function normaliseRect/.test(boxSrc) &&
+    /export function screenMatrix/.test(boxSrc) &&
+    /if \(!\(cw > MIN_CLIP_W\)\)/.test(boxSrc) &&
+    /if \(cz < -cw \|\| cz > cw\) continue;/.test(boxSrc) &&
+    /facesCamera\(normals, i, x, y, z, camera\[0\], camera\[1\], camera\[2\]\)/.test(boxSrc),
 );
 
 // ------------------------------------------------- the session file

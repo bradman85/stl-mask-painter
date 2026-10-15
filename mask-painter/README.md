@@ -70,6 +70,7 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 | Erase | Paints "unpainted" back into the mask | `E` |
 | Pick | Eyedropper with a live preview: the ring takes the colour of the feature under the cursor, and in the status bar; a click makes that feature current and hands back to the tool you were painting with (`Shift`-click to keep picking) | `I` |
 | Part | Paints the whole panel of the model under the cursor, bounded by its seams. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is selected when the click lands next to it | `P` |
+| Box select | Drag a rectangle over the viewport: every vertex whose screen position falls inside it, and which faces the camera, is painted — or released with `Alt`/`Ctrl` held. One drag, one undo step | `X` |
 
 - **Features** are a palette of named colours (Eyes, Pupils, Mouth, …). Add your own; each
   row shows how many vertices it owns, and can be hidden or cleared individually.
@@ -82,6 +83,29 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
   base-model visibility, wireframe, ground grid.
 - **Up axis** — Y-up is right for character models, Z-up for CAD/printer meshes.
 - **Views**: Front / Back / Left / Right / Top / Home.
+
+**Box select** (`X`) is the rubber band. Hold the left button and drag a rectangle: every vertex
+whose *screen position* falls inside it is painted with the current feature, as one undo step, no
+matter how many panels or painted windows the selection crosses. The rectangle is a screen-space
+selection — the mesh's own coordinates go through the model, view and projection matrices, are
+divided by the clip-space `w` and compared with the box — so it takes exactly what you can see
+under it, from any camera angle. Three details are worth knowing:
+
+- **It takes only what faces you.** A rectangle over the face of a closed figure also covers the
+  back of the head, whose vertices project into the same pixels; those are culled with the vertex
+  normal against the camera, and the status bar reports how many were left alone. The Brush,
+  Region fill and Part tools work in model space and have no facing rule at all.
+- **Mirroring applies.** With **Mirror across X** on, the box is taken again on the other side of
+  the plane (a vertex is selected when its own pixel is in the rectangle or when its mirror
+  image's pixel is), which is the reflection of the rectangle rather than of the brush sphere.
+- **`Alt`/`Ctrl` releases** paint under the rectangle instead, and `Esc` throws a drag away. A
+  drag may start on the background — it does not need the model under the cursor — and a
+  rectangle that takes nothing says so instead of looking like a dead tool.
+
+Measured on the bundled figure (`test/boxselect.test.mjs`): a box over the middle of the body
+(the middle 30% of the viewport) selects **433,903** of the **930,758** vertices under it in
+**29 ms** — 496,855 are facing away and are left alone — and what it selects is compared vertex
+for vertex against three.js' own projection over twelve rectangles, dragged every way.
 - **Undo / redo** with `Ctrl+Z` / `Ctrl+Shift+Z`; a whole brush stroke, a fill, a clear and a
   palette removal are each one step (40 kept).
 - **Taking back a bad stroke**, four ways: `Ctrl+Z` (the whole dragged stroke at once, not one
@@ -538,7 +562,15 @@ Measured by `test/cleanup.test.mjs` on the same model:
 - the guide: every panel heading's link resolves, every control in `index.html` is named in
   `help.html`, the four format sections exist, the embedded sample parses as valid JSON with
   the fields the importer reads, the quoted format constants match `js/io.js`, and the guide's
-  suite list matches the suites `npm test` actually runs (196 checks).
+  suite list matches the suites `npm test` actually runs (215 checks);
+- the box select: what the selector takes is compared with three.js' own `project()` vertex for
+  vertex over twelve rectangles — whole screen, half, a band, one vertex, dragged backwards, one
+  pixel wide, off the model — and the composed projection × view × model matrix against three.js'
+  own multiplication; on the real figure every sampled vertex three.js puts inside the box was
+  taken, every taken vertex projects inside it, a vertex behind the camera is dropped rather than
+  projected onto a pixel that is not its own, a mirrored box takes the reflected surface but not
+  the reflected vertices that face away, and the selection reaches the mask as the painted
+  vertices in one undo step (undo and redo restoring the exact count).
 
 Checked for the stencil (`npm test`: the generator suite's 131 checks on the bundled model, plus
 the app path and the wiring):

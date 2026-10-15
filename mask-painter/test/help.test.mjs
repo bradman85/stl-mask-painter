@@ -105,8 +105,24 @@ const toolsSection = (() => {
   return norm(helpHtml.slice(from, next < 0 ? from + 4000 : next));
 })();
 check('guide has a paint-tools section', toolsSection.length > 0);
-for (const tool of ['Brush', 'Erase', 'Region fill', 'Part', 'Pick', 'Add']) {
+for (const tool of ['Brush', 'Erase', 'Region fill', 'Part', 'Box select', 'Pick', 'Add']) {
   check(`tools section names "${tool}"`, toolsSection.includes(tool.toLowerCase()));
+}
+// A name in the prose is not a tool row: every tool is a row of this table with its shortcut, and
+// the box select has to be one of them or the guide describes a panel with six buttons and five
+// tools.
+for (const [tool, key] of [
+  ['Brush', 'B'],
+  ['Region fill', 'F'],
+  ['Part', 'P'],
+  ['Box select', 'X'],
+  ['Erase', 'E'],
+  ['Pick', 'I'],
+]) {
+  const row = new RegExp(`<td class="k">${tool}[^<]*<small><kbd>${key}</kbd></small></td>`);
+  const shortcutRow = new RegExp(`<td class="k"><kbd>${key}</kbd></td><td>[^<]*</td>`);
+  check(`the tools table has a ${tool} row with ${key}`, row.test(helpHtml), tool);
+  check(`the shortcut table carries ${key}`, shortcutRow.test(helpHtml), key);
 }
 
 // ---------- 5. the formats the user asked about are covered --------------

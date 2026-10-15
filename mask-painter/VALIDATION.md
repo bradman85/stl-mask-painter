@@ -50,7 +50,7 @@ this document is about proving it works.
 | [Getting started](help.html#start) | L1–L7, U1–U2 |
 | [Top bar](help.html#topbar) | L1–L7 |
 | [Features](help.html#features) | F1–F6 |
-| [Paint](help.html#paint) | P1–P17 |
+| [Paint](help.html#paint) | P1–P18 |
 | [Mask](help.html#mask) | M1–M9 |
 | [Paint stencil](help.html#stencil) | S1–S13 (S13 covers the multi-piece export) |
 | [Model & view](help.html#view) | V1–V5 |
@@ -500,6 +500,44 @@ redo-after-snapshot paths; the cap is exercised.
 orbits without leaving the paint tool, and releasing `Space` returns to painting.
 **Guide** [Paint](help.html#paint-radius)
 **Automated** `test/ui-wiring.test.mjs` (the toggle is wired to the same navigation state).
+**Result** ☐ pass ☐ fail — notes:
+
+#### P18 · Box select — the rubber band
+
+**Steps**
+1. Reload, load the example model, keep the default feature, press **X** (or the **Box select**
+   button) and drag a rectangle across the middle of the body.
+2. Read the status bar, then press **Undo** and **Ctrl+Shift+Z**.
+3. Drag a rectangle over the *head* only, from the Front view, and turn the model to the Back to
+   see what was taken.
+4. Tick **Mirror across X plane**, drag a box over one side of the face, and look at the other
+   side.
+5. Hold `Alt` (or `Ctrl`) and drag a box over part of what you just painted.
+6. Start a drag and press `Esc` before releasing. Then drag a rectangle over the empty background.
+7. Orbit so the figure is seen from above, and drag the *same* rectangle as in step 1.
+
+**Expected** Every vertex under the rectangle that faces the camera turns the current feature's
+colour, in one undo step — `Ctrl+Z` takes the whole box back and redo puts it back exactly. The
+status bar names the numbers: `Box select: 433,903 vertices painted as “Eyes” — 433,903 of the
+930,758 in the rectangle face the camera (496,855 face away and were left alone).` The vertices
+that face away are **not** painted (step 3: the back of the head stays bare when the box covers the
+face), because a screen rectangle covers the far side of a closed part too.
+With mirroring on (step 4) the box is taken again on the other side of the plane, and the status
+bar adds `plus N mirrored across X`; `Alt`/`Ctrl`-drag (step 5) **releases** paint under the
+rectangle instead; `Esc` (step 6) cancels a drag before it is released and a box over the background
+reports `nothing under the rectangle — drag it over the model` rather than looking dead. Step 7 is
+the point of a screen-space selection: the same rectangle over a different camera angle takes
+different vertices, and the status counts change with it.
+**Guide** [Paint → Box select](help.html#paint-box)
+**Automated** `test/boxselect.test.mjs` — the transform and the facing rule on a vertex cloud whose
+screen positions are computed by three.js itself (12 rectangles, vertex for vertex), the composed
+matrix against three.js' own multiply, the behind-the-camera and mirrored-away cases, and on the
+bundled figure through the app's own camera and model group: 433,903 of 930,758 under a
+middle-of-the-body box in 29 ms, every sampled vertex three.js puts inside it taken, every taken
+vertex projecting inside it, and the selection painting the mask as one undo step with undo and
+redo restoring the exact count. `test/ui-wiring.test.mjs` pins the tool, the key, the overlay, the
+drag path, the indices handed to the inverse transform, the modifier exemption and the status
+wording — the browser half (drawing, releasing, hovering) is what this item tests by hand.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1340,9 +1378,9 @@ which is the order the panels are cut in).
    install), then `npm test`.
 2. Confirm the exit status is 0 and read the per-suite summaries.
 
-**Expected** Seven suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
-`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (47 checks), `ui-wiring.test.mjs` and
-`help.test.mjs` (209 checks).
+**Expected** Eight suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
+`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (47 checks), `boxselect.test.mjs`
+(23 checks), `ui-wiring.test.mjs` and `help.test.mjs` (215 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1370,6 +1408,9 @@ the guide. Record them under N3 instead:
   only reachable from that list.
 - A **brush stamp is a sphere**, so it can paint the far side of a thin part. Use **Part** or
   **Region fill**.
+- **Box select leaves the surface facing away** unpainted, and says so in the status bar. A screen
+  rectangle covers the back of a closed figure as well, and painting it would be a surprise; with
+  the figure turned, the same rectangle takes the other surface instead.
 - A **hidden feature** still counts, still exports and still becomes part of the window — hiding
   is view-only.
 - The stencil is **not** part of the undo history. Repainting after a build leaves the old part
@@ -1387,7 +1428,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 76 |
+| Items run | ___ of 77 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

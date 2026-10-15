@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
+import { screenMatrix, verticesInScreenRect } from './boxselect.js';
 
 const BACKGROUND = 0x10141a;
 
@@ -411,6 +412,46 @@ export class Viewer {
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(this.baseMesh.matrixWorld);
     const worldNormal = localNormal.clone().applyMatrix3(normalMatrix).normalize();
     return { worldPoint, localPoint, worldNormal, localNormal, faceIndex: sourceTriangleIndex(hit, this.soupSource) };
+  }
+
+  /**
+   * Every vertex of the loaded model that a screen rectangle covers.
+   *
+   * The rectangle arrives in canvas pixels — the corners a drag collected, `clientX/Y` minus the
+   * canvas bounding rect — and the answer is vertex indices in the order the mask, the panels and
+   * every export use, so the caller can hand them straight to `mask.paintIndices`.
+   *
+   * The matrix is the whole inverse transform in one: model → world (the up-axis rotation and the
+   * centring offset live on the model group, which is why the mesh itself never moves) → camera →
+   * clip, and `boxselect.js` divides by `w`. Normals and the camera are taken in the mesh's own
+   * coordinates so the facing test needs no normal matrix, and the camera position is transformed
+   * back through `worldToLocal` for the same reason. Only what faces the camera is taken by
+   * default: a rectangle over the face of a closed figure covers the back of the head too.
+   */
+  selectInScreenRect(rect, { mirror = null, facingOnly = true } = {}) {
+    const empty = { vertices: new Int32Array(0), count: 0, covered: 0, hidden: 0, mirrored: 0, behind: 0 };
+    if (!this.baseMesh || !this.baseGeometry) return empty;
+    this.camera.updateMatrixWorld();
+    this.baseMesh.updateWorldMatrix(true, false);
+    const matrix = screenMatrix(
+      this.camera.projectionMatrix.elements,
+      this.camera.matrixWorldInverse.elements,
+      this.baseMesh.matrixWorld.elements,
+    );
+    const geometry = this.baseGeometry;
+    const normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
+    const cam = this.baseMesh.worldToLocal(this.camera.position.clone());
+    return verticesInScreenRect({
+      positions: geometry.attributes.position.array,
+      normals,
+      matrix,
+      width: this.canvas.clientWidth || 1,
+      height: this.canvas.clientHeight || 1,
+      rect,
+      camera: [cam.x, cam.y, cam.z],
+      mirror,
+      facingOnly,
+    });
   }
 
   // ------------------------------------------------------------- display

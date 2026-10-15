@@ -54,6 +54,7 @@
         <button class="tool" data-tool="brush" title="Paint with the brush (B)">Brush</button>
         <button class="tool" data-tool="fill" title="Flood the connected surface region, stopping at seams (F)">Region fill</button>
         <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and paint the whole of it (P). Shift-click adds another part, Alt-click removes one.">Part</button>
+        <button class="tool" data-tool="box" title="Drag a rectangle over the model and paint every vertex it covers that faces you (X). Alt-drag or Ctrl-drag releases paint instead, and mirroring applies as it does to the brush.">Box select</button>
         <button class="tool" data-tool="erase" title="Erase paint (E)">Erase</button>
         <button class="tool" data-tool="picker" title="Pick the feature under the cursor (I)">Pick</button>
       </div>
@@ -90,6 +91,14 @@
           <span class="dim">Max vertices</span>
           <input type="number" id="fillLimit" value="200000" min="1000" step="1000">
         </label>
+      </div>
+      <div id="boxOptions" class="fill-options">
+        <p class="hint">
+          Drag a rectangle over the model: every vertex under it that faces you is painted with the
+          current feature, as one undo step. <kbd>Alt</kbd>-drag (or <kbd>Ctrl</kbd>-drag) releases
+          paint instead, <kbd>Esc</kbd> cancels the drag, and with <b>Mirror across X</b> on the
+          rectangle is taken on the other side of the plane too.
+        </p>
       </div>
       <div class="row">
         <button class="btn small" id="undoBtn">Undo</button>
@@ -222,6 +231,8 @@
 
   <div class="viewport" id="viewport">
     <canvas id="canvas"></canvas>
+
+    <div class="box-select" id="boxSelect" hidden></div>
 
     <div class="hud hud-top">
       <span class="chip" id="hudFeature"><i class="swatch"></i><span>—</span></span>
