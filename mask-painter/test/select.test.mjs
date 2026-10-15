@@ -29,6 +29,7 @@ import {
   remapHistory,
   inverseCornerMap,
   highlightArrays,
+  pickedCorners,
 } from '../js/select.js';
 import { drawHighlight, clearHighlight } from '../js/highlight.js';
 import { parseBinarySTL, fmt } from './helpers.mjs';
@@ -238,6 +239,27 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
 
 // -------------------------------------------------------------- the highlight
 //
+// ------------------------------------------------------- the pick, as something to paint
+//
+// A pick is geometry and a stencil is built from paint, so the bridge between them is the picked
+// faces' own corners: three per face, in the mask's own face order (`3t`, `3t+1`, `3t+2`). Get that
+// wrong and "Paint picked faces" paints the triangles next to the ones you picked.
+{
+  const mask = new Uint8Array(4).fill(1);
+  mask[2] = 0;
+  check(
+    'a pick hands over its faces’ own three corners, in face order',
+    [...pickedCorners(mask)].join(',') === '0,1,2,3,4,5,9,10,11',
+    `corners ${[...pickedCorners(mask)].join(',')} for faces 0, 1 and 3`,
+  );
+  check('an empty pick has nothing to paint', pickedCorners(new Uint8Array(4)).length === 0);
+  check(
+    'and a pick of every face covers every corner once',
+    pickedCorners(new Uint8Array(5).fill(1)).length === 15,
+    `${pickedCorners(new Uint8Array(5).fill(1)).length} corners for 5 faces`,
+  );
+}
+
 // ------------------------------------------------- the pick is drawn, not just computed
 
 // One picked face has to be *visible*, and edges alone were the bug: three hairlines lying exactly

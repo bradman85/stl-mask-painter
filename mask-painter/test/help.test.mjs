@@ -105,7 +105,7 @@ const toolsSection = (() => {
   return norm(helpHtml.slice(from, next < 0 ? from + 4000 : next));
 })();
 check('guide has a paint-tools section', toolsSection.length > 0);
-for (const tool of ['Brush', 'Erase', 'Region fill', 'Part', 'Box select', 'Pick', 'Add']) {
+for (const tool of ['Brush', 'Erase', 'Region fill', 'Part', 'Box paint', 'Pick', 'Add']) {
   check(`tools section names "${tool}"`, toolsSection.includes(tool.toLowerCase()));
 }
 // A name in the prose is not a tool row: every tool is a row of this table with its shortcut, and
@@ -115,7 +115,7 @@ for (const [tool, key] of [
   ['Brush', 'B'],
   ['Region fill', 'F'],
   ['Part', 'P'],
-  ['Box select', 'X'],
+  ['Box paint', 'X'],
   ['Erase', 'E'],
   ['Pick', 'I'],
 ]) {

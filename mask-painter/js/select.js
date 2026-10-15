@@ -157,6 +157,29 @@ export function countFaces(mask) {
 }
 
 /**
+ * The corner indices of the picked faces — three per face, in face order.
+ *
+ * Faces are triangles of a flat soup: face `t` owns corners `3t`, `3t+1`, `3t+2`, in the same
+ * order the mask's per-corner arrays (`mask.ids`, the colour buffer) are laid out. That is what
+ * makes a pick paintable — hand these to `mask.paintIndices` and the picked triangles take the
+ * current feature, exactly as a brush stroke over them would.
+ */
+export function pickedCorners(faceMask) {
+  let picked = 0;
+  for (let t = 0; t < faceMask.length; t += 1) if (faceMask[t]) picked += 1;
+  const corners = new Int32Array(picked * 3);
+  let w = 0;
+  for (let t = 0; t < faceMask.length; t += 1) {
+    if (!faceMask[t]) continue;
+    corners[w] = t * 3;
+    corners[w + 1] = t * 3 + 1;
+    corners[w + 2] = t * 3 + 2;
+    w += 3;
+  }
+  return corners;
+}
+
+/**
  * A soup without the faces `keepFace` rejects.
  *
  * Everything is copied in face order, so the kept triangles stay where they were relative to each
@@ -213,7 +236,7 @@ export function filterSoup({ positions, normals = null, ids = null }, keepFace) 
  * Returns `null` for a mask that picks nothing, and for one above `limit`: a highlight that would
  * be tens of thousands of triangles is left to the count in the panel rather than drawn.
  */
-export function highlightArrays(positions, faceMask, { limit = 60000 } = {}) {
+export function highlightArrays(positions, faceMask, { limit = 150000 } = {}) {
   const faces = faceMask.length;
   let picked = 0;
   for (let t = 0; t < faces; t += 1) if (faceMask[t]) picked += 1;

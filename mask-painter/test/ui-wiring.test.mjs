@@ -123,7 +123,7 @@ check('an empty hover is distinguishable from "no paint at all"', /hoverPick\.pa
 // documented "Alt-click removes a panel" never worked.
 check('modifier clicks are filtered by a named guard', /function modifierClickIgnored\(e\)/.test(js));
 check(
-  'the guard exempts the tools that mean something by a modifier: Part, Box select and Select',
+  'the guard exempts the tools that mean something by a modifier: Part, Box paint and Select',
   /function modifierClickIgnored\(e\) \{\s*\n\s*(?:\/\/[^\n]*\n\s*)*return \(\s*\n?\s*\(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) &&[\s\S]{0,200}?state\.tool !== 'part' &&[\s\S]{0,80}?state\.tool !== 'box' &&[\s\S]{0,80}?state\.tool !== 'select'/.test(
     js,
   ),
@@ -434,7 +434,11 @@ const boxSrc = fs.readFileSync(path.resolve(here, '../js/boxselect.js'), 'utf8')
 const boxViewerSrc = fs.readFileSync(path.resolve(here, '../js/viewer.js'), 'utf8');
 const cssSrc = fs.readFileSync(path.resolve(here, '../css/style.css'), 'utf8');
 check('the paint panel carries the box tool', /<button class="tool" data-tool="box"/.test(html));
-check('main.js names it, so the HUD and the status lines can say what is active', /box: 'Box select'/.test(js));
+check(
+  'main.js names it Box PAINT, so the HUD says a rectangle paints rather than selects',
+  /box: 'Box paint'/.test(js) && /<button class="tool" data-tool="box"[^>]*>Box paint<\/button>/.test(html) &&
+    /This paints\./.test(html),
+);
 check('and X selects it', /case 'x': setTool\('box'\); break;/.test(js));
 check('the rectangle being dragged is drawn', declared.has('boxSelect') && /\.box-select\b/.test(cssSrc) && /\.box-select\[hidden\]/.test(cssSrc));
 check('its options panel exists and is shown for that tool', declared.has('boxOptions') && /el\('boxOptions'\)\.classList\.toggle\('on', tool === 'box'\)/.test(js));
@@ -455,7 +459,8 @@ check(
 );
 check(
   'and the Select tool reads its modifiers too, rather than being filtered out as "not painting"',
-  /state\.tool !== 'select'/.test(js) && /const remove = e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey;/.test(js),
+  /state\.tool !== 'select'/.test(js) &&
+    /add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js),
 );
 check(
   'the selection itself is the inverse transform, taken in canvas pixels',
@@ -470,7 +475,20 @@ check(
   'the viewer composes projection × view × model and hands it to the selection maths',
   /selectInScreenRect\(rect, \{ mirror = null, facingOnly = true \} = \{\}\)/.test(boxViewerSrc) &&
     /screenMatrix\(\s*\n\s*this\.camera\.projectionMatrix\.elements,\s*\n\s*this\.camera\.matrixWorldInverse\.elements,\s*\n\s*this\.baseMesh\.matrixWorld\.elements,/.test(boxViewerSrc) &&
-    /import \{ screenMatrix, verticesInScreenRect \} from '\.\/boxselect\.js'/.test(boxViewerSrc),
+    /import \{ screenMatrix, verticesInScreenRect, facesInScreenRect \} from '\.\/boxselect\.js'/.test(boxViewerSrc),
+);
+// Selecting triangles with a box is a different rule from painting the vertices under one: the
+// centre of the triangle decides, and its own normal (from its corners, not from a shading normal
+// shared between faces) says which way it points.
+check(
+  "the Select tool's rectangle is measured on face centres, by the triangle's own normal",
+  /export function facesInScreenRect\(\{/.test(boxSrc) &&
+    /const x = \(ax \+ bx \+ cx\) \/ 3;/.test(boxSrc) &&
+    /const nx = uy \* vz - uz \* vy;/.test(boxSrc) &&
+    /return \{ faces, count, covered, hidden, behind \};/.test(boxSrc) &&
+    /^  facesInScreenRect\(rect, \{ facingOnly = true \} = \{\}\) \{$/m.test(boxViewerSrc) &&
+    /camera: \[cam\.x, cam\.y, cam\.z\],\s*\n\s*facingOnly,/.test(boxViewerSrc) &&
+    /positions: this\.baseGeometry\.attributes\.position\.array,/.test(boxViewerSrc),
 );
 check(
   'the camera and the normals are taken in the mesh\'s own coordinates, which is what the mask counts in',
@@ -545,17 +563,74 @@ check(
 );
 check('and Ctrl+A is the same thing, for the few-out-of-many case', /if \(meta && e\.key\.toLowerCase\(\) === 'a'\)/.test(js) && /selectAllFaces\(\);\s*\n\s*return;/.test(js));
 check(
-  'a click picks the model or the face under the cursor, and does not paint',
-  /if \(state\.tool === 'select'\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*void selectClick\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
-    /async function selectClick\(e\)/.test(js) &&
-    /const hit = viewer\.pick\(e\.clientX, e\.clientY\);/.test(js) &&
+  'a press in the Select tool paints nothing: it starts a gesture that is decided on release',
+  /if \(state\.tool === 'select'\) \{\s*\n\s*startSelectDrag\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
+    /function startSelectDrag\(e\)/.test(js),
+);
+check(
+  'a press that does not move is the click it always was, and a moved one is a box',
+  /const DRAG_SLOP = 3;/.test(js) &&
+    /if \(width < DRAG_SLOP && height < DRAG_SLOP\) return;/.test(js) &&
+    /if \(!drag\.active\) \{\s*\n\s*void selectClickAt\(drag\.toClient, drag\);\s*\n\s*return;\s*\n\s*\}/.test(js),
+);
+check(
+  'a click picks the model or the face under the cursor',
+  /async function selectClickAt\(client, \{ add = false, remove = false \} = \{\}\)/.test(js) &&
+    /const hit = viewer\.pick\(client\.x, client\.y\);/.test(js) &&
     /pickFace\(hit\.faceIndex, \{ add, remove \}\)/.test(js) &&
     /const shell = shells\.faceShell\[hit\.faceIndex\]/.test(js),
+);
+check(
+  'a drag in the Select tool draws the same rectangle and picks what is inside it on release',
+  /if \(selectDrag\) \{\s*\n\s*moveSelectDrag\(e\);/.test(js) &&
+    /if \(selectDrag\) \{\s*\n\s*finishSelectDrag\(\);\s*\n\s*return;/.test(js) &&
+    /showBoxRect\(selectDrag\.from, p\);/.test(js) &&
+    /viewer\.facesInScreenRect\(normaliseRect\(drag\.from, drag\.to\)\)/.test(js),
+);
+check(
+  'the rectangle selects what the scope selects: faces, or the model every covered face is in',
+  /applyPickToSelection\(sel\.faces, drag\)/.test(js) &&
+    /if \(cleanup\.scope === 'models'\) \{\s*\n\s*void pickModelsInRect\(sel, drag\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
+    /if \(sel\.faces\[t\]\) touched\.add\(shells\.faceShell\[t\]\);/.test(js),
+);
+check(
+  'a plain drag is the pick outright, Shift drags an addition and Alt drags a removal',
+  /const want = remove \? \(wanted\[t\] \? 0 : cleanup\.selected\[t\]\) : add \? \(wanted\[t\] \? 1 : cleanup\.selected\[t\]\) : wanted\[t\] \? 1 : 0;/.test(js) &&
+    /add: e\.shiftKey,/.test(js),
+);
+check(
+  'a rectangle still being dragged is thrown away by Esc and by switching tool',
+  /if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(boxDrag\) cancelBoxSelect\(\);/.test(js) &&
+    /if \(tool !== 'select' && selectDrag\) cancelSelectDrag\(\);/.test(js) &&
+    /function cancelSelectDrag\(\)/.test(js),
+);
+// The reported bug: a pick that was still there stopped being drawn as soon as another tool came
+// up, so a working selection looked like it had been thrown away.
+check(
+  'the pick is drawn even when another tool is in hand, because the pick is still there',
+  /function updatePickHighlight\(\) \{\s*\n\s*const faces = mask && pickedFaces\(\) \? cleanup\.selected : null;/.test(js) &&
+    !/state\.tool === 'select' \? cleanup\.selected/.test(js),
+);
+// The other reported dead end: a pick is not paint, so "Build stencil" refused in a way that read
+// as the button doing nothing.
+check(
+  'the pick can be painted in one click, as a single undo step',
+  declared.has('paintPickedBtn') &&
+    /el\('paintPickedBtn'\)\.addEventListener\('click', paintPickedFaces\)/.test(js) &&
+    /const corners = pickedCorners\(cleanup\.selected\);\s*\n\s*const id = state\.currentFeatureId;/.test(js) &&
+    /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(corners, id\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js) &&
+    /import \{[\s\S]{0,220}?pickedCorners,[\s\S]{0,60}?\} from '\.\/select\.js'/.test(js) &&
+    /paintBtn\.disabled = pickedFaces\(\) === 0;/.test(js),
+);
+check(
+  'and "Build stencil" says a pick is a selection, not paint, instead of appearing to do nothing',
+  /the stencil is built from paint, and \$\{fmt\(picked\)\} picked/.test(js) &&
+    /“Paint picked faces” paints them as/.test(js),
 );
 check('the model list is built from the shells of the file', declared.has('modelRows') && declared.has('modelList') && /function renderShellList\(\)/.test(js) && /shellsOf\(topology\)/.test(js));
 check(
   'Esc unpicks everything, and a model list exists to click instead of the viewport',
-  /case 'escape':\s*\n\s*if \(boxDrag\) cancelBoxSelect\(\);\s*\n\s*else if \(state\.tool === 'select' && pickedFaces\(\)\) selectNoFaces\(\);/.test(js),
+  /case 'escape':\s*\n\s*if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(boxDrag\) cancelBoxSelect\(\);\s*\n\s*else if \(state\.tool === 'select' && pickedFaces\(\)\) selectNoFaces\(\);/.test(js),
 );
 check(
   'removing is a two-click confirmation, so it cannot happen by accident',
@@ -643,9 +718,9 @@ check(
 );
 check(
   'a pick too big to draw says so in the panel instead of silently not drawing',
-  /export const HIGHLIGHT_FACE_LIMIT = 60000;/.test(highlightSrc) &&
+  /export const HIGHLIGHT_FACE_LIMIT = 150000;/.test(highlightSrc) &&
     /HIGHLIGHT_FACE_LIMIT/.test(js) && /too many to tint in the viewport/.test(js) &&
-    /export function highlightArrays\(positions, faceMask, \{ limit = 60000 \} = \{\}\)/.test(selectSrc),
+    /export function highlightArrays\(positions, faceMask, \{ limit = 150000 \} = \{\}\)/.test(selectSrc),
 );
 check(
   'a one-model file does not tint the whole model on hover — there is nothing to choose there',

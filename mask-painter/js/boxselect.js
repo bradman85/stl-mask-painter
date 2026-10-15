@@ -198,6 +198,93 @@ export function verticesInScreenRect({
   return { vertices, count, covered, hidden, mirrored, behind };
 }
 
+/**
+ * The triangles a rectangle dragged on screen covers.
+ *
+ * This is the same inverse transform as `verticesInScreenRect`, asked about a triangle instead of
+ * a vertex: a face is under the rectangle when the pixel its **centre** is drawn at is inside it.
+ * The centre is the honest rule for a box that means "these triangles" — "any corner inside" takes
+ * a triangle that is mostly outside, "every corner inside" drops one that is mostly inside, and
+ * both read as the box ignoring what it plainly covers.
+ *
+ * Facing is decided from the triangle's own normal, computed from its three corners rather than
+ * read from a normal attribute: the soup's vertex normals are shared between faces and have been
+ * averaged, which is right for shading and wrong for "is this triangle pointing at me". A box over
+ * the face of a closed figure otherwise takes the back of the head as well, whose centre projects
+ * into the same pixels.
+ *
+ * Returns a `0/1` mask over faces, so the caller decides what a pick is (this triangle, or the
+ * model it belongs to); `covered` is how many faces were under the rectangle at all, `hidden` how
+ * many of those point away, and `behind` how many centres had no usable pixel.
+ */
+export function facesInScreenRect({
+  positions,
+  matrix,
+  width,
+  height,
+  rect,
+  camera = null,
+  facingOnly = true,
+}) {
+  const faceCount = Math.floor(positions.length / 9);
+  const r = normaliseRect(rect);
+  const m = matrix;
+  const canFace = !!camera;
+  const faces = new Uint8Array(faceCount);
+  let covered = 0;
+  let hidden = 0;
+  let behind = 0;
+  let count = 0;
+
+  for (let t = 0; t < faceCount; t += 1) {
+    const base = t * 9;
+    const ax = positions[base];
+    const ay = positions[base + 1];
+    const az = positions[base + 2];
+    const bx = positions[base + 3];
+    const by = positions[base + 4];
+    const bz = positions[base + 5];
+    const cx = positions[base + 6];
+    const cy = positions[base + 7];
+    const cz = positions[base + 8];
+    const x = (ax + bx + cx) / 3;
+    const y = (ay + by + cy) / 3;
+    const z = (az + bz + cz) / 3;
+    const cw = m[3] * x + m[7] * y + m[11] * z + m[15];
+    if (!(cw > MIN_CLIP_W)) {
+      behind += 1;
+      continue;
+    }
+    const clipZ = m[2] * x + m[6] * y + m[10] * z + m[14];
+    if (clipZ < -cw || clipZ > cw) continue;
+    const px = m[0] * x + m[4] * y + m[8] * z + m[12];
+    const py = m[1] * x + m[5] * y + m[9] * z + m[13];
+    const sx = (px / cw) * 0.5 * width + width * 0.5;
+    const sy = height * 0.5 - (py / cw) * 0.5 * height;
+    if (sx < r.x0 || sx > r.x1 || sy < r.y0 || sy > r.y1) continue;
+    covered += 1;
+    if (facingOnly && canFace) {
+      const ux = bx - ax;
+      const uy = by - ay;
+      const uz = bz - az;
+      const vx = cx - ax;
+      const vy = cy - ay;
+      const vz = cz - az;
+      const nx = uy * vz - uz * vy;
+      const ny = uz * vx - ux * vz;
+      const nz = ux * vy - uy * vx;
+      if (nx * (camera[0] - x) + ny * (camera[1] - y) + nz * (camera[2] - z) <= 0) {
+        hidden += 1;
+        continue;
+      }
+    }
+    faces[t] = 1;
+    count += 1;
+  }
+
+  return { faces, count, covered, hidden, behind };
+}
+
 /** Does this vertex's outward normal point towards the camera? */
 function facesCamera(normals, i, x, y, z, camX, camY, camZ) {
   return (

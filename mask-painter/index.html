@@ -54,9 +54,9 @@
         <button class="tool" data-tool="brush" title="Paint with the brush (B)">Brush</button>
         <button class="tool" data-tool="fill" title="Flood the connected surface region, stopping at seams (F)">Region fill</button>
         <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and paint the whole of it (P). Shift-click adds another part, Alt-click removes one.">Part</button>
-        <button class="tool" data-tool="box" title="Drag a rectangle over the model and paint every vertex it covers that faces you (X). Alt-drag or Ctrl-drag releases paint instead, and mirroring applies as it does to the brush.">Box select</button>
+        <button class="tool" data-tool="box" title="PAINT, not select: drag a rectangle over the model and every vertex it covers that faces you is painted with the current feature (X). Alt-drag or Ctrl-drag releases paint instead, and mirroring applies as it does to the brush. To pick the faces inside a rectangle, use Select faces (Shift+S) and drag there — painting and picking are different things.">Box paint</button>
         <button class="tool" data-tool="select" data-scope="models" title="Pick whole models — the separate shells inside one file — and remove them (S). A click picks the model under the cursor, Alt-click takes one off, Ctrl+A picks the lot. This paints nothing.">Select models</button>
-        <button class="tool" data-tool="select" data-scope="faces" title="Pick single faces (triangles) and remove them (Shift+S). The face under the cursor is tinted white, the picked ones yellow; Shift-click adds, Alt-click takes one off, Ctrl+A picks the lot. This paints nothing.">Select faces</button>
+        <button class="tool" data-tool="select" data-scope="faces" title="Pick single faces (triangles) and turn them into windows or take them out (Shift+S). The face under the cursor is tinted white, the picked ones yellow; Shift-click adds, Alt-click takes one off, Ctrl+A picks the lot. Drag a rectangle and everything inside it is picked when you release — Shift drags an addition, Alt a removal. This paints nothing until you press “Paint picked faces”.">Select faces</button>
         <button class="tool" data-tool="erase" title="Erase paint (E)">Erase</button>
         <button class="tool" data-tool="picker" title="Eyedropper: make the feature painted under the cursor the current one (I). This picks paint, not faces — for faces use “Select faces”.">Pick</button>
       </div>
@@ -96,10 +96,12 @@
       </div>
       <div id="boxOptions" class="fill-options">
         <p class="hint">
-          Drag a rectangle over the model: every vertex under it that faces you is painted with the
-          current feature, as one undo step. <kbd>Alt</kbd>-drag (or <kbd>Ctrl</kbd>-drag) releases
-          paint instead, <kbd>Esc</kbd> cancels the drag, and with <b>Mirror across X</b> on the
-          rectangle is taken on the other side of the plane too.
+          <b>This paints.</b> Drag a rectangle over the model: every vertex under it that faces you
+          is painted with the current feature, as one undo step. <kbd>Alt</kbd>-drag (or
+          <kbd>Ctrl</kbd>-drag) releases paint instead, <kbd>Esc</kbd> cancels the drag, and with
+          <b>Mirror across X</b> on the rectangle is taken on the other side of the plane too. To
+          <i>pick</i> the faces inside a rectangle instead, use <b>Select faces</b>
+          (<kbd>Shift</kbd>+<kbd>S</kbd>) and drag there.
         </p>
       </div>
       <div id="selectOptions" class="fill-options">
@@ -111,8 +113,16 @@
           picks the single triangle under the cursor. What is picked is tinted yellow and the face
           under the cursor white, so a click is judged before it happens. Click to pick and again to
           unpick, <kbd>Shift</kbd>-click to add, <kbd>Alt</kbd>-click to take one off, or
-          <kbd>Ctrl</kbd>+<kbd>A</kbd> for the lot and click off the few you want to keep. Neither
-          button paints anything.
+          <kbd>Ctrl</kbd>+<kbd>A</kbd> for the lot and click off the few you want to keep.
+        </p>
+        <p class="hint">
+          <b>Drag</b> and the rectangle is a selection: everything inside it is picked when you let
+          go — <kbd>Shift</kbd> adds to the pick, <kbd>Alt</kbd> takes the box's faces off it, and a
+          plain drag makes the pick exactly what the box covers. The pick stays lit whatever tool
+          is in hand, because it is still there: <b>Remove picked</b> cuts those faces out of the
+          model, and <b>Paint picked faces</b> paints them with the current feature as one undo
+          step, which is how a selection becomes the window of a stencil. Otherwise this tool
+          paints nothing.
         </p>
         <div class="row">
           <button class="btn small" id="selectAllBtn" title="Pick every face in the model (Ctrl+A) — then click off the few you want to keep">Select all</button>
@@ -121,6 +131,7 @@
         </div>
         <div class="row">
           <button class="btn small" id="countModelsBtn" title="Cut the file into its separate models and report them">Count models</button>
+          <button class="btn small" id="paintPickedBtn" disabled title="Paint the picked faces with the current feature, as one undo step — this is how a selection becomes the window a stencil is built from">Paint picked faces</button>
           <button class="btn small danger" id="removeFacesBtn" disabled title="Take the picked faces out of the model (click twice to confirm). The paint stays where it was, and “Restore removed” puts the geometry back">Remove picked</button>
           <button class="btn small" id="restoreFacesBtn" disabled title="Put every removed face back into the model">Restore removed</button>
         </div>

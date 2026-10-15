@@ -545,10 +545,10 @@ orbits without leaving the paint tool, and releasing `Space` returns to painting
 **Automated** `test/ui-wiring.test.mjs` (the toggle is wired to the same navigation state).
 **Result** ☐ pass ☐ fail — notes:
 
-#### P18 · Box select — the rubber band
+#### P18 · Box paint — the rubber band that paints
 
 **Steps**
-1. Reload, load the example model, keep the default feature, press **X** (or the **Box select**
+1. Reload, load the example model, keep the default feature, press **X** (or the **Box paint**
    button) and drag a rectangle across the middle of the body.
 2. Read the status bar, then press **Undo** and **Ctrl+Shift+Z**.
 3. Drag a rectangle over the *head* only, from the Front view, and turn the model to the Back to
@@ -561,7 +561,7 @@ orbits without leaving the paint tool, and releasing `Space` returns to painting
 
 **Expected** Every vertex under the rectangle that faces the camera turns the current feature's
 colour, in one undo step — `Ctrl+Z` takes the whole box back and redo puts it back exactly. The
-status bar names the numbers: `Box select: 433,903 vertices painted as “Eyes” — 433,903 of the
+status bar names the numbers: `Box paint: 433,903 vertices painted as “Eyes” — 433,903 of the
 930,758 in the rectangle face the camera (496,855 face away and were left alone).` The vertices
 that face away are **not** painted (step 3: the back of the head stays bare when the box covers the
 face), because a screen rectangle covers the far side of a closed part too.
@@ -571,11 +571,15 @@ rectangle instead; `Esc` (step 6) cancels a drag before it is released and a box
 reports `nothing under the rectangle — drag it over the model` rather than looking dead. Step 7 is
 the point of a screen-space selection: the same rectangle over a different camera angle takes
 different vertices, and the status counts change with it.
-**Guide** [Paint → Box select](help.html#paint-box)
+**Guide** [Paint → Box paint](help.html#paint-box)
 **Automated** `test/boxselect.test.mjs` — the transform and the facing rule on a vertex cloud whose
 screen positions are computed by three.js itself (12 rectangles, vertex for vertex), the composed
-matrix against three.js' own multiply, the behind-the-camera and mirrored-away cases, and on the
-bundled figure through the app's own camera and model group: 433,903 of 930,758 under a
+matrix against three.js' own multiply, the behind-the-camera and mirrored-away cases, **and the
+same again for triangles**: the four-triangle fixture where a box on a triangle's corner misses it
+while a box on its centre takes it, the face wound the other way being reported as facing away, a
+triangle behind the camera, and on the bundled figure through the app's own camera and model group
+144,644 of 422,658 faces for a middle-of-the-body box in 13 ms. On the figure through the app's own
+camera and model group: 433,903 of 930,758 under a
 middle-of-the-body box in 29 ms, every sampled vertex three.js puts inside it taken, every taken
 vertex projecting inside it, and the selection painting the mask as one undo step with undo and
 redo restoring the exact count. `test/ui-wiring.test.mjs` pins the tool, the key, the overlay, the
@@ -602,9 +606,14 @@ wording — the browser half (drawing, releasing, hovering) is what this item te
 7. Press **Shift+S** (or the **Select faces** button), hover over the model, then click a face,
    Shift-click two more and Alt-click one off. Check the white tint under the cursor and the yellow
    tint of the pick.
-8. Turn on **Show seams** with the pick still on faces, and remove a handful of faces from a flat
+8. Drag a rectangle over the model and release; then `Shift`-drag another one beside it, and
+   `Alt`-drag a box over faces that are picked. Then press **X** (Box paint), and then **B**
+   (Brush), reading the viewport after each.
+9. With faces still picked, press **Build stencil** and read the status bar. Then press **Paint
+   picked faces** and build again.
+10. Turn on **Show seams** with the pick still on faces, and remove a handful of faces from a flat
    area (leave more than a few hundred faces in the model).
-9. Load a model, paint something, pick a model and remove it, then press **Ctrl+Z** twice.
+11. Load a model, paint something, pick a model and remove it, then press **Ctrl+Z** twice.
 
 **Expected** Step 1–2: the panel lists every model in the file, biggest first, each with its face
 count, its share of the file and its own size, and the status bar reports the same numbers — this
@@ -625,8 +634,26 @@ white** before the click and the picked faces are **tinted yellow** — a single
 visible at a glance, which is what the edges-only version got wrong (it showed three hairlines that
 z-fight with the surface they lie on, so a working pick looked like a dead tool) — Shift adds and
 Alt takes one off, and the status bar counts the pick face by face. On a one-model file nothing is
-tinted while hovering in the models scope, and the panel says why. Step 8: the removal is exact — the region you
-picked is gone, the rest of the surface is untouched. Step 9: the paint stays where it was painted
+tinted while hovering in the models scope, and the panel says why.
+Step 8: dragging draws the rectangle wherever the pointer went (the same overlay the Box paint tool
+draws), and on release the status bar reports how many faces the box covered, how many of those face
+away and were left alone, and how many are picked in all — a drag over the background says
+`nothing under the rectangle` rather than looking dead. A plain drag makes the pick exactly the
+box's faces, `Shift`-drag adds them to what was already picked, `Alt`-drag takes them off, and a
+press that does not move is still the click of step 7 (one face, not a box). Before this, selecting
+by box was a separate *tool* whose button read as a third selection mode while actually painting.
+Then the reported bug: **the tint does not disappear when another tool comes up** — press `X` and
+the pick is still lit yellow, press `B` and it is still lit, because a pick survives switching
+tools. Only the *hover* tint goes, since hovering is the Select tool's.
+Step 9 is the picked-faces-are-not-paint case. **Build stencil** with a pick and nothing painted
+says `Nothing painted yet — the stencil is built from paint, and N picked faces are only selected.
+“Paint picked faces” paints them as “<feature>”, then build.` — a selection is geometry and the
+stencil is built from paint, so the button is not broken and now says so. **Paint picked faces**
+paints every picked triangle with the current feature as one undo step: the paint stats jump by the
+picked faces' own vertices, `Ctrl+Z` takes the whole thing back, and **Build stencil** then produces
+a stencil whose window is the region that was picked.
+Step 10: the removal is exact — the region you
+picked is gone, the rest of the surface is untouched. Step 11: the paint stays where it was painted
 (after the removal the painted vertices are still on the same part of the surface) and **Ctrl+Z**
 still undoes the paint, because the history was renumbered with the geometry.
 **Guide** [Cleaning up the model](help.html#cleanup) (and [Model & view](help.html#view) for the bed
@@ -638,8 +665,9 @@ the paint carried across a removal corner by corner, the undo history renumbered
 what it used to, the highlight of one picked face being a filled triangle (the visible half of the
 fix above — edges alone were invisible), the whole highlight path executed for real — drawn,
 replaced with its geometry and material freed, cleared, and refused above the limit (this is the
-path that used to throw on every load, see L8) — and a pick too big to draw being refused rather
-than drawn, and on the bundled figure: a copy written 30 units below it lifts the figure off
+path that used to throw on every load, see L8) — a pick too big to draw being refused rather than
+drawn, the corners a pick hands to `mask.paintIndices` being its faces' own three in face order
+(what "Paint picked faces" paints), and on the bundled figure: a copy written 30 units below it lifts the figure off
 the bed by 30 (the reported bug, measured), removing it puts the lowest point back at 0, and the bed
 is drawn on the model's own lowest point instead of 2% of its height below it.
 `test/ui-wiring.test.mjs` pins the tool, its key, the panel, the buttons, the scope menu, the
@@ -1516,7 +1544,7 @@ the guide. Record them under N3 instead:
   only reachable from that list.
 - A **brush stamp is a sphere**, so it can paint the far side of a thin part. Use **Part** or
   **Region fill**.
-- **Box select leaves the surface facing away** unpainted, and says so in the status bar. A screen
+- **Box paint leaves the surface facing away** unpainted, and says so in the status bar. A screen
   rectangle covers the back of a closed figure as well, and painting it would be a surprise; with
   the figure turned, the same rectangle takes the other surface instead.
 - A **hidden feature** still counts, still exports and still becomes part of the window — hiding

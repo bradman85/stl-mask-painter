@@ -15,6 +15,7 @@ import {
   countFaces,
   filterSoup,
   remapHistory,
+  pickedCorners,
 } from './select.js';
 import { drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT } from './highlight.js';
 
@@ -28,7 +29,7 @@ const TOOL_NAMES = {
   brush: 'Brush',
   fill: 'Region fill',
   part: 'Part',
-  box: 'Box select',
+  box: 'Box paint',
   select: 'Select',
   erase: 'Erase',
   picker: 'Pick',
@@ -58,6 +59,13 @@ let mask = null;
 let modelName = '';
 let stroke = null;
 let boxDrag = null;
+// A drag in the Select tool. Separate from `boxDrag` (the rectangle *paint* tool) on purpose: one
+// paints the vertices under a rectangle, the other picks the triangles inside it, and the two are
+// different enough that sharing a state object would make both harder to read.
+let selectDrag = null;
+// How far the pointer has to travel before a click becomes a drag. A click wobbles a pixel or two,
+// and a two-pixel box would pick nothing and read as a tool that had stopped working.
+const DRAG_SLOP = 3;
 
 // The paint stencil: an optional solid built from the painted mask. The welded topology is
 // expensive on a big model, so it is cached per loaded model and reused across rebuilds.
@@ -439,9 +447,10 @@ let lastWorldPoint = null;
  * must be ignored *here*, after this test, or Alt-click never reaches the Part tool.
  */
 function modifierClickIgnored(e) {
-  // Two more tools mean something by a modifier: Box select turns the drag into an erase, and
-  // Select takes the thing that was clicked *off* the pick. Every other tool treats a modifier
-  // click as "not painting", here, so the modifier reaches the tools that use it.
+  // More than one tool means something by a modifier: Box paint turns the drag into an erase, and
+  // Select takes the thing that was clicked *off* the pick (and turns a dragged box into an
+  // addition or a removal). Every other tool treats a modifier click as "not painting", here, so
+  // the modifier reaches the tools that use it.
   return (
     (e.altKey || e.ctrlKey || e.metaKey) &&
     state.tool !== 'part' &&
@@ -459,10 +468,12 @@ function onPointerDown(e) {
     startBoxSelect(e);
     return;
   }
-  // The Select tool does not paint at all: it picks the model (or the face) under the click.
+  // The Select tool does not paint at all. A press starts a drag that is decided on release: a
+  // click picks the one thing under the cursor (what it has always done), and a drag draws a
+  // rubber band whose contents are picked on mouse-up — the box is a gesture of this tool rather
+  // than a tool of its own.
   if (state.tool === 'select') {
-    e.preventDefault();
-    void selectClick(e);
+    startSelectDrag(e);
     return;
   }
   const hit = viewer.pick(e.clientX, e.clientY);
@@ -519,6 +530,10 @@ function onPointerDown(e) {
 
 function onPointerMove(e) {
   if (!mask) return;
+  if (selectDrag) {
+    moveSelectDrag(e);
+    return;
+  }
   if (boxDrag) {
     moveBoxSelect(e);
     return;
@@ -559,6 +574,10 @@ function cursorText(p) {
 }
 
 function endStroke() {
+  if (selectDrag) {
+    finishSelectDrag();
+    return;
+  }
   if (boxDrag) {
     finishBoxSelect();
     return;
@@ -572,7 +591,7 @@ function endStroke() {
   updateUndoButtons();
 }
 
-// ------------------------------------------------------ box select (rubber band)
+// ------------------------------------------------------ box paint (rubber band that paints)
 
 /**
  * The rectangle a drag is drawing, in the pixels the viewer's selection is measured in.
@@ -612,7 +631,7 @@ function startBoxSelect(e) {
   viewer.hideCursor();
   showBoxRect(p, p);
   setStatus(
-    `Box select: drag a rectangle over what to ${boxDrag.erase ? 'release' : 'paint'} — ` +
+    `Box paint: drag a rectangle over what to ${boxDrag.erase ? 'release' : 'paint'} — ` +
       'only the surface facing you is taken (Esc cancels).',
   );
 }
@@ -631,7 +650,7 @@ function cancelBoxSelect() {
   boxDrag = null;
   hideBoxRect();
   viewer.hideCursor();
-  setStatus('Box select cancelled — nothing painted.');
+  setStatus('Box paint cancelled — nothing painted.');
 }
 
 /**
@@ -656,8 +675,8 @@ function finishBoxSelect() {
   if (!sel.count) {
     setStatus(
       sel.covered
-        ? `Box select: all ${fmt(sel.covered)} vertices in the rectangle face away — nothing painted.`
-        : 'Box select: nothing under the rectangle — drag it over the model.',
+        ? `Box paint: all ${fmt(sel.covered)} vertices in the rectangle face away — nothing painted.`
+        : 'Box paint: nothing under the rectangle — drag it over the model.',
     );
     return;
   }
@@ -671,11 +690,169 @@ function finishBoxSelect() {
   updateUndoButtons();
   const name = featureById(state.currentFeatureId)?.name || 'feature';
   setStatus(
-    `Box select: ${fmt(changed)} vertices ${drag.erase ? 'released' : `painted as “${name}”`} — ` +
+    `Box paint: ${fmt(changed)} vertices ${drag.erase ? 'released' : `painted as “${name}”`} — ` +
       `${fmt(sel.count)} of the ${fmt(sel.covered)} in the rectangle face the camera` +
       (sel.hidden ? ` (${fmt(sel.hidden)} face away and were left alone)` : '') +
       (sel.mirrored ? `, plus ${fmt(sel.mirrored)} mirrored across X` : '') +
       (recorded ? '.' : ' — every one of them already had that paint.'),
+  );
+}
+
+// ------------------------------------------------------ select (click, and a rubber band)
+
+/**
+ * A press in the Select tool. Nothing is picked yet: this only starts the gesture.
+ *
+ * A **click** picks the one thing under the cursor — the face, or the model, the current scope
+ * selects — which is what this tool has always done. A **drag** draws a rectangle and picks
+ * everything inside it when the button comes up. The rectangle used to be a tool of its own — the
+ * **Box select** button — which read as a selection mode and was not one: that tool paints every
+ * vertex under the rectangle, which is why it is called **Box paint** now. Selecting by box is a
+ * gesture of selecting, so it lives here, and the distinction a user has to hold is between
+ * *picking* geometry and *painting* it, rather than between two buttons whose names both begin
+ * with "Box".
+ */
+function startSelectDrag(e) {
+  e.preventDefault();
+  capturePointer(e.pointerId);
+  const p = canvasPoint(e);
+  selectDrag = {
+    pointerId: e.pointerId,
+    from: p,
+    to: p,
+    fromClient: { x: e.clientX, y: e.clientY },
+    toClient: { x: e.clientX, y: e.clientY },
+    // Shift adds to the pick, Alt/Ctrl takes what the box covers off it, and a plain drag makes
+    // the pick exactly what the box covers.
+    add: e.shiftKey,
+    remove: e.altKey || e.ctrlKey || e.metaKey,
+    active: false,
+  };
+  viewer.hideCursor();
+  el('statusCursor').textContent = '';
+}
+
+function moveSelectDrag(e) {
+  const p = canvasPoint(e);
+  selectDrag.to = p;
+  selectDrag.toClient = { x: e.clientX, y: e.clientY };
+  const rect = normaliseRect(selectDrag.from, p);
+  const { width, height } = rectSize(rect);
+  if (!selectDrag.active) {
+    if (width < DRAG_SLOP && height < DRAG_SLOP) return;
+    selectDrag.active = true;
+    showBoxRect(selectDrag.from, p);
+    setStatus(
+      `Select: drag the rectangle over what to ${selectDrag.remove ? 'unpick' : 'pick'}, then ` +
+        'release — only the faces of the surface facing you are taken (Esc cancels).',
+    );
+  } else {
+    showBoxRect(selectDrag.from, p);
+  }
+  el('statusCursor').textContent = `${Math.round(width)} × ${Math.round(height)} px`;
+}
+
+function cancelSelectDrag() {
+  const drag = selectDrag;
+  if (!drag) return;
+  selectDrag = null;
+  releasePointer(drag.pointerId);
+  hideBoxRect();
+  viewer.hideCursor();
+  if (drag.active) {
+    setStatus('Select: the rectangle was cancelled — the pick is unchanged.');
+  }
+}
+
+/**
+ * Applies one rectangle's worth of faces to the pick.
+ *
+ * A plain drag *replaces* the pick rather than toggling each face it covers: toggling forty
+ * thousand triangles one at a time is not a selection anybody can reason about, and "the box is
+ * the selection now" is what a rubber band means elsewhere. Shift adds and Alt takes off, which
+ * is the same pair of modifiers a click uses.
+ */
+function applyPickToSelection(wanted, { add = false, remove = false } = {}) {
+  let changed = 0;
+  for (let t = 0; t < cleanup.selected.length; t += 1) {
+    const want = remove ? (wanted[t] ? 0 : cleanup.selected[t]) : add ? (wanted[t] ? 1 : cleanup.selected[t]) : wanted[t] ? 1 : 0;
+    if (cleanup.selected[t] !== want) {
+      cleanup.selected[t] = want;
+      changed += 1;
+    }
+  }
+  return changed;
+}
+
+/**
+ * The rectangle that was just released, applied in the scope in hand.
+ *
+ * The counts are the honest part of selecting in screen space, exactly as they are for the
+ * rectangle paint: how many faces were under the rectangle at all, how many of those pointed away
+ * and were left alone, and how many had no usable pixel. Without them a box that took the back of
+ * the head as well, or nothing at all, is indistinguishable from a box that worked.
+ */
+function finishSelectDrag() {
+  const drag = selectDrag;
+  selectDrag = null;
+  releasePointer(drag.pointerId);
+  hideBoxRect();
+  viewer.hideCursor();
+  if (!mask) return;
+
+  // No drag: the click this tool has always had, with the same modifiers.
+  if (!drag.active) {
+    void selectClickAt(drag.toClient, drag);
+    return;
+  }
+
+  const sel = viewer.facesInScreenRect(normaliseRect(drag.from, drag.to));
+  if (!sel.count) {
+    setStatus(
+      sel.covered
+        ? `Select: all ${fmt(sel.covered)} faces in the rectangle point away from you — nothing ` +
+            `picked (${fmt(pickedFaces())} still picked).`
+        : 'Select: nothing under the rectangle — drag it over the model.',
+    );
+    return;
+  }
+
+  if (cleanup.scope === 'models') {
+    void pickModelsInRect(sel, drag);
+    return;
+  }
+  const changed = applyPickToSelection(sel.faces, drag);
+  afterPickedFaces(changed);
+  setStatus(
+    `Select: ${fmt(sel.count)} face${sel.count === 1 ? '' : 's'} in the rectangle — ` +
+      `${drag.remove ? `${fmt(changed)} taken off the pick` : drag.add ? `${fmt(changed)} added to the pick` : 'the pick is now exactly those'} · ` +
+      `${fmt(pickedFaces())} picked in all` +
+      (sel.hidden ? ` (${fmt(sel.hidden)} of the ${fmt(sel.covered)} under it face away and were left alone)` : '') +
+      '. “Paint picked faces” paints them, “Remove picked” takes them out.',
+  );
+}
+
+/** The same rectangle in the models scope: the whole model of every face the box covered. */
+async function pickModelsInRect(sel, drag) {
+  const shells = await ensureShells();
+  if (!shells) return;
+  const touched = new Set();
+  for (let t = 0; t < sel.faces.length && t < shells.faceCount; t += 1) {
+    if (sel.faces[t]) touched.add(shells.faceShell[t]);
+  }
+  if (!touched.size) {
+    setStatus('Select: nothing under the rectangle — drag it over a model.');
+    return;
+  }
+  const wanted = new Uint8Array(shells.faceCount);
+  for (let t = 0; t < shells.faceCount; t += 1) if (touched.has(shells.faceShell[t])) wanted[t] = 1;
+  const changed = applyPickToSelection(wanted, drag);
+  afterPickedFaces(changed);
+  const names = [...touched].sort((a, b) => a - b).map((s) => `Model ${s + 1}`).join(', ');
+  setStatus(
+    `Select: the rectangle covers ${names} — ${fmt(countFaces(wanted))} faces` +
+      (drag.remove ? `, ${fmt(changed)} taken off the pick` : drag.add ? `, ${fmt(changed)} added to the pick` : ' picked') +
+      ` · ${fmt(pickedFaces())} picked in all.`,
   );
 }
 
@@ -874,6 +1051,8 @@ function setTool(tool) {
     releasePointer(boxDrag.pointerId);
     boxDrag = null;
   }
+  // The same for the Select tool's rectangle.
+  if (tool !== 'select' && selectDrag) cancelSelectDrag();
   if (tool !== 'box') hideBoxRect();
   updateHud();
 }
@@ -1056,6 +1235,41 @@ function updateCleanupStats() {
   }
   const restoreBtn = el('restoreFacesBtn');
   if (restoreBtn) restoreBtn.disabled = removed === 0;
+  const paintBtn = el('paintPickedBtn');
+  if (paintBtn) paintBtn.disabled = pickedFaces() === 0;
+}
+
+/**
+ * Paints the picked faces with the current feature, as one undo step.
+ *
+ * A pick is how this app says "these triangles" precisely — a spur, a ring that came out wrong,
+ * the window you want stencilled — and a stencil is built from *paint*. This is the bridge between
+ * the two, so turning a selected region into a window is a click instead of painting over it by
+ * hand and hoping the brush covered it. The corners come from `pickedCorners` in the mask's own
+ * face order, which is the order the brush, the region fill and every export use.
+ */
+function paintPickedFaces() {
+  if (!mask || !cleanup.selected) return;
+  const picked = pickedFaces();
+  if (!picked) {
+    setStatus('Nothing is picked — pick the faces to paint first: Select faces (Shift+S), then click one or drag a box over them.');
+    return;
+  }
+  const corners = pickedCorners(cleanup.selected);
+  const id = state.currentFeatureId;
+  const name = featureById(id)?.name || 'feature';
+  mask.beginStroke();
+  const changed = mask.paintIndices(corners, id);
+  const recorded = mask.endStroke();
+  mask.flush();
+  updateStats();
+  updateUndoButtons();
+  setStatus(
+    `Painted “${name}” on ${fmt(changed)} of the ${fmt(corners.length)} corners of ` +
+      `${fmt(picked)} picked face${picked === 1 ? '' : 's'} — one undo step. “Build stencil” now ` +
+      `has a window to build.` +
+      (recorded ? '' : ' Every one of those corners already had that paint.'),
+  );
 }
 
 /**
@@ -1067,9 +1281,17 @@ function updateCleanupStats() {
  * "Preparing mask layer…" for ever. Nothing in the suite could see it, because nothing ran the
  * code. Now something does.
  */
-/** The picked faces, in yellow. Empty or too big to draw: nothing, and the panel says which. */
+/**
+ * The picked faces, in yellow. Empty or too big to draw: nothing, and the panel says which.
+ *
+ * Drawn whatever tool is in hand, which is the point of it: a pick is a selection that survives
+ * switching tools (it is what **Remove picked** and **Paint picked faces** act on), so hiding its
+ * tint merely because the brush is up made a pick that was still there look like it had been lost
+ * — "pick some faces, switch to another tool, and the yellow faces disappear until you switch
+ * back".
+ */
 function updatePickHighlight() {
-  const faces = mask && state.tool === 'select' ? cleanup.selected : null;
+  const faces = mask && pickedFaces() ? cleanup.selected : null;
   cleanup.outline = faces
     ? drawHighlight(viewer.modelGroup, mask.position.array, cleanup.outline, faces, {
         color: 0xffd24d,
@@ -1183,12 +1405,19 @@ function renderModelPickHint() {
         : 'Click a face; Shift-click adds, Alt-click takes one off.');
 }
 
-/** A click in the viewport with the Select tool: the whole model, or the one face, under it. */
-async function selectClick(e) {
+/**
+ * A click in the viewport with the Select tool: the whole model, or the one face, under it.
+ *
+ * Takes a point and the two modifiers rather than a pointer event, because it is reached from two
+ * places: a press and release that did not drag, and — through the same two flags — nothing else.
+ * The drag path keeps its own modifiers so a released rectangle and a click agree about what
+ * Shift and Alt mean.
+ */
+async function selectClickAt(client, { add = false, remove = false } = {}) {
   if (!mask) return;
-  const hit = viewer.pick(e.clientX, e.clientY);
+  const hit = viewer.pick(client.x, client.y);
   if (!hit || hit.faceIndex == null) {
-    if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    if (!add && !remove) {
       cleanup.selected.fill(0);
       afterPickedFaces(0);
       setStatus('Nothing under the cursor — the pick was cleared.');
@@ -1197,8 +1426,6 @@ async function selectClick(e) {
     }
     return;
   }
-  const add = e.shiftKey;
-  const remove = e.altKey || e.ctrlKey || e.metaKey;
   if (cleanup.scope === 'faces') {
     pickFace(hit.faceIndex, { add, remove });
     return;
@@ -1742,7 +1969,18 @@ async function buildStencilPart() {
   if (!requireModel()) return null;
   const { painted, count } = paintedMask();
   if (!count) {
-    setStatus('Nothing painted yet — paint the area the mask should expose, then build.');
+    // A picked face is selected, not painted: the stencil is built from paint, and a pick is
+    // geometry. That distinction is invisible from the viewport — a yellow face looks like a
+    // marked one — so when there is a pick, the refusal says how to turn it into a window
+    // instead of leaving the button apparently doing nothing.
+    const picked = pickedFaces();
+    const name = featureById(state.currentFeatureId)?.name || 'feature';
+    setStatus(
+      picked
+        ? `Nothing painted yet — the stencil is built from paint, and ${fmt(picked)} picked ` +
+            `face${picked === 1 ? '' : 's'} are only selected. “Paint picked faces” paints them as “${name}”, then build.`
+        : 'Nothing painted yet — paint the area the mask should expose, then build.',
+    );
     return null;
   }
 
@@ -2544,6 +2782,7 @@ el('hideAllBtn').addEventListener('click', () => {
 el('selectAllBtn').addEventListener('click', selectAllFaces);
 el('selectNoneBtn').addEventListener('click', selectNoFaces);
 el('selectInvertBtn').addEventListener('click', invertPickedFaces);
+el('paintPickedBtn').addEventListener('click', paintPickedFaces);
 el('removeFacesBtn').addEventListener('click', removeClicked);
 el('restoreFacesBtn').addEventListener('click', () => void restoreRemovedFaces());
 el('countModelsBtn').addEventListener('click', () => void ensureShells().then(reportShells));
@@ -2619,7 +2858,8 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'x': setTool('box'); break;
     case 'escape':
-      if (boxDrag) cancelBoxSelect();
+      if (selectDrag) cancelSelectDrag();
+      else if (boxDrag) cancelBoxSelect();
       else if (state.tool === 'select' && pickedFaces()) selectNoFaces();
       break;
     case 'i':

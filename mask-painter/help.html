@@ -134,7 +134,7 @@
     <a href="#features">Features (the palette)</a>
     <a href="#paint">Paint</a>
     <a class="sub" href="#paint-tools">Tools</a>
-    <a class="sub" href="#paint-box">Box select</a>
+    <a class="sub" href="#paint-box">Box paint</a>
     <a class="sub" href="#paint-parts">Seam parts</a>
     <a class="sub" href="#paint-radius">Radius, mirror</a>
     <a class="sub" href="#paint-candidates">The panel list</a>
@@ -390,12 +390,14 @@
       </td>
     </tr>
     <tr>
-      <td class="k">Box select <small><kbd>X</kbd></small></td>
+      <td class="k">Box paint <small><kbd>X</kbd></small></td>
       <td>
-        Drag a rectangle over the model: every vertex under it that faces you is painted with the
-        current feature, in one undo step. <kbd>Alt</kbd>-drag (or <kbd>Ctrl</kbd>-drag) releases
-        paint instead, and <kbd>Esc</kbd> throws a drag away — see
-        <a href="#paint-box">Box select</a> below.
+        <b>This paints.</b> Drag a rectangle over the model: every vertex under it that faces you is
+        painted with the current feature, in one undo step. <kbd>Alt</kbd>-drag (or
+        <kbd>Ctrl</kbd>-drag) releases paint instead, and <kbd>Esc</kbd> throws a drag away — see
+        <a href="#paint-box">Box paint</a> below. To <em>pick</em> the faces inside a rectangle
+        instead, drag in <a href="#cleanup">Select faces</a>: painting and picking are two
+        different things, which is why they are not two buttons called "Box".
       </td>
     </tr>
     <tr>
@@ -411,18 +413,22 @@
       <td>
         The same tool with the pick set to one triangle at a time: the face under the cursor is
         tinted white and the picked faces yellow, so a click is judged before it happens. Shift-click
-        adds a face, Alt-click takes one off. It paints nothing — a palette feature is irrelevant
-        while either button is up.
+        adds a face, Alt-click takes one off, and <b>dragging a rectangle</b> picks everything
+        inside it when you release — <kbd>Shift</kbd> adds the box's faces, <kbd>Alt</kbd> takes
+        them off. It paints nothing: <b>Paint picked faces</b> is the one-click way to turn the
+        pick into a window, and <b>Remove picked</b> takes it out of the model.
       </td>
     </tr>
   </table>
 
-  <h3 id="paint-box">Box select — everything under the rectangle</h3>
+  <h3 id="paint-box">Box paint — everything under the rectangle</h3>
   <p>
     Scrubbing a big area with the brush leaves the strokes to be tidied up by hand, and the Part
-    tool takes whole panels whether the panel is inside the area you wanted or not. The Box tool
-    is the middle: hold the left button and drag a rectangle over the viewport, and every vertex
-    whose <em>screen position</em> falls inside it is painted. The rectangle is a screen-space
+    tool takes whole panels whether the panel is inside the area you wanted or not. Box paint is
+    the middle: hold the left button and drag a rectangle over the viewport, and every vertex
+    whose <em>screen position</em> falls inside it is painted. It is called <b>Box paint</b> and
+    not "Box select" on purpose — it paints, and <a href="#cleanup">Select faces</a> is where a
+    rectangle picks triangles instead. The rectangle is a screen-space
     selection, not a volume: the mesh's own coordinates go through the model, view and projection
     matrices, divided by the clip-space <code>w</code>, and compared with the box — which is why
     it selects exactly what you can see under the rectangle, from any camera angle.
@@ -607,7 +613,7 @@ Panels within 3.2 units of the click; click one to select it instead:
         Paints the mirrored point too, about the plane <code>x = </code> the number beside it
         (defaults to the model's centre). Every tool honours it: the brush mirrors, region fill
         runs a second fill from the mirrored point, the Part tool paints both parts, and
-        <a href="#paint-box">Box select</a> takes the reflection of the rectangle. Turn
+        <a href="#paint-box">Box paint</a> takes the reflection of the rectangle. Turn
         mirroring off when the model is not symmetric — the fill's mirrored run has no seed
         normal to test against, so it can spread further than you expect on a asymmetric mesh.
       </td>
@@ -731,14 +737,25 @@ Panels within 3.2 units of the click; click one to select it instead:
     the surface they trace z-fight with the triangle they belong to, so a pick that worked looked
     like a tool that did nothing. The tint is drawn just in front of the surface (a polygon offset,
     no depth write) and is still depth-tested, so it covers the faces you can see of the pick and
-    stays behind the model where the pick is on the far side. It is drawn as long as the pick is
-    under 60,000 faces; above that the panel says the pick is too big to tint and reports the count
-    instead.
+    stays behind the model where the pick is on the far side, and it is drawn whatever tool is in
+    hand — a pick survives switching tools, so its tint has to survive with it. It is drawn as long
+    as the pick is under 150,000 faces (a box drag over a figure picks tens of thousands, and a pick
+    that draws nothing reads as a tool that did nothing); above that the panel says the pick is too
+    big to tint and reports the count instead.
+  </div>
+  <div class="note">
+    <strong>A pick is not paint.</strong> Everything this panel does to a pick — <b>Paint picked
+    faces</b>, <b>Remove picked</b>, <b>Restore removed</b> — acts on the geometry, and the stencil
+    is built from *painted vertices*. So selecting a region and pressing <b>Build stencil</b> gets<br>
+    <code>Nothing painted yet — the stencil is built from paint, and 20,780 picked faces are only
+    selected. “Paint picked faces” paints them as “Eyes”, then build.</code> — one click makes the
+    selection a window: <b>Paint picked faces</b> paints every picked triangle with the current
+    feature as a single undo step, and then the stencil has something to build around.
   </div>
   <div class="note">
     <strong>Faces are the file's own triangles.</strong> A dense scan has hundreds of thousands of
     them, so picking a region face by face is a job for a few faces, not for a whole area — paint,
-    the Part tool and <a href="#paint-box">Box select</a> are the region tools. The nearest paint
+    the Part tool and <a href="#paint-box">Box paint</a> are the region tools. The nearest paint
     tool to this one is the <a href="#paint-parts">Part tool</a>, which takes one whole
     seam-bounded panel per click.
   </div>
@@ -1423,7 +1440,7 @@ end_header
     <tr><td class="k"><kbd>B</kbd></td><td>Brush tool</td></tr>
     <tr><td class="k"><kbd>F</kbd></td><td>Region fill tool</td></tr>
     <tr><td class="k"><kbd>P</kbd></td><td>Part tool — click a whole seam-bounded panel</td></tr>
-    <tr><td class="k"><kbd>X</kbd></td><td>Box select tool — drag a rectangle over what to paint</td></tr>
+    <tr><td class="k"><kbd>X</kbd></td><td>Box paint tool — drag a rectangle over what to paint</td></tr>
     <tr><td class="k"><kbd>S</kbd></td><td>Select models — pick the model under the cursor and remove it</td></tr>
     <tr><td class="k"><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Select faces — the same tool with the pick set to single triangles</td></tr>
     <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all — pick every face in the model, then click off the few you want to keep</td></tr>
@@ -1440,8 +1457,9 @@ end_header
     <tr><td class="k"><kbd>Shift</kbd>+click<small>Part tool</small></td><td>Add another panel to the current feature</td></tr>
     <tr><td class="k"><kbd>Shift</kbd>+click<small>Pick tool</small></td><td>Pick a feature without switching back to the previous tool</td></tr>
     <tr><td class="k"><kbd>Alt</kbd>+click<small>Part tool</small></td><td>Remove a panel from the paint</td></tr>
-    <tr><td class="k"><kbd>Alt</kbd>+drag<small>Box select</small></td><td>Release paint under the rectangle instead of painting it</td></tr>
-    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged (Box select), or unpick everything (Select)</td></tr>
+    <tr><td class="k"><kbd>Alt</kbd>+drag<small>Box paint</small></td><td>Release paint under the rectangle instead of painting it</td></tr>
+    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged (Box paint, or the Select tool's box), or unpick everything (Select)</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+drag<small>Select</small></td><td>Pick the faces inside the rectangle as well as the ones already picked</td></tr>
     <tr><td class="k">right-drag</td><td>Orbit</td></tr>
     <tr><td class="k">middle-drag</td><td>Pan</td></tr>
     <tr><td class="k">wheel</td><td>Zoom</td></tr>

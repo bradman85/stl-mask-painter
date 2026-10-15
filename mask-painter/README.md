@@ -77,9 +77,9 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 | Erase | Paints "unpainted" back into the mask | `E` |
 | Pick | Eyedropper with a live preview: the ring takes the colour of the feature under the cursor, and in the status bar; a click makes that feature current and hands back to the tool you were painting with (`Shift`-click to keep picking) | `I` |
 | Part | Paints the whole panel of the model under the cursor, bounded by its seams. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is selected when the click lands next to it | `P` |
-| Box select | Drag a rectangle over the viewport: every vertex whose screen position falls inside it, and which faces the camera, is painted — or released with `Alt`/`Ctrl` held. One drag, one undo step | `X` |
-| Select models | Picks the whole model (the separate shell) under the cursor, tinted yellow, then **Remove picked** takes it out of the model. Paints nothing | `S` |
-| Select faces | The same tool with the pick set to one triangle at a time — the face under the cursor is tinted white, the pick yellow | `Shift`+`S` |
+| Box paint | **Paints.** Drag a rectangle over the viewport: every vertex whose screen position falls inside it, and which faces the camera, is painted with the current feature — or released with `Alt`/`Ctrl` held. One drag, one undo step | `X` |
+| Select models | Picks the whole model (the separate shell) under the cursor, tinted yellow, then **Remove picked** takes it out of the model or **Paint picked faces** paints it. A drag picks every model its rectangle covers. Paints nothing on its own | `S` |
+| Select faces | The same tool with the pick set to one triangle at a time — the face under the cursor is tinted white, the pick yellow. A drag picks the triangles inside the rectangle | `Shift`+`S` |
 
 - **Features** are a palette of named colours (Eyes, Pupils, Mouth, …). Add your own; each
   row shows how many vertices it owns, and can be hidden or cleared individually.
@@ -95,9 +95,12 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 - **Up axis** — Y-up is right for character models, Z-up for CAD/printer meshes.
 - **Views**: Front / Back / Left / Right / Top / Home.
 
-**Box select** (`X`) is the rubber band. Hold the left button and drag a rectangle: every vertex
-whose *screen position* falls inside it is painted with the current feature, as one undo step, no
-matter how many panels or painted windows the selection crosses. The rectangle is a screen-space
+**Box paint** (`X`) is the rubber band that paints. Hold the left button and drag a rectangle:
+every vertex whose *screen position* falls inside it is painted with the current feature, as one
+undo step, no matter how many panels or painted windows the selection crosses. It is named for
+what it does — it paints, and nothing about it selects — because the old name (*Box select*, next
+to *Select models*) read as a selection mode and was not one. Selecting triangles with a rectangle
+is a gesture of **Select faces** instead. The rectangle is a screen-space
 selection — the mesh's own coordinates go through the model, view and projection matrices, are
 divided by the clip-space `w` and compared with the box — so it takes exactly what you can see
 under it, from any camera angle. Three details are worth knowing:
@@ -149,9 +152,20 @@ of the model:
   picks one (a second click unpicks it; `Shift` picks outright, `Alt`/`Ctrl` unpicks).
 - **Single faces.** The pick is one triangle at a time instead, for geometry that is not a separate
   model — a spur, a chunk welded to the figure, a ring of triangles that came out wrong.
+- **A rectangle is a selection, not a sixth button.** Hold the left button in either scope and drag:
+  the rectangle is drawn as you drag, and on release everything inside it is picked — the triangles
+  themselves in the faces scope, the model of every triangle it covers in the models scope. `Shift`
+  drags an addition, `Alt` a removal, a plain drag makes the pick exactly what the box covers, and
+  `Esc` throws a drag away. A press that does not move is still the click it always was. The rule
+  for a triangle is its **centre** and its own normal, so a box over the face of a closed figure
+  takes the front and reports how many triangles it left facing away — `facesInScreenRect()` in
+  `js/boxselect.js`, checked against three.js' own `project()` for the centre pixel.
 - **What is picked is drawn as a filled tint** (yellow for the pick, white for the face under the
   cursor), with the boundary of the picked faces outlined on top. The tint is what makes a single
   picked face visible: edges alone z-fight with the triangle they trace and show nothing at all.
+  It stays lit whatever tool is in hand: a pick is a selection that survives switching tools (it is
+  what **Paint picked faces** and **Remove picked** act on), so hiding the tint merely because the
+  brush came up made a pick that was still there look like it had been thrown away.
   `js/highlight.js` owns that drawing and takes the group to draw into as an argument, which is
   what lets the whole path — draw, replace, clear — run under Node in `test/select.test.mjs`
   instead of only in a browser. That matters here: the first version of this code kept its colours
@@ -162,6 +176,10 @@ of the model:
   options all have defaults, and both halves are executed by the suite rather than pattern-matched.
 - **`Ctrl`+`A` / Select all**, then click off the few you want to keep, is the fast way through a
   file of many; **Select none** (`Esc`) and **Invert pick** cover the other directions.
+- **Paint picked faces** paints every picked triangle with the current feature in one undo step.
+  This is the bridge from selecting to stencilling: the stencil is built from *paint*, so a picked
+  region is a window away from being printable. Press **Build stencil** with a pick and nothing
+  painted and the status bar says exactly that, rather than the button appearing to do nothing.
 - **Remove picked** is a two-click confirmation (the label changes for four seconds, like Clear
   all) and cannot leave the model empty. **Restore removed** puts every removed face back.
 

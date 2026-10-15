@@ -19,8 +19,17 @@
 import * as THREE from 'three';
 import { highlightArrays } from './select.js';
 
-/** Above this many picked faces the tint is not drawn and the panel reports the count instead. */
-export const HIGHLIGHT_FACE_LIMIT = 60000;
+/**
+ * Above this many picked faces the tint is not drawn and the panel reports the count instead.
+ *
+ * The cost is a filled triangle per picked face (nine floats) plus its three boundary edges
+ * (eighteen), rebuilt whenever the pick changes — 150,000 faces is about 16 MB of buffers and tens
+ * of milliseconds, which a box drag over a large part of a model reaches and a whole-model pick
+ * (422,658 faces on the bundled figure) does not. The number was 60,000 until selecting by box
+ * became a gesture of the Select tool: dragging a box over the figure's body picks 68,000 faces,
+ * and a pick that draws nothing at all is indistinguishable from a tool that did nothing.
+ */
+export const HIGHLIGHT_FACE_LIMIT = 150000;
 
 function bufferGeometry(array) {
   const geometry = new THREE.BufferGeometry();

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
-import { screenMatrix, verticesInScreenRect } from './boxselect.js';
+import { screenMatrix, verticesInScreenRect, facesInScreenRect } from './boxselect.js';
 
 const BACKGROUND = 0x10141a;
 
@@ -480,6 +480,37 @@ export class Viewer {
       rect,
       camera: [cam.x, cam.y, cam.z],
       mirror,
+      facingOnly,
+    });
+  }
+
+  /**
+   * The triangles of the loaded model that a screen rectangle covers.
+   *
+   * Same transform and same facing rule as `selectInScreenRect`, asked about triangles: this is
+   * what a rubber band in the Select tool means, as opposed to the rectangle paint tool's "every
+   * vertex under it". The answer is a `0/1` mask over faces in the mask's own face order, so the
+   * caller can pick the faces, or map them to the models they belong to, without translating
+   * indices.
+   */
+  facesInScreenRect(rect, { facingOnly = true } = {}) {
+    const empty = { faces: new Uint8Array(0), count: 0, covered: 0, hidden: 0, behind: 0 };
+    if (!this.baseMesh || !this.baseGeometry) return empty;
+    this.camera.updateMatrixWorld();
+    this.baseMesh.updateWorldMatrix(true, false);
+    const matrix = screenMatrix(
+      this.camera.projectionMatrix.elements,
+      this.camera.matrixWorldInverse.elements,
+      this.baseMesh.matrixWorld.elements,
+    );
+    const cam = this.baseMesh.worldToLocal(this.camera.position.clone());
+    return facesInScreenRect({
+      positions: this.baseGeometry.attributes.position.array,
+      matrix,
+      width: this.canvas.clientWidth || 1,
+      height: this.canvas.clientHeight || 1,
+      rect,
+      camera: [cam.x, cam.y, cam.z],
       facingOnly,
     });
   }
