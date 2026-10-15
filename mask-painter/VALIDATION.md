@@ -48,8 +48,8 @@ this document is about proving it works.
 
 | Guide section | Items |
 | --- | --- |
-| [Getting started](help.html#start) | L1–L7, U1–U2 |
-| [Top bar](help.html#topbar) | L1–L7 |
+| [Getting started](help.html#start) | L1–L8, U1–U2 |
+| [Top bar](help.html#topbar) | L1–L8 |
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P19 |
 | [Cleaning up the model](help.html#cleanup) | P19 (shells, face picking, removal, the bed) |
@@ -93,10 +93,13 @@ charset=utf-8`).
 1. **Open STL…** and pick `Sprunki Mercuy.stl` (or any other STL).
 2. Note the model line and the status bar. Watch the console.
 
-**Expected** The model appears framed by the camera. The model line shows the file name,
-`422,658 triangles`, `1,267,974 vertices` and the bounding box. A fresh empty mask is created —
-the Mask panel's paint stats read `0 of 1,267,974 vertices painted (0%)`. Load takes roughly
-0.3 s, almost all of it the pick acceleration structure (BVH).
+**Expected** The model appears framed by the camera, and the loading overlay goes through its
+messages (`Parsing STL…`, `Preparing mask layer…`, `Building pick acceleration for 422,658
+triangles…`) and then **clears** — see L8 for what that overlay being left up means. The model line
+shows the file name, `422,658 triangles`, `1,267,974 vertices` and the bounding box. A fresh empty
+mask is created — the Mask panel's paint stats read `0 of 1,267,974 vertices painted (0%)`. Load
+takes roughly 0.3 s, almost all of it the pick acceleration structure (BVH). The console has no
+errors.
 **Guide** [Top bar](help.html#topbar)
 **Automated** `test/app-path.test.mjs` drives the same parser and `MaskLayer` construction on
 the real file.
@@ -163,6 +166,34 @@ printed number is meant, because every STL that prints well is in millimetres at
 means anything for the model it was painted on.
 **Guide** [Top bar](help.html#topbar)
 **Automated** `test/ui-wiring.test.mjs` (the load path builds a fresh `MaskLayer`).
+**Result** ☐ pass ☐ fail — notes:
+
+#### L8 · A load cannot end stuck on the loading overlay
+
+**Steps**
+1. Reload, then load any STL — **Load example model** is quickest — with the console open.
+2. Watch the overlay text: `Parsing STL…`, `Preparing mask layer…`, `Building pick acceleration for
+   422,658 triangles…`.
+3. Pick a face (**Shift**+**S**, then click) and then load a model over it, so there is a highlight
+   to release; then do it again with a whole model picked.
+
+**Expected** The overlay clears and the model line, the status bar and the panels all fill in. It
+never stops on **Preparing mask layer…** with the console showing an uncaught error: the load path
+releases the face-pick highlight when it builds the new mask layer, and anything thrown there leaves
+the overlay up, no model loaded, and nothing to do but reload. That is what a session does when
+that release goes wrong — the highlight used to be cleared through the *drawing* function with its
+colour options missing, which threw `Cannot destructure property 'color' of 'undefined'` on the
+first load of every session, and the app was unusable until it was fixed. Loading twice in one
+session and loading with faces already picked are both on this path.
+**Guide** [Getting started](help.html#start)
+**Automated** `test/select.test.mjs` runs the highlight path for real against a `THREE.Group` —
+draw a pick, replace one with another (and free the one it replaced), clear one, clear nothing — so
+a throw in it fails `npm test` instead of a session; `test/ui-wiring.test.mjs` pins that clearing is
+its own function with no options to miss, that every drawing option has a default, that the pick is
+released on the load path, and that the drawing lives in `js/highlight.js` rather than reaching into
+the viewer from a closure. Verified in a real headless browser while fixing it: the shipped commit
+leaves `#loading` visible with the text `Preparing mask layer…` and reports the throw, the fixed one
+loads the model in 1.4 s and clears the overlay.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -605,8 +636,10 @@ construction (two boxes are two models, a shared corner is not a shared surface,
 joins nothing, bounds and sizes per model), the filter and the corner map triangle for triangle,
 the paint carried across a removal corner by corner, the undo history renumbered and still undoing
 what it used to, the highlight of one picked face being a filled triangle (the visible half of the
-fix above — edges alone were invisible) and a pick too big to draw being refused rather than drawn,
-and on the bundled figure: a copy written 30 units below it lifts the figure off
+fix above — edges alone were invisible), the whole highlight path executed for real — drawn,
+replaced with its geometry and material freed, cleared, and refused above the limit (this is the
+path that used to throw on every load, see L8) — and a pick too big to draw being refused rather
+than drawn, and on the bundled figure: a copy written 30 units below it lifts the figure off
 the bed by 30 (the reported bug, measured), removing it puts the lowest point back at 0, and the bed
 is drawn on the model's own lowest point instead of 2% of its height below it.
 `test/ui-wiring.test.mjs` pins the tool, its key, the panel, the buttons, the scope menu, the
@@ -1503,7 +1536,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 78 |
+| Items run | ___ of 79 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

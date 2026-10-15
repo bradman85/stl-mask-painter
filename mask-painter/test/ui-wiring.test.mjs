@@ -595,23 +595,56 @@ check(
 // The bug this pins: a pick drawn as edges alone is invisible. Three hairlines lying on the
 // surface they trace z-fight with the triangle they belong to, so a single picked face showed
 // nothing at all and the tool looked dead. A pick has to be a filled, offset tint.
+//
+// The second bug pinned here is why the drawing now lives in its own module: the first version kept
+// the colours in a destructured third argument and was *also* called to clear the highlight, with
+// two arguments. That threw on every model load — the loading overlay stuck on "Preparing mask
+// layer…" and nothing ever loaded — and no source pattern above could see it, because nothing ran
+// the code. `js/highlight.js` takes the group to draw into as an argument, which is what lets
+// `test/select.test.mjs` draw, replace and clear a highlight for real; these are the joins to it.
+const highlightSrc = fs.readFileSync(path.resolve(here, '../js/highlight.js'), 'utf8');
+check(
+  'main.js imports the highlight helpers, so they are in scope where it calls them',
+  /^import \{ drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT \} from '\.\/highlight\.js';$/m.test(js),
+);
 check(
   'the pick is drawn as a filled tint as well as edges, not as hairlines on the surface',
   /function updatePickHighlight\(\)/.test(js) &&
-    /cleanup\.outline = drawHighlight\(cleanup\.outline, faces, \{\s*\n\s*color: 0xffd24d,\s*\n\s*fillOpacity: 0\.5,/.test(js) &&
-    /new THREE\.Mesh\(\s*\n\s*data\.fill,\s*\n\s*new THREE\.MeshBasicMaterial\(\{/.test(js) &&
-    /const offset = \{ polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 \};/.test(js) &&
-    /side: THREE\.DoubleSide,\s*\n\s*\.\.\.offset,/.test(js) &&
-    /new THREE\.LineSegments\(\s*\n\s*data\.edges,/.test(js),
+    /cleanup\.outline = faces\s*\n\s*\? drawHighlight\(viewer\.modelGroup, mask\.position\.array, cleanup\.outline, faces, \{\s*\n\s*color: 0xffd24d,\s*\n\s*fillOpacity: 0\.5,/.test(js) &&
+    /: clearHighlight\(viewer\.modelGroup, cleanup\.outline\);/.test(js) &&
+    /new THREE\.Mesh\(\s*\n\s*data\.fill,\s*\n\s*new THREE\.MeshBasicMaterial\(\{/.test(highlightSrc) &&
+    /const offset = \{ polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 \};/.test(highlightSrc) &&
+    /side: THREE\.DoubleSide,\s*\n\s*\.\.\.offset,/.test(highlightSrc) &&
+    /new THREE\.LineSegments\(\s*\n\s*data\.edges,/.test(highlightSrc),
 );
 check(
   'and the hovered face is tinted white the same way',
   /function updateHoverFace\(faceIndex\)/.test(js) &&
-    /cleanup\.hover = drawHighlight\(cleanup\.hover, under, \{\s*\n\s*color: 0xffffff,\s*\n\s*fillOpacity: 0\.35,/.test(js),
+    /cleanup\.hover = drawHighlight\(viewer\.modelGroup, mask\.position\.array, cleanup\.hover, under, \{\s*\n\s*color: 0xffffff,\s*\n\s*fillOpacity: 0\.35,/.test(js),
+);
+// The shipped crash, as a rule rather than a memory: drawing has defaults for every option and
+// clearing is a function of its own, so no path can destructure an options object it was not given.
+check(
+  'the highlight options all have defaults, so drawing cannot be called without them',
+  /export function drawHighlight\(\s*\n\s*parent,\s*\n\s*positions,\s*\n\s*existing,\s*\n\s*faceMask,\s*\n\s*\{ color = 0xffffff, fillOpacity = 0\.4, lineOpacity = 0\.9, order = 2, limit = HIGHLIGHT_FACE_LIMIT \} = \{\},/.test(highlightSrc),
+);
+check(
+  'clearing the highlight is its own function, so it cannot be a draw call missing its options',
+  /export function clearHighlight\(parent, group\)/.test(highlightSrc) &&
+    /cleanup\.outline = clearHighlight\(viewer\.modelGroup, cleanup\.outline\);/.test(js) &&
+    /cleanup\.hover = clearHighlight\(viewer\.modelGroup, cleanup\.hover\);/.test(js) &&
+    !/drawHighlight\([^)]*null\)/.test(js),
+);
+check(
+  'the pick is released on the load path, which is where the crash left the app stuck',
+  /resetPickedFaces\(\);\s*\n\s*\n\s*const triangles/.test(js) &&
+    /function resetPickedFaces\(\)\s*\{[\s\S]{0,220}?clearPickHighlight\(\);\s*\n\s*clearHoverFace\(\);/.test(js) &&
+    /mask = new MaskLayer\(overlayGeometry, state\.features\);\s*\n\s*overlayGeometry\.setAttribute\('color', new THREE\.BufferAttribute\(mask\.colors, 4\)\);\s*\n\s*resetPickedFaces\(\);/.test(js),
 );
 check(
   'a pick too big to draw says so in the panel instead of silently not drawing',
-  /const HIGHLIGHT_FACE_LIMIT = 60000;/.test(js) && /too many to tint in the viewport/.test(js) &&
+  /export const HIGHLIGHT_FACE_LIMIT = 60000;/.test(highlightSrc) &&
+    /HIGHLIGHT_FACE_LIMIT/.test(js) && /too many to tint in the viewport/.test(js) &&
     /export function highlightArrays\(positions, faceMask, \{ limit = 60000 \} = \{\}\)/.test(selectSrc),
 );
 check(

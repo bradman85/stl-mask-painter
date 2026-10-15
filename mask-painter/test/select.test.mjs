@@ -30,6 +30,7 @@ import {
   inverseCornerMap,
   highlightArrays,
 } from '../js/select.js';
+import { drawHighlight, clearHighlight } from '../js/highlight.js';
 import { parseBinarySTL, fmt } from './helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -237,6 +238,8 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
 
 // -------------------------------------------------------------- the highlight
 //
+// ------------------------------------------------- the pick is drawn, not just computed
+
 // One picked face has to be *visible*, and edges alone were the bug: three hairlines lying exactly
 // on the surface they trace z-fight with the triangle they belong to, so a single picked face on a
 // big model showed nothing and the tool looked dead. Hence a fill as well, covering the triangle's
@@ -292,6 +295,126 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
     'two picked faces give two filled triangles',
     two.faces === 2 && two.fill.length === 18 && two.edges.length === 36,
     `${two.fill.length} fill floats and ${two.edges.length} edge floats`,
+  );
+}
+
+// --------------------------------------------- the highlight, drawn for real
+//
+// `highlightArrays` above is the geometry; this is the whole path the app takes — draw, replace,
+// clear — run for real against a real `THREE.Group`. That is deliberate: the bug that shipped was
+// in this wrapper (clearing the highlight called the drawing function with its options missing, so
+// destructuring `undefined` threw on the first model load of every session and the loading overlay
+// stuck on "Preparing mask layer…" for ever). The suite could not see it, because nothing executed
+// the code — every check was a source pattern. These execute it.
+{
+  const soup = combine(boxSoup([0, 0, 0, 4, 4, 4]), boxSoup([0, -10, 0, 2, -8, 2]));
+  const faceCount = facesOf(soup);
+  const parent = new THREE.Group();
+  const picked = new Uint8Array(faceCount);
+  picked[7] = 1;
+
+  let drew = null;
+  let threw = null;
+  try {
+    drew = drawHighlight(parent, soup, null, picked, { color: 0xffd24d, fillOpacity: 0.5, lineOpacity: 0.95, order: 2 });
+  } catch (err) {
+    threw = err;
+  }
+  check(
+    'drawing a pick really builds a filled tint and an outline, and adds them to the scene',
+    !threw && drew !== null && parent.children.includes(drew) && drew.children.length === 2 &&
+      drew.children[0].isMesh === true && drew.children[1].isLineSegments === true &&
+      drew.children[0].material.opacity === 0.5 && drew.children[0].material.polygonOffset === true &&
+      drew.children[0].renderOrder === 2 && drew.children[1].renderOrder === 3,
+    threw ? `threw ${threw.message}` : `${drew?.children.length} children, fill opacity ${drew?.children[0].material.opacity}`,
+  );
+  check(
+    'and the geometry is the picked face, three corners and three edges',
+    drew.children[0].geometry.attributes.position.count === 3 &&
+      drew.children[1].geometry.attributes.position.count === 6,
+    `${drew.children[0].geometry.attributes.position.count} fill vertices, ${drew.children[1].geometry.attributes.position.count} edge vertices`,
+  );
+
+  // Drawing a second highlight over the first is the replacement path — the hover moves from face
+  // to face as the cursor moves, so it runs constantly. The group being replaced has to be released,
+  // geometry and material, or a session leaks a pair of buffers per hovered face.
+  let disposedGeometry = false;
+  let disposedMaterial = false;
+  drew.children[0].geometry.addEventListener('dispose', () => {
+    disposedGeometry = true;
+  });
+  drew.children[0].material.addEventListener('dispose', () => {
+    disposedMaterial = true;
+  });
+  const other = new Uint8Array(faceCount);
+  other[9] = 1;
+  const replaced = drawHighlight(parent, soup, drew, other, { order: 2 });
+  check(
+    'drawing again replaces the pick instead of stacking a second one on top of it',
+    parent.children.length === 1 && parent.children[0] === replaced && replaced !== drew,
+    `${parent.children.length} highlight group(s) in the scene`,
+  );
+  check(
+    'and the highlight it replaced is freed, geometry and material',
+    disposedGeometry && disposedMaterial,
+    `geometry disposed ${disposedGeometry}, material disposed ${disposedMaterial}`,
+  );
+  drew = replaced; // the group now in the scene: the clear path below acts on that one
+
+  // The shipped bug, exactly: the clear path called the drawing function with two arguments, so the
+  // destructured third one was `undefined`. This is that call, and it has to be a no-op.
+  let cleared;
+  threw = null;
+  try {
+    cleared = clearHighlight(parent, drew);
+  } catch (err) {
+    threw = err;
+  }
+  check(
+    'clearing a highlight takes it out of the scene without throwing',
+    !threw && cleared === null && !parent.children.includes(drew),
+    threw ? `threw ${threw.message}` : 'removed, and nothing left behind',
+  );
+  let twice;
+  threw = null;
+  try {
+    twice = clearHighlight(parent, null);
+    clearHighlight(parent, null);
+  } catch (err) {
+    threw = err;
+  }
+  check('and clearing nothing is safe, however often it is called', !threw && twice === null, threw ? `threw ${threw.message}` : '');
+
+  // Loading a model runs this: the pick is released when the geometry is replaced.
+  threw = null;
+  let redraw;
+  try {
+    redraw = drawHighlight(parent, soup, null, new Uint8Array(faceCount), { order: 2 });
+  } catch (err) {
+    threw = err;
+  }
+  check(
+    'an empty pick draws nothing rather than an empty mesh',
+    !threw && redraw === null && parent.children.length === 0,
+    threw ? `threw ${threw.message}` : 'nothing added',
+  );
+  check(
+    'and the options all have defaults, so a caller that forgets them still gets a tint',
+    (() => {
+      try {
+        const group = drawHighlight(parent, soup, null, picked);
+        const ok = group !== null && group.children[0].material.opacity > 0 && parent.children.includes(group);
+        clearHighlight(parent, group);
+        return ok;
+      } catch {
+        return false;
+      }
+    })(),
+  );
+  check(
+    'a pick above the limit draws nothing, so the panel\u2019s count is the only thing left to rely on',
+    drawHighlight(parent, soup, null, new Uint8Array(faceCount).fill(1), { limit: 4 }) === null &&
+      parent.children.length === 0,
   );
 }
 

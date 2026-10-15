@@ -147,6 +147,14 @@ of the model:
 - **What is picked is drawn as a filled tint** (yellow for the pick, white for the face under the
   cursor), with the boundary of the picked faces outlined on top. The tint is what makes a single
   picked face visible: edges alone z-fight with the triangle they trace and show nothing at all.
+  `js/highlight.js` owns that drawing and takes the group to draw into as an argument, which is
+  what lets the whole path — draw, replace, clear — run under Node in `test/select.test.mjs`
+  instead of only in a browser. That matters here: the first version of this code kept its colours
+  in a destructured third argument and was also called to *clear* the highlight, with two. It threw
+  `Cannot destructure property 'color' of 'undefined'` on the first load of every session, and
+  because the load path has no `try`/`catch` around it, the loading overlay stayed on **Preparing
+  mask layer…** and no model ever appeared. Clearing is now a function of its own, the drawing
+  options all have defaults, and both halves are executed by the suite rather than pattern-matched.
 - **`Ctrl`+`A` / Select all**, then click off the few you want to keep, is the fast way through a
   file of many; **Select none** (`Esc`) and **Invert pick** cover the other directions.
 - **Remove picked** is a two-click confirmation (the label changes for four seconds, like Clear

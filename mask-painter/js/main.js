@@ -15,8 +15,8 @@ import {
   countFaces,
   filterSoup,
   remapHistory,
-  highlightArrays,
 } from './select.js';
+import { drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT } from './highlight.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -1059,88 +1059,29 @@ function updateCleanupStats() {
 }
 
 /**
- * The highlight a pick is drawn with: a translucent fill over the picked faces, plus their edges.
- *
- * Edges alone were the first attempt and they were invisible, which is the bug this replaces: three
- * hairlines lying exactly on the surface they trace z-fight with the triangle they belong to, and
- * on a model of any size a single picked face simply does not show — a pick that worked perfectly
- * read as a tool that did nothing. The fill is what makes a pick visible; the edges only say where
- * it stops. The other extreme is a whole-model pick, where edges alone cover the model in lines and
- * read as a wireframe, which is not what "this model is picked" should look like either.
- *
- * The fill is drawn in front of the surface it belongs to (`polygonOffset`, no depth write) but
- * still depth-tested, so a face on the far side of the model stays behind the model — the pick is
- * what you can see of it, which is what a removal will take.
+ * The highlights live in `js/highlight.js`, which takes the group to draw into as an argument — so
+ * the whole path (draw, replace, clear) runs under Node in `test/select.test.mjs` instead of only
+ * in a browser. That matters: the first version of this code was reached for `viewer.modelGroup`
+ * directly and took its colours as a destructured third argument, and the clearing call passed only
+ * two — which threw on the first model load of every session and left the loading overlay on
+ * "Preparing mask layer…" for ever. Nothing in the suite could see it, because nothing ran the
+ * code. Now something does.
  */
-const HIGHLIGHT_FACE_LIMIT = 60000;
-
-function bufferGeometry(array) {
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(array, 3));
-  return geometry;
-}
-
-/** The triangles and boundary of a `0/1` face mask, as the two geometries the highlight draws. */
-function buildHighlight(faceMask) {
-  const data = highlightArrays(mask.position.array, faceMask, { limit: HIGHLIGHT_FACE_LIMIT });
-  if (!data) return null;
-  return { fill: bufferGeometry(data.fill), edges: bufferGeometry(data.edges), picked: data.faces };
-}
-
-function disposeHighlight(group) {
-  if (!group) return;
-  viewer.modelGroup.remove(group);
-  for (const child of group.children) {
-    child.geometry.dispose();
-    child.material.dispose();
-  }
-}
-
-function drawHighlight(existing, faceMask, { color, fillOpacity, lineOpacity, order }) {
-  disposeHighlight(existing);
-  if (!faceMask) return null;
-  const data = buildHighlight(faceMask);
-  if (!data) return null;
-  const offset = { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 };
-  const fill = new THREE.Mesh(
-    data.fill,
-    new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: fillOpacity,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      ...offset,
-    }),
-  );
-  const edges = new THREE.LineSegments(
-    data.edges,
-    new THREE.LineBasicMaterial({ color, transparent: true, opacity: lineOpacity, depthWrite: false, ...offset }),
-  );
-  fill.renderOrder = order;
-  edges.renderOrder = order + 1;
-  fill.name = 'pick-fill';
-  edges.name = 'pick-edges';
-  const group = new THREE.Group();
-  group.name = 'pick-highlight';
-  group.add(fill, edges);
-  viewer.modelGroup.add(group);
-  return group;
-}
-
 /** The picked faces, in yellow. Empty or too big to draw: nothing, and the panel says which. */
 function updatePickHighlight() {
   const faces = mask && state.tool === 'select' ? cleanup.selected : null;
-  cleanup.outline = drawHighlight(cleanup.outline, faces, {
-    color: 0xffd24d,
-    fillOpacity: 0.5,
-    lineOpacity: 0.95,
-    order: 2,
-  });
+  cleanup.outline = faces
+    ? drawHighlight(viewer.modelGroup, mask.position.array, cleanup.outline, faces, {
+        color: 0xffd24d,
+        fillOpacity: 0.5,
+        lineOpacity: 0.95,
+        order: 2,
+      })
+    : clearHighlight(viewer.modelGroup, cleanup.outline);
 }
 
 function clearPickHighlight() {
-  cleanup.outline = drawHighlight(cleanup.outline, null);
+  cleanup.outline = clearHighlight(viewer.modelGroup, cleanup.outline);
 }
 
 /**
@@ -1162,7 +1103,7 @@ function updateHoverFace(faceIndex) {
   const under = new Uint8Array(faceCountInHand());
   if (whole === undefined) under[faceIndex] = 1;
   else for (let t = 0; t < under.length; t += 1) under[t] = shells.faceShell[t] === whole ? 1 : 0;
-  cleanup.hover = drawHighlight(cleanup.hover, under, {
+  cleanup.hover = drawHighlight(viewer.modelGroup, mask.position.array, cleanup.hover, under, {
     color: 0xffffff,
     fillOpacity: 0.35,
     lineOpacity: 0.9,
@@ -1173,7 +1114,7 @@ function updateHoverFace(faceIndex) {
 
 function clearHoverFace() {
   if (cleanup.hoverKey === '' && !cleanup.hover) return;
-  cleanup.hover = drawHighlight(cleanup.hover, null);
+  cleanup.hover = clearHighlight(viewer.modelGroup, cleanup.hover);
   cleanup.hoverKey = '';
 }
 
