@@ -1,0 +1,12 @@
+{
+  "name": "STL Mask Painter",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "forwardPorts": [8137],
+  "portsAttributes": {
+    "8137": {
+      "label": "STL Mask Painter",
+      "onAutoForward": "openPreview"
+    }
+  },
+  "postAttachCommand": "node mask-painter/serve.mjs 8137 0.0.0.0"
+}

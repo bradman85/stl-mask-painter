@@ -16,6 +16,11 @@ loads, orients and becomes paintable in about 0.3 s.
 
 ## Run it
 
+**Already running:** [bradman85.github.io/stl-mask-painter](https://bradman85.github.io/stl-mask-painter/)
+— this repository served by GitHub Pages, on any device, updated by every push to `main`. Nothing
+to install; that is the whole deployment. To run a copy of your own, the two sections below are a
+Codespace and a local server.
+
 ES modules and `fetch` mean the app has to be served over HTTP (opening `index.html` from
 disk with `file://` will not work). The included server serves the **parent** directory so
 the example model next to the app folder is reachable:
