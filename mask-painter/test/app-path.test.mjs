@@ -1045,5 +1045,180 @@ function sheetsOver(r, face, reach = 0.6) {
   );
 }
 
+// ---------------------------------- the same picks, with the panel's own numbers, in the written file
+//
+// The block above opens a window for a picked face with a reach-limited build; this one does it the
+// way the app does when somebody clicks a triangle and presses Export without touching a slider:
+// the panel's own numbers (reach from the model's diagonal, widening on, "sit the exported part on
+// the bed" on, which is how both boxes ship), the real STL writer, and the file read back.
+//
+// Whether the window is *in the file* is read out of the file's own topology rather than inferred
+// from a count, because a count is what made the bug invisible: `windowLoops` was 0 and the panel
+// said the build was fine. A window is a tunnel through the shell — a mask that covers a selection
+// without opening it is a plain lump of solid — and that is the one property of a one-triangle
+// window that is not a matter of scale. V - E + F on a closed surface is 2 - 2 × (tunnels), so the
+// written file reads 2 with no window at all and 0 with one, whatever the window's size. The probes
+// a person would try instead all fail at this scale: the shell's sheet is coarse next to a single
+// model triangle, so a count of triangles over the picked face's middle misses it either way, and a
+// ray has to cross the whole standoff-plus-wall band, which drifts sideways out of a window a third
+// of a unit across and reads the window's own rim as coverage.
+
+/**
+ * The solid the export button writes, welded: the shell, its triangle count, and its tunnels.
+ *
+ * `windows` is how many separate holes the file has — `(2 - χ) / 2`, one per tunnel — which is the
+ * panel's `windowLoops`, read back out of the file the user opens in a slicer instead of from the
+ * build that was supposed to write it.
+ */
+function exportedFile(res, { onBed = true } = {}) {
+  const placed = onBed && res.indices.length ? setOnBed(res.positions, res.indices) : null;
+  const written = placed ? placed.positions : res.positions;
+  const file = parseBinarySTL(new Uint8Array(buildBinarySTL(written, res.indices).buffer));
+  const topo = buildTopology(file.positions, file.positions.length / 3);
+  const idx = new Int32Array(file.triCount * 3);
+  for (let i = 0; i < idx.length; i += 1) idx[i] = topo.weldOf[i];
+  const edges = new Set();
+  for (let t = 0; t < idx.length / 3; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const a = idx[t * 3 + k];
+      const b = idx[t * 3 + ((k + 1) % 3)];
+      if (a !== b) edges.add(a < b ? `${a}_${b}` : `${b}_${a}`);
+    }
+  }
+  const chi = topo.wCount - edges.size + idx.length / 3;
+  // The bed placement moves the whole shell in Z; the model face a reading is anchored to has to
+  // move with it, or every plane test lands a model's height away from the shell.
+  return {
+    shell: file.positions,
+    indices: idx,
+    triangles: file.triCount,
+    dz: placed ? -placed.drop : 0,
+    chi,
+    windows: (2 - chi) / 2,
+  };
+}
+
+/**
+ * Shell triangles sitting over the middle of this mesh face, within three walls of its plane.
+ *
+ * The face's own geometry is read in the model's coordinates; `dz` is the bed placement the written
+ * file carries (Z only), subtracted once, in the offset from the face to each shell centroid. It is
+ * not mixed into the face's own edges: doing that tilts the plane and the reading comes back empty
+ * for everything, window or not.
+ */
+function coveringShells(file, face, dz = 0) {
+  const ax = positions[face * 9];
+  const ay = positions[face * 9 + 1];
+  const az = positions[face * 9 + 2];
+  const e1 = [positions[face * 9 + 3] - ax, positions[face * 9 + 4] - ay, positions[face * 9 + 5] - az];
+  const e2 = [positions[face * 9 + 6] - ax, positions[face * 9 + 7] - ay, positions[face * 9 + 8] - az];
+  const nx = e1[1] * e2[2] - e1[2] * e2[1];
+  const ny = e1[2] * e2[0] - e1[0] * e2[2];
+  const nz = e1[0] * e2[1] - e1[1] * e2[0];
+  const nl = Math.hypot(nx, ny, nz) || 1;
+  const n = [nx / nl, ny / nl, nz / nl];
+  const d00 = e1[0] * e1[0] + e1[1] * e1[1] + e1[2] * e1[2];
+  const d01 = e1[0] * e2[0] + e1[1] * e2[1] + e1[2] * e2[2];
+  const d11 = e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2];
+  const den = d00 * d11 - d01 * d01 || 1;
+  let over = 0;
+  for (let t = 0; t < file.indices.length / 3; t += 1) {
+    let px = 0;
+    let py = 0;
+    let pz = 0;
+    for (let k = 0; k < 3; k += 1) {
+      const v = file.indices[t * 3 + k] * 3;
+      px += file.shell[v] / 3;
+      py += file.shell[v + 1] / 3;
+      pz += file.shell[v + 2] / 3;
+    }
+    const wx = px - ax;
+    const wy = py - ay;
+    const wz = pz - az - dz;
+    if (Math.abs(wx * n[0] + wy * n[1] + wz * n[2]) > params.wall * 3) continue;
+    const d02 = wx * e1[0] + wy * e1[1] + wz * e1[2];
+    const d12 = wx * e2[0] + wy * e2[1] + wz * e2[2];
+    const v = (d11 * d02 - d01 * d12) / den;
+    const w = (d00 * d12 - d01 * d02) / den;
+    if (1 - v - w > 0.2 && v > 0.2 && w > 0.2) over += 1;
+  }
+  return over;
+}
+
+
+
+{
+  const spot = frontMostIn(centre.y + size.y * 0.18, centre.y + size.y * 0.34);
+  const near = (p, lo, hi) => {
+    for (let t = 0; t < faceCount; t += 1) {
+      const c = faceCentroid(t);
+      const d = Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]);
+      if (d > lo && d < hi) return t;
+    }
+    return -1;
+  };
+  // The triangle a click lands on, the next click beside it, one across the mask, and a face the
+  // mask has to cover — the four the readings need.
+  const clicked = near(spot, 0, 0.5);
+  const beside = near(spot, 2, 3);
+  const away = near(spot, 8, 12);
+  const covered = near(spot, 5, 8);
+
+  const one = createSelection(faceCount);
+  one.faces[clicked] = 1;
+  const oneRes = buildStencil({ topology, painted: paintedFromFaces(one), params });
+  const oneFile = oneRes.ok ? exportedFile(oneRes) : null;
+  check(
+    'a clicked face builds with the panel’s own numbers, no slider touched',
+    oneRes.ok === true && oneRes.stats.windowLoops === 1 && oneRes.stats.windowOpen === true,
+    oneRes.ok ? `${oneRes.stats.windowLoops} window(s), reach ${fmt(oneRes.stats.coverRadius)}` : oneRes.warnings.join(' '),
+  );
+  check(
+    'and the file the export writes has that window in it: one tunnel through the shell',
+    oneFile !== null && oneFile.windows === 1 && validateSolid(oneRes).watertight === true,
+    oneFile
+      ? `χ ${oneFile.chi} -> ${oneFile.windows} tunnel(s); ${fmt(oneFile.triangles)} triangles, ` +
+        `${fmt(coveringShells(oneFile, covered, oneFile.dz))} of them over model ` +
+        `${Math.hypot(...faceCentroid(covered).map((n, i) => n - spot[i])).toFixed(1)} away, ` +
+        `${fmt(coveringShells(oneFile, clicked, oneFile.dz))} over the clicked face`
+      : 'no file',
+  );
+
+  // Two more clicks, two more windows — the file has to carry a tunnel per window, and the same
+  // reading has to hold for a face on the far side of the mask.
+  one.faces[beside] = 1;
+  one.faces[away] = 1;
+  const threeRes = buildStencil({ topology, painted: paintedFromFaces(one), params });
+  const threeFile = threeRes.ok ? exportedFile(threeRes) : null;
+  check(
+    'three clicked faces are three windows, and three tunnels in the written file',
+    threeFile !== null && threeRes.stats.windowLoops === 3 && threeFile.windows === 3,
+    threeFile
+      ? `${fmt(countSelected(one))} faces clicked -> χ ${threeFile.chi} -> ${threeFile.windows} tunnel(s)`
+      : 'no file',
+  );
+
+  // The workflow in the report: click a Part panel, then click one face well outside it. Both are
+  // the one selection, so the file carries a window for each — and the added triangle, which the
+  // report said never reached the stencil, changes the file's topology the way the panel did.
+  const mixed = createSelection(faceCount);
+  applyFaces(mixed, facesNear(spot, brush), { add: false });
+  const panelRes = buildStencil({ topology, painted: paintedFromFaces(mixed), params });
+  const panelFile = panelRes.ok ? exportedFile(panelRes) : null;
+  mixed.faces[away] = 1;
+  const mixedRes = buildStencil({ topology, painted: paintedFromFaces(mixed), params });
+  const mixedFile = mixedRes.ok ? exportedFile(mixedRes) : null;
+  check(
+    'a face clicked onto a Part panel opens its own window in the written file',
+    mixedFile !== null && panelFile !== null &&
+      mixedRes.stats.windowLoops === panelRes.stats.windowLoops + 1 &&
+      mixedFile.windows === panelFile.windows + 1,
+    mixedFile
+      ? `${fmt(countSelected(mixed))} faces selected, ${panelRes.stats.windowLoops} -> ${mixedRes.stats.windowLoops} ` +
+        `window(s); the file's tunnels ${panelFile.windows} -> ${mixedFile.windows}`
+      : 'no file',
+  );
+}
+
 console.log(`\n${failures ? `${failures} failure(s)` : 'all app-path checks passed'}`);
 process.exit(failures ? 1 : 0);
