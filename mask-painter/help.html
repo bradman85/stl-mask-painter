@@ -138,6 +138,7 @@
     <a class="sub" href="#paint-parts">Seam parts</a>
     <a class="sub" href="#paint-radius">Radius, mirror</a>
     <a class="sub" href="#paint-candidates">The panel list</a>
+    <a href="#cleanup">Cleaning up the model</a>
     <a href="#mask">Mask</a>
     <a href="#stencil">Paint stencil (STL)</a>
     <a href="#view">Model &amp; view</a>
@@ -395,6 +396,14 @@
         <a href="#paint-box">Box select</a> below.
       </td>
     </tr>
+    <tr>
+      <td class="k">Select <small><kbd>S</kbd></small></td>
+      <td>
+        Pick whole models (the separate shells inside one file) or single faces and take them out
+        of the model — see <a href="#cleanup">Cleaning up the model</a>. It paints nothing, so a
+        palette feature is irrelevant while it is up.
+      </td>
+    </tr>
   </table>
 
   <h3 id="paint-box">Box select — everything under the rectangle</h3>
@@ -621,6 +630,133 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
   </table>
+</section>
+
+<section class="doc" id="cleanup">
+  <h2>Cleaning up the model <a class="anchor" href="#cleanup">#</a></h2>
+  <p>
+    An STL is not a scene. Exporters routinely write several models into one file — a figure plus
+    the base it was cut from, a duplicate left beside it, a blob from a boolean that did not
+    finish — and nothing in the format says they are separate objects. Two things go wrong because
+    of it: the extra geometry gets painted and built into the mask, and the part you want can end
+    up <em>hanging in the air</em>, because the bed sits under the lowest point of <b>everything</b>
+    in the file, stray model included. The <b>Select</b> tool is how both are dealt with: pick the
+    geometry you do not want and take it out of the model.
+  </p>
+
+  <h3 id="cleanup-models">Whole models — the shells in the file</h3>
+  <p>
+    With <b>Pick: Whole models (shells)</b>, a click picks the model under the cursor. A click that
+    is not on the model at all clears the pick. The models are the groups of triangles joined to
+    each other by shared edges — the same rule a slicer uses when it reports <b>2 objects</b> — so
+    two models that merely touch at a corner stay separate and a model standing inside another is
+    a model of its own. They are listed in the panel, biggest first, with the faces and the size of
+    each, and a click in the list picks the same thing a click in the viewport does.
+  </p>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Click</td>
+      <td>Picks the model under the cursor; a second click on the same one unpicks it. Shift-click
+        picks outright (for a row of clicks that must not flip), Alt-click or Ctrl-click unpicks.</td>
+    </tr>
+    <tr>
+      <td class="k">Select all</td>
+      <td>Picks every face in the model — <kbd>Ctrl</kbd>+<kbd>A</kbd>. This is the fast way round:
+        pick the lot, then click off the few you want to keep. With one model in the file it is the
+        only way to pick the whole of it in one action.</td>
+    </tr>
+    <tr>
+      <td class="k">Select none</td>
+      <td>Unpicks everything (<kbd>Esc</kbd> does the same). Nothing else is touched — no paint,
+        no geometry.</td>
+    </tr>
+    <tr>
+      <td class="k">Invert pick</td>
+      <td>Swaps what is picked for what is not: the way to say "everything except this" without
+        clicking the rest by hand.</td>
+    </tr>
+    <tr>
+      <td class="k">Count models</td>
+      <td>
+        Cuts the file into its separate models and reports them in the status bar — how many, how
+        big the largest is, and how big the rest are. The cut is a weld of the whole mesh, so the
+        first one takes a moment; it is cached until the geometry changes.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Remove picked</td>
+      <td>
+        Takes the picked faces out of the model. Click it twice (the label changes to
+        "Click again to remove" for four seconds) — the same two-click confirmation <b>Clear all</b>
+        uses, because a browser dialog is blocked in some embedded views. The model cannot be left
+        empty: a removal that would take every face is refused with the reason.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Restore removed</td>
+      <td>
+        Puts every removed face back. Removal is stored as "the file, minus these faces" rather
+        than as an edit to the geometry, so this is exact, not an undo of an undo.
+      </td>
+    </tr>
+  </table>
+
+  <h3 id="cleanup-faces">Single faces — one triangle at a time</h3>
+  <p>
+    With <b>Pick: Single faces (triangles)</b>, a click picks the one triangle under the cursor and
+    nothing else. The face under the cursor is outlined in white and the picked ones in yellow
+    while this tool is up, so "click the face you can see" means something on a surface that is
+    otherwise one unbroken grey: turn on <b>Show seams</b> in the
+    <a href="#paint-parts">Part tool's</a> options as well if you want the panel boundaries drawn
+    at the same time. This is the tool for geometry that is not a separate model — a spure, a
+    chunk welded to the figure, a ring of triangles that came out wrong — and for taking one face
+    out to see how the stencil reacts to a hole.
+  </p>
+  <div class="note">
+    <strong>Faces are the file's own triangles.</strong> A dense scan has hundreds of thousands of
+    them, so picking a region face by face is a job for a few faces, not for a whole area — paint,
+    the Part tool and <a href="#paint-box">Box select</a> are the region tools. The outline of the
+    pick is drawn as long as the pick is under 60,000 faces; above that it would be more lines
+    than the screen can show and it is skipped, which the panel still reports as a count.
+  </div>
+
+  <h3 id="cleanup-what-happens">What a removal does</h3>
+  <ul>
+    <li>
+      <b>The paint stays where it was painted.</b> The mask is per vertex and the surviving
+      vertices are the same vertices, only renumbered — every kept corner is carried over through
+      a corner map, and so is the mask's undo history, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> keeps
+      working across a removal.
+    </li>
+    <li>
+      <b>The model is re-measured and re-placed.</b> The bounding box, the fit, the camera and the
+      grid are taken again from what is left, so the surviving model stands on the bed even if it
+      was previously standing on top of a model you have just removed. The status bar says where
+      the bed ended up: <code>The bed is under the surviving model's lowest point (0.00)</code>.
+    </li>
+    <li>
+      <b>The stencil and the panels start again.</b> The built stencil, the seam parts and the
+      welded surface all describe the old geometry, so they are discarded rather than left saying
+      something about a model that is no longer loaded. The mask itself is untouched.
+    </li>
+    <li>
+      <b>The export is the model in hand.</b> A removed model is not painted, not welded into a
+      stencil and not in the painted shell — but it is also still in the file on disk: nothing here
+      rewrites your STL, and <b>Restore removed</b> brings it back.
+    </li>
+  </ul>
+
+  <h3 id="cleanup-bed">The bed — why a model can load in the air</h3>
+  <p>
+    The grid is the print bed, and it is drawn on the model's own lowest point, under its own
+    footprint — in both <a href="#view">centring</a> modes, so an off-origin file (one authored in
+    a CAD assembly, hundreds of units from the origin) is never left standing beside the grid.
+    What the grid cannot fix is <em>which</em> lowest point: it is the lowest point of every shell
+    in the file, so one stray model under the figure lifts the figure off the plate by that
+    model's height. That is what the status bar reports after a removal, and what the model list
+    is for: pick the stray, remove it, and the part you want drops onto the bed.
+  </p>
 </section>
 
 <section class="doc" id="mask">
@@ -1266,6 +1402,8 @@ end_header
     <tr><td class="k"><kbd>F</kbd></td><td>Region fill tool</td></tr>
     <tr><td class="k"><kbd>P</kbd></td><td>Part tool — click a whole seam-bounded panel</td></tr>
     <tr><td class="k"><kbd>X</kbd></td><td>Box select tool — drag a rectangle over what to paint</td></tr>
+    <tr><td class="k"><kbd>S</kbd></td><td>Select tool — pick models (or single faces) and remove them</td></tr>
+    <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all — pick every face in the model, then click off the few you want to keep</td></tr>
     <tr><td class="k"><kbd>E</kbd></td><td>Erase tool</td></tr>
     <tr><td class="k"><kbd>I</kbd></td><td>Pick tool (eyedropper)</td></tr>
     <tr><td class="k"><kbd>1</kbd>…<kbd>9</kbd></td><td>Select the first nine features</td></tr>
@@ -1280,7 +1418,7 @@ end_header
     <tr><td class="k"><kbd>Shift</kbd>+click<small>Pick tool</small></td><td>Pick a feature without switching back to the previous tool</td></tr>
     <tr><td class="k"><kbd>Alt</kbd>+click<small>Part tool</small></td><td>Remove a panel from the paint</td></tr>
     <tr><td class="k"><kbd>Alt</kbd>+drag<small>Box select</small></td><td>Release paint under the rectangle instead of painting it</td></tr>
-    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged (Box select)</td></tr>
+    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged (Box select), or unpick everything (Select)</td></tr>
     <tr><td class="k">right-drag</td><td>Orbit</td></tr>
     <tr><td class="k">middle-drag</td><td>Pan</td></tr>
     <tr><td class="k">wheel</td><td>Zoom</td></tr>
@@ -1357,7 +1495,7 @@ end_header
   <h2>How it is verified <a class="anchor" href="#tests">#</a></h2>
   <p>
     The geometry engine is dependency-free, so the same code that runs in the page runs under
-    Node against the bundled model. <code>npm test</code> runs eight suites — seven on the
+    Node against the bundled model. <code>npm test</code> runs nine suites — eight on the
     geometry and editing, and one that checks this page against the app. What they cannot check
     is the interactive half — pointing, dragging, hovering — so that lives in the
     <a href="VALIDATION.md">validation document</a>, one item per feature with the steps to test
@@ -1450,6 +1588,22 @@ end_header
         it, a middle-of-the-body box takes 433,903 of the 930,758 vertices under it (496,855 face
         away) in 29 ms, and the selection reaches the mask as the painted vertices — one undo step,
         with undo and redo restoring the exact count.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">test/select.test.mjs</td>
+      <td>
+        The model cleanup. First the shell rule on a soup whose models are known by construction:
+        two boxes in one file are two models, two boxes that meet at a single corner are still two
+        (a shared point is not a shared surface), a degenerate face joins nothing, and each model
+        has its own bounds and its own size while the picked faces match the count the list shows.
+        Then the surgery: a filtered soup holds exactly the faces it should, triangle for
+        triangle, the corner map points every surviving vertex back at the file it came from, the
+        paint on those vertices comes across unchanged, and the mask's undo history is renumbered
+        so Ctrl+Z still reaches the paint it used to. Then the real figure, where the point of the
+        feature is measured: a copy written 30 units below it lifts it off the bed by exactly
+        that, removing the copy puts its lowest point back at 0, and the bed is drawn on the
+        model's own lowest point instead of a fraction of its height below it.
       </td>
     </tr>
     <tr>

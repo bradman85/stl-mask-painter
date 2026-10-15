@@ -71,6 +71,7 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 | Pick | Eyedropper with a live preview: the ring takes the colour of the feature under the cursor, and in the status bar; a click makes that feature current and hands back to the tool you were painting with (`Shift`-click to keep picking) | `I` |
 | Part | Paints the whole panel of the model under the cursor, bounded by its seams. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is selected when the click lands next to it | `P` |
 | Box select | Drag a rectangle over the viewport: every vertex whose screen position falls inside it, and which faces the camera, is painted — or released with `Alt`/`Ctrl` held. One drag, one undo step | `X` |
+| Select | Picks whole models (the separate shells inside one file) or single faces, then **Remove picked** takes them out of the model. Paints nothing | `S` |
 
 - **Features** are a palette of named colours (Eyes, Pupils, Mouth, …). Add your own; each
   row shows how many vertices it owns, and can be hidden or cleared individually.
@@ -80,7 +81,9 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 - **Brush radius** `[` / `]`, suitable default derived from the model's size.
 - **Mirror across X** paints the mirrored point too (plane defaults to the model's centre).
 - **Mask opacity**, **ghost shell** (dim unpainted area to see the mask in context),
-  base-model visibility, wireframe, ground grid.
+  base-model visibility, wireframe, ground grid. The grid is the print bed: it is drawn on the
+  model's own lowest point, under its own footprint, in both centring modes — so an STL authored
+  hundreds of units from the origin is never left hanging beside the grid.
 - **Up axis** — Y-up is right for character models, Z-up for CAD/printer meshes.
 - **Views**: Front / Back / Left / Right / Top / Home.
 
@@ -117,6 +120,42 @@ for vertex against three.js' own projection over twelve rectangles, dragged ever
   so in the status bar instead of doing nothing.
 - Right-drag orbits, middle-drag pans, wheel zooms. Hold `Space` (or use the **Navigate**
   button) to orbit with the left button while painting tools stay armed.
+
+## Cleaning up an STL that holds more than one model
+
+An STL is not a scene. Exporters routinely write several models into one file — a figure plus the
+base it was cut from, a duplicate left beside it, a blob from a boolean that did not finish — and
+nothing in the format says they are separate objects. Two things go wrong because of it: the extra
+geometry gets painted and built into the mask, and the part you want can end up **hanging in the
+air**, because the bed is drawn under the lowest point of *everything* in the file, stray model
+included.
+
+The **Select** tool (`S`) is the way in. It picks geometry and takes it out of the model:
+
+- **Whole models.** `js/select.js` cuts the file on shared faces — the same rule a slicer uses
+  when it reports *2 objects*, so two models that merely touch at a corner stay separate and a
+  model standing inside another is a model of its own. The panel lists them biggest first with the
+  faces, the share of the file and the size of each, and a click in the list or in the viewport
+  picks one (a second click unpicks it; `Shift` picks outright, `Alt`/`Ctrl` unpicks).
+- **Single faces.** The pick can be set to one triangle at a time instead, for geometry that is
+  not a separate model — a spur, a chunk welded to the figure, a ring of triangles that came out
+  wrong. The face under the cursor is outlined in white, the pick in yellow.
+- **`Ctrl`+`A` / Select all**, then click off the few you want to keep, is the fast way through a
+  file of many; **Select none** (`Esc`) and **Invert pick** cover the other directions.
+- **Remove picked** is a two-click confirmation (the label changes for four seconds, like Clear
+  all) and cannot leave the model empty. **Restore removed** puts every removed face back.
+
+A removal is stored as *"the file, minus these faces"*, not as an edit to the geometry, which is
+what makes it reversible. It rebuilds the mesh with a **corner map**, so the paint stays exactly
+where it was painted and the mask's undo history is renumbered rather than thrown away — `Ctrl+Z`
+still reaches the paint it used to. The geometry then goes back through the loader's own path, so
+the bounding box, the camera, the panels and the bed are all measured again: remove a model that
+was standing under the figure and the figure **drops onto the plate**. The stencil, the seams and
+the welded topology describe the old geometry, so they are discarded instead of being left saying
+something about a model that is no longer there.
+
+Nothing here rewrites your STL on disk: a removed model is out of the session (not painted, not
+welded into a stencil, not in the painted shell PLY) until you restore it.
 
 ## Selecting a whole part instead of painting it by hand
 

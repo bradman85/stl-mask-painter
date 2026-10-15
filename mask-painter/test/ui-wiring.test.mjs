@@ -98,8 +98,10 @@ check('an empty hover is distinguishable from "no paint at all"', /hoverPick\.pa
 // documented "Alt-click removes a panel" never worked.
 check('modifier clicks are filtered by a named guard', /function modifierClickIgnored\(e\)/.test(js));
 check(
-  'the guard exempts the tools that mean something by a modifier: Part and Box select',
-  /function modifierClickIgnored\(e\) \{\s*\n\s*(?:\/\/[^\n]*\n\s*)*return \(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) &&\s*\n?\s*state\.tool !== 'part' && state\.tool !== 'box';/.test(js),
+  'the guard exempts the tools that mean something by a modifier: Part, Box select and Select',
+  /function modifierClickIgnored\(e\) \{\s*\n\s*(?:\/\/[^\n]*\n\s*)*return \(\s*\n?\s*\(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) &&[\s\S]{0,200}?state\.tool !== 'part' &&[\s\S]{0,80}?state\.tool !== 'box' &&[\s\S]{0,80}?state\.tool !== 'select'/.test(
+    js,
+  ),
 );
 check('pointerdown uses the guard rather than testing modifiers inline',
   /if \(e\.button !== 0 \|\| state\.navigate \|\| modifierClickIgnored\(e\)\) return;/.test(js));
@@ -423,7 +425,12 @@ check(
 check('Esc throws a pending rectangle away', /case 'escape':[\s\S]{0,80}?if \(boxDrag\) cancelBoxSelect\(\);/.test(js));
 check(
   'the Alt/Ctrl drag is the eraser here, so it is not swallowed as "not painting"',
-  /state\.tool !== 'part' && state\.tool !== 'box'/.test(js) && /const id = drag\.erase \? 0 : paintId\(\);/.test(js),
+  /state\.tool !== 'part' &&\s*\n?\s*state\.tool !== 'box'/.test(js) &&
+    /const id = drag\.erase \? 0 : paintId\(\);/.test(js),
+);
+check(
+  'and the Select tool reads its modifiers too, rather than being filtered out as "not painting"',
+  /state\.tool !== 'select'/.test(js) && /const remove = e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey;/.test(js),
 );
 check(
   'the selection itself is the inverse transform, taken in canvas pixels',
@@ -462,6 +469,103 @@ check(
     /if \(!\(cw > MIN_CLIP_W\)\)/.test(boxSrc) &&
     /if \(cz < -cw \|\| cz > cw\) continue;/.test(boxSrc) &&
     /facesCamera\(normals, i, x, y, z, camera\[0\], camera\[1\], camera\[2\]\)/.test(boxSrc),
+);
+
+// --------------------------------------------------- cleaning up the model
+//
+// Pick the models in the file (or single faces) and take them out. The picking rule and the
+// surgery are measured in `test/select.test.mjs`; what is pinned here is every join between the
+// panel, the tool and the geometry: the tool and its key, the scope menu, the three pick buttons,
+// the two-click removal, the geometry going back through the loader's own path so the bed is
+// re-measured, and the paint and the history being carried across.
+const selectSrc = fs.readFileSync(path.resolve(here, '../js/select.js'), 'utf8');
+check('the paint panel carries the Select tool', /<button class="tool" data-tool="select"/.test(html));
+check('main.js names it, so the HUD can say what is active', /select: 'Select'/.test(js));
+check('and S selects it', /case 's': setTool\('select'\); break;/.test(js));
+check(
+  'its options panel exists and is shown for that tool',
+  declared.has('selectOptions') && /el\('selectOptions'\)\.classList\.toggle\('on', tool === 'select'\)/.test(js),
+);
+check(
+  'the pick can be a whole model or a single face, and the menu says so',
+  declared.has('selectScope') && /value="models" selected/.test(html) && /value="faces"/.test(html) &&
+    /setSelectScope\(scope\)/.test(js) && /el\('selectScope'\)\.addEventListener\('change', \(e\) => setSelectScope\(e\.target\.value\)\)/.test(js),
+);
+check(
+  'select all, select none and invert are all wired',
+  declared.has('selectAllBtn') && declared.has('selectNoneBtn') && declared.has('selectInvertBtn') &&
+    /el\('selectAllBtn'\)\.addEventListener\('click', selectAllFaces\)/.test(js) &&
+    /el\('selectNoneBtn'\)\.addEventListener\('click', selectNoFaces\)/.test(js) &&
+    /el\('selectInvertBtn'\)\.addEventListener\('click', invertPickedFaces\)/.test(js) &&
+    /function selectAllFaces\(\)[\s\S]{0,200}?cleanup\.selected\.fill\(1\)/.test(js),
+);
+check('and Ctrl+A is the same thing, for the few-out-of-many case', /if \(meta && e\.key\.toLowerCase\(\) === 'a'\)/.test(js) && /selectAllFaces\(\);\s*\n\s*return;/.test(js));
+check(
+  'a click picks the model or the face under the cursor, and does not paint',
+  /if \(state\.tool === 'select'\) \{\s*\n\s*e\.preventDefault\(\);\s*\n\s*void selectClick\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
+    /async function selectClick\(e\)/.test(js) &&
+    /const hit = viewer\.pick\(e\.clientX, e\.clientY\);/.test(js) &&
+    /pickFace\(hit\.faceIndex, \{ add, remove \}\)/.test(js) &&
+    /const shell = shells\.faceShell\[hit\.faceIndex\]/.test(js),
+);
+check('the model list is built from the shells of the file', declared.has('modelRows') && declared.has('modelList') && /function renderShellList\(\)/.test(js) && /shellsOf\(topology\)/.test(js));
+check(
+  'Esc unpicks everything, and a model list exists to click instead of the viewport',
+  /case 'escape':\s*\n\s*if \(boxDrag\) cancelBoxSelect\(\);\s*\n\s*else if \(state\.tool === 'select' && pickedFaces\(\)\) selectNoFaces\(\);/.test(js),
+);
+check(
+  'removing is a two-click confirmation, so it cannot happen by accident',
+  /Click again to remove/.test(js) && /now - cleanup\.armedAt > 4000/.test(js) &&
+    /el\('removeFacesBtn'\)\.addEventListener\('click', removeClicked\)/.test(js),
+);
+check(
+  'a removal cannot leave the model empty',
+  /const left = soup\.faceCount - countFaces\(trial\);\s*\n\s*if \(!left\)/.test(js) && /nothing was removed/.test(js),
+);
+check(
+  'the geometry is rebuilt from the file’s own soup, and goes back through the loader’s path',
+  /filterSoup\(\{ positions: soup\.positions, normals: soup\.normals, ids: oldIds \}, keep\)/.test(js) &&
+    /viewer\.setGeometry\(geometry, \{\s*\n\s*upAxis: state\.upAxis,\s*\n\s*overlayGeometry,\s*\n\s*centre: el\('centreOnGrid'\)\.checked,/.test(js),
+);
+check(
+  'the paint is carried corner by corner, and the undo history with it',
+  /mask\.ids\.set\(cut\.ids\)/.test(js) &&
+    /mask\.history = remapHistory\(oldHistory, cut\.cornerMap, mask\.vertexCount\)/.test(js) &&
+    /mask\.redoStack = remapHistory\(oldRedo, cut\.cornerMap, mask\.vertexCount\)/.test(js),
+);
+check(
+  'the stencil and the panels are discarded with the geometry they describe',
+  /cleanup\.liveFace = cut\.faceMap;[\s\S]{0,400}?resetStencil\(\);/.test(js),
+);
+check(
+  'the status line says where the bed ended up, which is the whole point of removing a model',
+  /The bed is under the surviving model's lowest point/.test(js) &&
+    /bed is under its lowest point/.test(js) &&
+    /function applyRemoval\(origFaceList/.test(js),
+);
+check(
+  'restore puts every removed face back',
+  /async function restoreRemovedFaces\(\)/.test(js) && /cleanup\.removed\.fill\(0\);/.test(js) &&
+    /el\('restoreFacesBtn'\)\.addEventListener\('click', \(\) => void restoreRemovedFaces\(\)\)/.test(js),
+);
+check(
+  'the picked faces are outlined in yellow and the hovered one in white',
+  /function updateSelectionOutline\(\)/.test(js) && /drawOutline\(cleanup\.outline, geometry, 0xffd24d, -1\)/.test(js) &&
+    /drawOutline\(cleanup\.hover, buildFaceOutline\(under\), 0xffffff, 3\)/.test(js) &&
+    /const OUTLINE_FACE_LIMIT = 60000;/.test(js),
+);
+check(
+  'select.js keeps the rules the cleanup needs, and exports them',
+  /export function shellsOf/.test(selectSrc) && /export function filterSoup/.test(selectSrc) &&
+    /export function remapHistory/.test(selectSrc) && /export function inverseCornerMap/.test(selectSrc) &&
+    /const key = a < b \? a \* ID_SHIFT \+ b : b \* ID_SHIFT \+ a;/.test(selectSrc),
+);
+check(
+  'the viewer draws the bed on the model’s own lowest point, not a fraction of its height below it',
+  /export function gridPlacement\(box\)/.test(boxViewerSrc) &&
+    /const \{ x, y, z, span \} = gridPlacement\(this\.boundingBox\);/.test(boxViewerSrc) &&
+    /this\.grid\.position\.set\(x, y, z\);/.test(boxViewerSrc) &&
+    !/this\.grid\.position\.y = this\.boundingBox\.min\.y - size\.y \* 0\.02;/.test(boxViewerSrc),
 );
 
 // ------------------------------------------------- the session file

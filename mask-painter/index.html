@@ -55,6 +55,7 @@
         <button class="tool" data-tool="fill" title="Flood the connected surface region, stopping at seams (F)">Region fill</button>
         <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and paint the whole of it (P). Shift-click adds another part, Alt-click removes one.">Part</button>
         <button class="tool" data-tool="box" title="Drag a rectangle over the model and paint every vertex it covers that faces you (X). Alt-drag or Ctrl-drag releases paint instead, and mirroring applies as it does to the brush.">Box select</button>
+        <button class="tool" data-tool="select" title="Pick whole models (the separate shells inside one file) or single faces out of the model, then remove them (S). Shift-click adds to the pick, Alt-click takes one off, Ctrl+A picks the lot. This tool paints nothing.">Select</button>
         <button class="tool" data-tool="erase" title="Erase paint (E)">Erase</button>
         <button class="tool" data-tool="picker" title="Pick the feature under the cursor (I)">Pick</button>
       </div>
@@ -99,6 +100,38 @@
           paint instead, <kbd>Esc</kbd> cancels the drag, and with <b>Mirror across X</b> on the
           rectangle is taken on the other side of the plane too.
         </p>
+      </div>
+      <div id="selectOptions" class="fill-options">
+        <p class="hint">
+          Pick faces and take them out of the model. A file often holds more than one model — a figure
+          plus a base, a duplicate, a stray blob — and the bed sits under the lowest point of any of
+          them, so an unwanted one leaves the part you want hanging in the air. Click the model under
+          the cursor (again to unpick), pick single faces instead, or <kbd>Ctrl</kbd>+<kbd>A</kbd> for
+          the lot and click off the few you want to keep. This tool paints nothing.
+        </p>
+        <label class="row">
+          <span class="dim">Pick</span>
+          <select id="selectScope" title="Whether a click picks a whole model or the single triangle under the cursor">
+            <option value="models" selected>Whole models (shells)</option>
+            <option value="faces">Single faces (triangles)</option>
+          </select>
+        </label>
+        <div class="row">
+          <button class="btn small" id="selectAllBtn" title="Pick every face in the model (Ctrl+A) — then click off the few you want to keep">Select all</button>
+          <button class="btn small" id="selectNoneBtn" title="Unpick everything (Esc)">Select none</button>
+          <button class="btn small" id="selectInvertBtn" title="Swap what is picked for what is not">Invert pick</button>
+        </div>
+        <div class="row">
+          <button class="btn small" id="countModelsBtn" title="Cut the file into its separate models and report them">Count models</button>
+          <button class="btn small danger" id="removeFacesBtn" disabled title="Take the picked faces out of the model (click twice to confirm). The paint stays where it was, and “Restore removed” puts the geometry back">Remove picked</button>
+          <button class="btn small" id="restoreFacesBtn" disabled title="Put every removed face back into the model">Restore removed</button>
+        </div>
+        <p class="stats" id="cleanupStats">Load a model to see the models inside the file.</p>
+        <p class="hint" id="selectHint"></p>
+        <div id="modelList" class="candidates" hidden>
+          <p class="hint" id="modelHint">Models in this file:</p>
+          <div class="candidate-list" id="modelRows"></div>
+        </div>
       </div>
       <div class="row">
         <button class="btn small" id="undoBtn">Undo</button>

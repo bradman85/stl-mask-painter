@@ -50,7 +50,8 @@ this document is about proving it works.
 | [Getting started](help.html#start) | L1–L7, U1–U2 |
 | [Top bar](help.html#topbar) | L1–L7 |
 | [Features](help.html#features) | F1–F6 |
-| [Paint](help.html#paint) | P1–P18 |
+| [Paint](help.html#paint) | P1–P19 |
+| [Cleaning up the model](help.html#cleanup) | P19 (shells, face picking, removal, the bed) |
 | [Mask](help.html#mask) | M1–M9 |
 | [Paint stencil](help.html#stencil) | S1–S13 (S13 covers the multi-piece export) |
 | [Model & view](help.html#view) | V1–V5 |
@@ -538,6 +539,61 @@ vertex projecting inside it, and the selection painting the mask as one undo ste
 redo restoring the exact count. `test/ui-wiring.test.mjs` pins the tool, the key, the overlay, the
 drag path, the indices handed to the inverse transform, the modifier exemption and the status
 wording — the browser half (drawing, releasing, hovering) is what this item tests by hand.
+**Result** ☐ pass ☐ fail — notes:
+
+---
+
+#### P19 · Cleaning up the model — the models in the file, and the bed
+
+**Steps**
+1. Reload and load an STL that holds more than one model (a figure plus a base, or two figures
+   exported together). If you only have single-model files, load the example model twice into one
+   file with any tool that appends triangles — or load the example and read the "one model" half
+   of this item.
+2. Press **S** (or the **Select** button) and wait for the weld. Read the list under the panel
+   heading, then click **Count models** and read the status bar.
+3. Click the model you want to keep, then **Select none**. Now click **Select all** and click the
+   model you want to keep a second time.
+4. Press **Remove picked** once and read the status bar; press it again within four seconds.
+5. Look at the grid, the model line and the Mask panel's paint stats.
+6. Press **Restore removed**.
+7. With the pick set to **Single faces (triangles)**, click a face, then Shift-click two more and
+   Alt-click one off. Check the white outline under the cursor and the yellow outline of the pick.
+8. Turn on **Show seams** with the pick still on faces, and remove a handful of faces from a flat
+   area (leave more than a few hundred faces in the model).
+9. Load a model, paint something, pick a model and remove it, then press **Ctrl+Z** twice.
+
+**Expected** Step 1–2: the panel lists every model in the file, biggest first, each with its face
+count, its share of the file and its own size, and the status bar reports the same numbers — this
+is where a file with a hidden second model is discovered. Step 3: a click picks the model under the
+cursor (a second click unpicks it), **Select all** then picks the whole file and clicking a model
+again takes it back off the pick, which is the point of selecting everything. Step 4: the button
+reads **Click again to remove** for four seconds and the removal goes ahead on the second click —
+the model disappears from the viewport, the status bar reports the faces taken out and
+`The bed is under the surviving model's lowest point (0.00)`, and the survivors are re-measured and
+re-framed. Step 5: the surviving model stands **on** the grid — if it was previously standing on
+top of the model you removed, it now drops onto the plate, and the grid is drawn on its feet rather
+than a fraction of its height below them (the reported `2% of the model's height` gap is gone). The
+painted vertices are still painted. Step 6: the removed model comes back, still unpainted, and the
+bed goes back under the lowest point of everything. Step 7: the face under the cursor is outlined
+in white before the click, the picked faces are outlined in yellow, Shift adds and Alt takes one
+off, and the status bar counts the pick face by face. Step 8: the removal is exact — the region you
+picked is gone, the rest of the surface is untouched. Step 9: the paint stays where it was painted
+(after the removal the painted vertices are still on the same part of the surface) and **Ctrl+Z**
+still undoes the paint, because the history was renumbered with the geometry.
+**Guide** [Cleaning up the model](help.html#cleanup) (and [Model & view](help.html#view) for the bed
+and centring)
+**Automated** `test/select.test.mjs` — the shell rule on a soup whose models are known by
+construction (two boxes are two models, a shared corner is not a shared surface, a degenerate face
+joins nothing, bounds and sizes per model), the filter and the corner map triangle for triangle,
+the paint carried across a removal corner by corner, the undo history renumbered and still undoing
+what it used to, and on the bundled figure: a copy written 30 units below it lifts the figure off
+the bed by 30 (the reported bug, measured), removing it puts the lowest point back at 0, and the bed
+is drawn on the model's own lowest point instead of 2% of its height below it.
+`test/ui-wiring.test.mjs` pins the tool, its key, the panel, the buttons, the scope menu, the
+modifier exemption and the status wording; `test/help.test.mjs` keeps this item and the guide in
+step with the app. The browser half — clicking, the outlines, the loading messages — is what this
+item tests by hand.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1428,7 +1484,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 77 |
+| Items run | ___ of 78 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

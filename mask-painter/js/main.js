@@ -8,6 +8,7 @@ import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal 
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
 import { paintedIslands, planIslandTrim, maskWindows } from './cleanup.js';
 import { normaliseRect, rectSize } from './boxselect.js';
+import { shellsOf, shellSize, facesOfShells, countFaces, filterSoup, remapHistory } from './select.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -15,7 +16,15 @@ const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
 const el = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
-const TOOL_NAMES = { brush: 'Brush', fill: 'Region fill', part: 'Part', box: 'Box select', erase: 'Erase', picker: 'Pick' };
+const TOOL_NAMES = {
+  brush: 'Brush',
+  fill: 'Region fill',
+  part: 'Part',
+  box: 'Box select',
+  select: 'Select',
+  erase: 'Erase',
+  picker: 'Pick',
+};
 
 const state = {
   features: createFeatureList(),
@@ -63,6 +72,26 @@ const parts = {
   building: false,
 };
 
+// The model cleanup: the separate models (shells) inside one file, and the faces picked out of
+// the model in hand. `soup` is the file exactly as it was loaded, so every removal is a view of
+// it rather than an edit that cannot be undone — `removed` marks the faces taken out, and the
+// geometry in hand is derived from the two.
+const cleanup = {
+  soup: null,
+  removed: null,
+  selected: null,
+  liveFace: null,
+  shells: null,
+  shellsKey: '',
+  shellsPending: false,
+  outline: null,
+  hover: null,
+  hoverKey: '',
+  scope: 'models',
+  build: 0,
+  armedAt: 0,
+};
+
 // The named seam-angle cuts the preset row offers. The angles are the measured sweet spots on
 // the bundled figure (the table is in help.html#paint-parts) and the labels are what the guide
 // documents; test/help.test.mjs fails if those three lists — here, the markup and the guide —
@@ -103,6 +132,17 @@ window.maskPainter = {
   paintPartAt,
   setSeamAngle,
   invertPaint,
+  selectAllFaces,
+  selectNoFaces,
+  invertPickedFaces,
+  removeSelectedFaces: removeClicked,
+  restoreRemovedFaces,
+  setSelectScope,
+  ensureShells,
+  get cleanup() {
+    return cleanup;
+  },
+  selectIo: { shellsOf, filterSoup, remapHistory, countFaces },
   trimWindows,
   listWindows,
   releaseWindows,
@@ -216,6 +256,9 @@ async function loadFromBuffer(buffer, name) {
   // region-fill angle test both work off real geometry.
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
+  // The file itself, kept so the Select tool can take models (and single faces) out of it and
+  // put them back.
+  captureSoup(geometry);
 
   setLoading(true, 'Preparing mask layer…');
   await nextPaint();
@@ -223,6 +266,7 @@ async function loadFromBuffer(buffer, name) {
   const overlayGeometry = geometry.clone();
   mask = new MaskLayer(overlayGeometry, state.features);
   overlayGeometry.setAttribute('color', new THREE.BufferAttribute(mask.colors, 4));
+  resetPickedFaces();
 
   const triangles = geometry.attributes.position.count / 3;
   setLoading(true, `Building pick acceleration for ${fmt(triangles)} triangles…`);
@@ -258,10 +302,10 @@ applyDisplayState();
   el('modelName').textContent =
     `${name} — ${fmt(triangles)} triangles · ${fmt(geometry.attributes.position.count)} vertices · ` +
     `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} units`;
-  setLoading(false);
-  setStatus(
+  setLoading(false);  setStatus(
     `Loaded ${name} in ${Math.round(performance.now() - t0)} ms (pick acceleration ${bvhMs} ms); ` +
-    `${centreNote()}. Left-drag to paint “${featureById(state.currentFeatureId)?.name || 'feature'}”.`,
+      `${centreNote()}, and the bed is under its lowest point (${viewer.bedY.toFixed(2)}). ` +
+      `Left-drag to paint “${featureById(state.currentFeatureId)?.name || 'feature'}”.`,
   );
 }
 
@@ -387,10 +431,15 @@ let lastWorldPoint = null;
  * must be ignored *here*, after this test, or Alt-click never reaches the Part tool.
  */
 function modifierClickIgnored(e) {
-  // Box select is the second tool that means something by a modifier: Alt/Ctrl turns the drag
-  // into an erase. Every other tool treats it as "not painting", here, so the modifier reaches
-  // the tools that use it.
-  return (e.altKey || e.ctrlKey || e.metaKey) && state.tool !== 'part' && state.tool !== 'box';
+  // Two more tools mean something by a modifier: Box select turns the drag into an erase, and
+  // Select takes the thing that was clicked *off* the pick. Every other tool treats a modifier
+  // click as "not painting", here, so the modifier reaches the tools that use it.
+  return (
+    (e.altKey || e.ctrlKey || e.metaKey) &&
+    state.tool !== 'part' &&
+    state.tool !== 'box' &&
+    state.tool !== 'select'
+  );
 }
 
 function onPointerDown(e) {
@@ -400,6 +449,12 @@ function onPointerDown(e) {
   // started on the background and dragged over the part of the model you want.
   if (state.tool === 'box') {
     startBoxSelect(e);
+    return;
+  }
+  // The Select tool does not paint at all: it picks the model (or the face) under the click.
+  if (state.tool === 'select') {
+    e.preventDefault();
+    void selectClick(e);
     return;
   }
   const hit = viewer.pick(e.clientX, e.clientY);
@@ -470,6 +525,13 @@ function onPointerMove(e) {
   // With the eyedropper the ring shows the candidate *before* the click, so the tool reads
   // as alive even when the click would change nothing (picking the feature you already have).
   hoverPick = hit && state.tool === 'picker' ? featureUnderHit(hit) : null;
+  if (state.tool === 'select') {
+    // The face under the cursor is outlined before the click, so "the face under the cursor"
+    // is something you can see rather than something you have to believe.
+    updateHoverFace(hit ? hit.faceIndex : null);
+    el('statusCursor').textContent = hit ? `face ${fmt(hit.faceIndex)}` : '';
+    return;
+  }
   updateCursor(hit);
   el('statusCursor').textContent = hit ? cursorText(hit.worldPoint) + pickHint() : '';
 }
@@ -778,7 +840,13 @@ function setTool(tool) {
   el('fillOptions').classList.toggle('on', tool === 'fill');
   el('seamOptions').classList.toggle('on', tool === 'fill' || tool === 'part');
   el('boxOptions').classList.toggle('on', tool === 'box');
+  el('selectOptions').classList.toggle('on', tool === 'select');
   hoverPick = null;
+  if (tool === 'select') void ensureShells();
+  updateSelectionOutline();
+  renderShellList();
+  renderModelPickHint();
+  if (tool !== 'select') clearHoverFace();
   // The panel list belongs to the click that produced it, not to the next tool.
   if (tool !== 'part') hidePartCandidates();
   // A rectangle belongs to the tool that started it: switching tools mid-drag throws it away
@@ -808,6 +876,518 @@ function setNavigate(on) {
   viewer.setPointerMode(on ? 'navigate' : 'paint');
   el('navigateBtn').textContent = `Navigate: ${on ? 'on' : 'off'}`;
   el('navigateBtn').classList.toggle('active', on);
+}
+
+// --------------------------------------------------------- model cleanup
+
+/**
+ * The file as it was loaded: the soup every removal is a view of.
+ *
+ * Keeping the file's own arrays (rather than editing the geometry in place) is what makes the
+ * whole feature reversible: taking a model out marks faces in `removed`, and the geometry in
+ * hand is always "the file minus those faces", so restoring is the same operation run backwards
+ * and no copy of the model has to be kept per edit.
+ */
+function captureSoup(geometry) {
+  const positions = geometry.attributes.position.array;
+  cleanup.soup = {
+    positions: positions.slice(),
+    normals: geometry.attributes.normal.array.slice(),
+    faceCount: Math.floor(positions.length / 9),
+  };
+  cleanup.removed = new Uint8Array(cleanup.soup.faceCount);
+  cleanup.liveFace = new Int32Array(cleanup.soup.faceCount);
+  for (let f = 0; f < cleanup.soup.faceCount; f += 1) cleanup.liveFace[f] = f;
+  cleanup.build = 0;
+  // The pick itself is sized from the mask layer, which does not exist yet at this point: the
+  // loader calls `resetPickedFaces()` again once it does.
+}
+
+function faceCountInHand() {
+  return mask ? Math.floor(mask.vertexCount / 3) : 0;
+}
+
+function resetPickedFaces() {
+  cleanup.selected = new Uint8Array(faceCountInHand());
+  cleanup.shells = null;
+  cleanup.shellsKey = '';
+  clearSelectionOutline();
+  clearHoverFace();
+  renderShellList();
+  updateCleanupStats();
+}
+
+function pickedFaces() {
+  return cleanup.selected ? countFaces(cleanup.selected) : 0;
+}
+
+function removedFaces() {
+  return cleanup.removed ? countFaces(cleanup.removed) : 0;
+}
+
+/**
+ * The separate models in the file, cut on shared faces. Cached per model *and* per geometry:
+ * removing a model changes the shells of what is left, so the cache key carries the build
+ * counter as well as the file name.
+ */
+async function ensureShells() {
+  if (!mask || !cleanup.soup) return null;
+  const key = `${modelName}|${cleanup.build}`;
+  if (cleanup.shells && cleanup.shellsKey === key) return cleanup.shells;
+  if (cleanup.shellsPending) return cleanup.shells;
+  cleanup.shellsPending = true;
+  try {
+    const topology = await ensureTopology();
+    if (!mask || !cleanup.soup) return null;
+    cleanup.shells = shellsOf(topology);
+    cleanup.shellsKey = key;
+  } finally {
+    cleanup.shellsPending = false;
+  }
+  renderShellList();
+  updateCleanupStats();
+  return cleanup.shells;
+}
+
+/** Says how many models the file holds, for the panel's own button. */
+function reportShells(shells) {
+  renderShellList();
+  updateCleanupStats();
+  if (!shells) {
+    setStatus('Load a model first — there is nothing to count.');
+    return;
+  }
+  if (shells.shellCount <= 1) {
+    setStatus(
+      `This file holds one model (${fmt(shells.faceCount)} faces) — nothing extra to remove. ` +
+        'Switch the pick to single faces to take single faces out of it.',
+    );
+    return;
+  }
+  const biggest = shells.shellFaces[0];
+  const rest = [];
+  for (let s = 1; s < shells.shellCount && s < 5; s += 1) rest.push(fmt(shells.shellFaces[s]));
+  setStatus(
+    `This file holds ${fmt(shells.shellCount)} separate models: the largest is ${fmt(biggest)} faces ` +
+      `(${((biggest / shells.faceCount) * 100).toFixed(0)}% of the file), the rest have ${rest.join(', ')} faces. ` +
+      'The bed sits under the lowest point of any of them, so pick the models you do not want and “Remove picked”.',
+  );
+}
+
+function isShellPicked(shell) {
+  const shells = cleanup.shells;
+  if (!shells || !cleanup.selected) return false;
+  for (let t = 0; t < shells.faceCount; t += 1) {
+    if (shells.faceShell[t] === shell) return !!cleanup.selected[t];
+  }
+  return false;
+}
+
+/** The models in the file, one row each, with a tick that picks the whole of one. */
+function renderShellList() {
+  const box = el('modelList');
+  const rows = el('modelRows');
+  if (!box || !rows) return;
+  const shells = cleanup.shells;
+  const wanted = state.tool === 'select' && cleanup.scope === 'models' && shells && shells.shellCount;
+  if (!wanted) {
+    box.hidden = true;
+    return;
+  }
+  rows.textContent = '';
+  el('modelHint').textContent =
+    `${fmt(shells.shellCount)} separate ${shells.shellCount === 1 ? 'model' : 'models'} in this file. ` +
+    'Click one to pick it (again to unpick), or pick it in the viewport with the Select tool:';
+  for (let s = 0; s < shells.shellCount; s += 1) {
+    const faces = shells.shellFaces[s];
+    const size = shellSize(shells.shellBounds, s);
+    const btn = document.createElement('button');
+    btn.className = 'candidate';
+    const left = document.createElement('b');
+    left.textContent = `${isShellPicked(s) ? '\u2713 ' : ''}Model ${s + 1}`;
+    const right = document.createElement('small');
+    right.textContent =
+      `${fmt(faces)} faces (${((faces / shells.faceCount) * 100).toFixed(1)}% of the file) · ` +
+      `${size.map((n) => n.toFixed(1)).join(' \u00d7 ')} units`;
+    btn.append(left, right);
+    btn.title = `Pick this model (${fmt(faces)} faces) for removal`;
+    btn.addEventListener('click', () => pickShell(s));
+    rows.appendChild(btn);
+  }
+  box.hidden = false;
+}
+
+function updateCleanupStats() {
+  const node = el('cleanupStats');
+  if (!node) return;
+  if (!cleanup.soup) {
+    node.textContent = 'Load a model to see the models inside the file.';
+    return;
+  }
+  const shells = cleanup.shells;
+  const removed = removedFaces();
+  node.textContent =
+    `${shells ? `${fmt(shells.shellCount)} model${shells.shellCount === 1 ? '' : 's'} in the file · ` : ''}` +
+    `${fmt(faceCountInHand())} faces in hand · ${fmt(pickedFaces())} face${pickedFaces() === 1 ? '' : 's'} picked` +
+    (removed ? ` · ${fmt(removed)} removed (Restore puts them back)` : '');
+  const removeBtn = el('removeFacesBtn');
+  if (removeBtn) {
+    removeBtn.disabled = pickedFaces() === 0;
+    removeBtn.textContent = 'Remove picked';
+  }
+  const restoreBtn = el('restoreFacesBtn');
+  if (restoreBtn) restoreBtn.disabled = removed === 0;
+}
+
+/**
+ * Yellow lines around the picked faces (and around the face under the cursor).
+ *
+ * The seams are what makes a face visible in the first place: a flat-shaded sphere is one
+ * unbroken surface on screen, and "click the face you can see" only means something once its
+ * edges are drawn. The same trick answers the other half of the question — this is what is
+ * picked — so a removal is judged before it happens rather than after.
+ */
+const OUTLINE_FACE_LIMIT = 60000;
+
+function buildFaceOutline(faceMask) {
+  const faces = faceMask.length;
+  let picked = 0;
+  for (let t = 0; t < faces; t += 1) if (faceMask[t]) picked += 1;
+  if (!picked || picked > OUTLINE_FACE_LIMIT) return null;
+  const arr = mask.position.array;
+  const positions = new Float32Array(picked * 18);
+  let w = 0;
+  for (let t = 0; t < faces; t += 1) {
+    if (!faceMask[t]) continue;
+    for (let k = 0; k < 3; k += 1) {
+      const a = (t * 3 + k) * 3;
+      const b = (t * 3 + ((k + 1) % 3)) * 3;
+      positions[w] = arr[a];
+      positions[w + 1] = arr[a + 1];
+      positions[w + 2] = arr[a + 2];
+      positions[w + 3] = arr[b];
+      positions[w + 4] = arr[b + 1];
+      positions[w + 5] = arr[b + 2];
+      w += 6;
+    }
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  return geometry;
+}
+
+function drawOutline(existing, geometry, color, order) {
+  if (existing) {
+    viewer.modelGroup.remove(existing);
+    existing.geometry.dispose();
+    existing.material.dispose();
+  }
+  if (!geometry) return null;
+  const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 });
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.renderOrder = order;
+  viewer.modelGroup.add(lines);
+  return lines;
+}
+
+function updateSelectionOutline() {
+  const on = mask && state.tool === 'select' && cleanup.selected;
+  const geometry = on ? buildFaceOutline(cleanup.selected) : null;
+  cleanup.outline = drawOutline(cleanup.outline, geometry, 0xffd24d, -1);
+}
+
+function clearSelectionOutline() {
+  cleanup.outline = drawOutline(cleanup.outline, null);
+}
+
+/**
+ * Outlines the thing under the cursor: the model it belongs to, or the single face.
+ *
+ * What a click is about to pick has to be visible, and a flat-shaded surface is one unbroken
+ * grey — the picked faces are outlined in yellow, this one in white, and between them a removal
+ * is judged before it happens rather than after.
+ */
+function updateHoverFace(faceIndex) {
+  if (!mask || state.tool !== 'select' || faceIndex == null || faceIndex < 0 || faceIndex >= faceCountInHand()) {
+    clearHoverFace();
+    return;
+  }
+  const shells = cleanup.shells;
+  const whole = cleanup.scope === 'models' ? shells?.faceShell[faceIndex] : undefined;
+  const key = whole === undefined ? `f${faceIndex}` : `s${whole}`;
+  if (cleanup.hoverKey === key) return;
+  const under = new Uint8Array(faceCountInHand());
+  if (whole === undefined) under[faceIndex] = 1;
+  else for (let t = 0; t < under.length; t += 1) under[t] = shells.faceShell[t] === whole ? 1 : 0;
+  cleanup.hover = drawOutline(cleanup.hover, buildFaceOutline(under), 0xffffff, 3);
+  cleanup.hoverKey = key;
+}
+
+function clearHoverFace() {
+  if (cleanup.hoverKey === '' && !cleanup.hover) return;
+  cleanup.hover = drawOutline(cleanup.hover, null);
+  cleanup.hoverKey = '';
+}
+
+/** Picks or unpicks a whole model, from the list or from a click on it. */
+function pickShell(shell, { add = false, remove = false } = {}) {
+  const shells = cleanup.shells;
+  if (!shells || shell < 0 || shell >= shells.shellCount) return 0;
+  // A plain click toggles — "select all, then take the few off one by one" is the whole point —
+  // while Shift and Alt say pick and unpick outright, for a row of clicks that must not flip.
+  const on = remove ? false : add ? true : !isShellPicked(shell);
+  let changed = 0;
+  for (let t = 0; t < shells.faceCount; t += 1) {
+    if (shells.faceShell[t] !== shell) continue;
+    if (cleanup.selected[t] === (on ? 1 : 0)) continue;
+    cleanup.selected[t] = on ? 1 : 0;
+    changed += 1;
+  }
+  afterPickedFaces(changed);
+  setStatus(
+    `${on ? 'Picked' : 'Unpicked'} Model ${shell + 1} — ${fmt(changed)} faces (${fmt(shells.shellFaces[shell])} in the model). ` +
+      `${fmt(pickedFaces())} picked in all; “Remove picked” takes them out of the model.`,
+  );
+  return changed;
+}
+
+/** Picks or unpicks a single face — one triangle of the file's own mesh. */
+function pickFace(faceIndex, { add = false, remove = false } = {}) {
+  if (!mask || !cleanup.selected || faceIndex == null || faceIndex < 0 || faceIndex >= cleanup.selected.length) {
+    return 0;
+  }
+  const on = remove ? false : add ? true : !cleanup.selected[faceIndex];
+  cleanup.selected[faceIndex] = on ? 1 : 0;
+  afterPickedFaces(1);
+  setStatus(
+    `${on ? 'Picked' : 'Unpicked'} face ${fmt(faceIndex)} of ${fmt(cleanup.selected.length)} — ` +
+      `${fmt(pickedFaces())} picked in all. Shift-click adds, Alt-click takes one off, “Select all” picks the lot.`,
+  );
+  return 1;
+}
+
+function afterPickedFaces(changed) {
+  updateSelectionOutline();
+  renderShellList();
+  updateCleanupStats();
+  renderModelPickHint();
+  return changed;
+}
+
+/** What the status bar says about the pick while the Select tool is up. */
+function renderModelPickHint() {
+  const node = el('selectHint');
+  if (!node) return;
+  const picked = pickedFaces();
+  const scope = cleanup.scope === 'models' ? 'whole models' : 'single faces';
+  node.textContent =
+    `Picking ${scope}: ${fmt(picked)} face${picked === 1 ? '' : 's'} picked` +
+    (cleanup.scope === 'models' && cleanup.shells ? ` of ${fmt(cleanup.shells.faceCount)}` : '') +
+    ', click the model (or the list) to change it.';
+}
+
+/** A click in the viewport with the Select tool: the whole model, or the one face, under it. */
+async function selectClick(e) {
+  if (!mask) return;
+  const hit = viewer.pick(e.clientX, e.clientY);
+  if (!hit || hit.faceIndex == null) {
+    if (!e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      cleanup.selected.fill(0);
+      afterPickedFaces(0);
+      setStatus('Nothing under the cursor — the pick was cleared.');
+    } else {
+      setStatus('Click on the model to pick it.');
+    }
+    return;
+  }
+  const add = e.shiftKey;
+  const remove = e.altKey || e.ctrlKey || e.metaKey;
+  if (cleanup.scope === 'faces') {
+    pickFace(hit.faceIndex, { add, remove });
+    return;
+  }
+  const shells = await ensureShells();
+  if (!shells) return;
+  const shell = shells.faceShell[hit.faceIndex];
+  if (shell === undefined || shell < 0) return;
+  if (shells.shellCount === 1) {
+    setStatus(
+      'This file holds one model, so picking it is the whole file — “Select all” does the same. ' +
+        'Switch the pick to single faces to take a face out instead.',
+    );
+  }
+  pickShell(shell, { add, remove });
+}
+
+function selectAllFaces() {
+  if (!mask || !cleanup.selected) return;
+  cleanup.selected.fill(1);
+  afterPickedFaces(cleanup.selected.length);
+  setStatus(
+    `Picked all ${fmt(cleanup.selected.length)} faces. Click a model (or a face) to take it off the pick, ` +
+      'or “Invert pick” to swap what is picked for what is not.',
+  );
+}
+
+function selectNoFaces() {
+  if (!mask || !cleanup.selected) return;
+  cleanup.selected.fill(0);
+  afterPickedFaces(0);
+  setStatus('Nothing picked.');
+}
+
+function invertPickedFaces() {
+  if (!mask || !cleanup.selected) return;
+  let n = 0;
+  for (let t = 0; t < cleanup.selected.length; t += 1) {
+    cleanup.selected[t] = cleanup.selected[t] ? 0 : 1;
+    if (cleanup.selected[t]) n += 1;
+  }
+  afterPickedFaces(n);
+  setStatus(`Pick inverted — ${fmt(n)} of ${fmt(cleanup.selected.length)} faces picked.`);
+}
+
+function setSelectScope(scope) {
+  cleanup.scope = scope === 'faces' ? 'faces' : 'models';
+  el('selectScope').value = cleanup.scope;
+  if (cleanup.scope === 'models' && mask && cleanup.soup) void ensureShells();
+  renderShellList();
+  renderModelPickHint();
+  updateCleanupStats();
+}
+
+/**
+ * Takes the picked faces out of the model.
+ *
+ * Rebuilt from the file's own soup with a corner map, so the paint stays where it was painted and
+ * the mask's undo history keeps working — the vertices that survived are the same vertices, only
+ * renumbered. The geometry goes back through `viewer.setGeometry`, which re-measures the model
+ * and re-places the bed: this is what puts a model that was standing on top of a stray one back
+ * on the plate.
+ */
+async function rebuildModelFromSoup({ what, faces, restoring = false } = {}) {
+  const soup = cleanup.soup;
+  setLoading(true, restoring ? 'Putting the model back…' : 'Rebuilding the model without the picked faces…');
+  await nextPaint();
+
+  const keep = new Uint8Array(soup.faceCount);
+  for (let f = 0; f < soup.faceCount; f += 1) keep[f] = cleanup.removed[f] ? 0 : 1;
+
+  const oldIds = mask.ids;
+  const oldHistory = mask.history;
+  const oldRedo = mask.redoStack;
+  const cut = filterSoup({ positions: soup.positions, normals: soup.normals, ids: oldIds }, keep);
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(cut.positions, 3));
+  geometry.setAttribute('normal', new THREE.BufferAttribute(cut.normals, 3));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  const overlayGeometry = geometry.clone();
+  mask = new MaskLayer(overlayGeometry, state.features);
+  mask.ids.set(cut.ids);
+  overlayGeometry.setAttribute('color', new THREE.BufferAttribute(mask.colors, 4));
+  mask.refreshColors();
+  mask.history = remapHistory(oldHistory, cut.cornerMap, mask.vertexCount);
+  mask.redoStack = remapHistory(oldRedo, cut.cornerMap, mask.vertexCount);
+
+  viewer.setGeometry(geometry, {
+    upAxis: state.upAxis,
+    overlayGeometry,
+    centre: el('centreOnGrid').checked,
+  });
+  viewer.setGridVisible(el('showGrid').checked);
+
+  cleanup.liveFace = cut.faceMap;
+  cleanup.build += 1;
+  cleanup.shells = null;
+  cleanup.shellsKey = '';
+  resetStencil();
+  cleanup.selected = new Uint8Array(cut.faces);
+  clearSelectionOutline();
+  clearHoverFace();
+  applyDisplayState();
+  updateStats();
+  updateHud();
+  renderShellList();
+  updateCleanupStats();
+  renderModelPickHint();
+  setLoading(false);
+
+  const size = viewer.boundingBox.getSize(new THREE.Vector3());
+  setStatus(
+    `${what} ${fmt(faces)} face${faces === 1 ? '' : 's'}: ${fmt(cut.faces)} faces left, ` +
+      `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} units. ` +
+      `The bed is under the surviving model's lowest point (${viewer.bedY.toFixed(2)}), and ${centreNote()}.` +
+      (restoring ? '' : ' “Restore removed” puts the geometry back.'),
+  );
+  if (removedFaces() && !parts.data) void ensureShells();
+}
+
+/** The whole
+ * "take these faces out", with the one guard that matters: a model cannot be left empty.
+ */
+async function applyRemoval(origFaceList, { what = 'Removed' } = {}) {
+  const soup = cleanup.soup;
+  if (!soup || !origFaceList.length) return false;
+  const trial = cleanup.removed.slice();
+  let n = 0;
+  for (const f of origFaceList) {
+    if (!trial[f]) {
+      trial[f] = 1;
+      n += 1;
+    }
+  }
+  const left = soup.faceCount - countFaces(trial);
+  if (!left) {
+    setStatus(
+      'That would remove every face in the file, so nothing was removed — leave at least one model in hand.',
+    );
+    return false;
+  }
+  cleanup.removed = trial;
+  await rebuildModelFromSoup({ what, faces: n });
+  return true;
+}
+
+/** Removes every picked face. Two clicks: a confirm dialog is blocked in some embedded views. */
+function removeClicked() {
+  if (!requireModel()) return;
+  const picked = pickedFaces();
+  if (!picked) {
+    setStatus('Nothing picked — click a model (or a face), or press “Select all”, then remove.');
+    return;
+  }
+  const now = performance.now();
+  if (now - cleanup.armedAt > 4000) {
+    cleanup.armedAt = now;
+    el('removeFacesBtn').textContent = 'Click again to remove';
+    const shells = cleanup.shells;
+    const models = shells && cleanup.scope === 'models' ? shells.shellCount : 0;
+    setStatus(
+      `Click “Remove picked” again within 4 seconds to take ${fmt(picked)} faces out of the model` +
+        (models ? ` (the file holds ${fmt(models)} models)` : '') +
+        '. The paint stays, and “Restore removed” puts the geometry back.',
+    );
+    return;
+  }
+  cleanup.armedAt = 0;
+  const list = [];
+  for (let f = 0; f < cleanup.selected.length; f += 1) {
+    if (cleanup.selected[f]) list.push(cleanup.liveFace[f]);
+  }
+  void applyRemoval(list, { what: 'Removed' });
+}
+
+async function restoreRemovedFaces() {
+  if (!requireModel()) return;
+  const removed = removedFaces();
+  if (!removed) {
+    setStatus('Nothing has been removed from this model.');
+    return;
+  }
+  cleanup.removed.fill(0);
+  await rebuildModelFromSoup({ what: 'Restored', faces: removed, restoring: true });
 }
 
 // -------------------------------------------------------- paint stencil
@@ -1949,6 +2529,14 @@ el('hideAllBtn').addEventListener('click', () => {
   setStatus(anyVisible ? 'All paint hidden.' : 'All paint shown.');
 });
 
+el('selectScope').addEventListener('change', (e) => setSelectScope(e.target.value));
+el('selectAllBtn').addEventListener('click', selectAllFaces);
+el('selectNoneBtn').addEventListener('click', selectNoFaces);
+el('selectInvertBtn').addEventListener('click', invertPickedFaces);
+el('removeFacesBtn').addEventListener('click', removeClicked);
+el('restoreFacesBtn').addEventListener('click', () => void restoreRemovedFaces());
+el('countModelsBtn').addEventListener('click', () => void ensureShells().then(reportShells));
+
 el('invertBtn').addEventListener('click', invertPaint);
 el('trimBtn').addEventListener('click', trimWindows);
 el('windowsBtn').addEventListener('click', () => listWindows());
@@ -1995,6 +2583,12 @@ window.addEventListener('keydown', (e) => {
     else el('undoBtn').click();
     return;
   }
+  if (meta && e.key.toLowerCase() === 'a') {
+    // Select all, for the pick: the way to take a few models out of a file of many.
+    e.preventDefault();
+    selectAllFaces();
+    return;
+  }
   if (meta) return;
 
   switch (e.key.toLowerCase()) {
@@ -2007,9 +2601,11 @@ window.addEventListener('keydown', (e) => {
     case 'b': setTool('brush'); break;
     case 'f': setTool('fill'); break;
     case 'e': setTool('erase'); break;
+    case 's': setTool('select'); break;
     case 'x': setTool('box'); break;
     case 'escape':
       if (boxDrag) cancelBoxSelect();
+      else if (state.tool === 'select' && pickedFaces()) selectNoFaces();
       break;
     case 'i':
       // Shift+I is the invert; I on its own is the eyedropper.

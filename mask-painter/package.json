@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "serve": "node serve.mjs",
-    "test": "node test/stencil.test.mjs && node test/app-path.test.mjs && node test/painting.test.mjs && node test/parts.test.mjs && node test/cleanup.test.mjs && node test/boxselect.test.mjs && node test/ui-wiring.test.mjs && node test/help.test.mjs"
+    "test": "node test/stencil.test.mjs && node test/app-path.test.mjs && node test/painting.test.mjs && node test/parts.test.mjs && node test/cleanup.test.mjs && node test/boxselect.test.mjs && node test/select.test.mjs && node test/ui-wiring.test.mjs && node test/help.test.mjs"
   },
   "keywords": [],
   "author": "",

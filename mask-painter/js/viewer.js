@@ -54,6 +54,34 @@ export function centreTranslation(box) {
 }
 
 /**
+ * Where the ground grid goes: on the model's own lowest point, under its own footprint.
+ *
+ * The grid is the print bed, so its plane has to be the plane the model stands on. Two ways to
+ * get that wrong, both of which leave the model visibly hanging in the air:
+ *
+ *   • dropping the grid a fixed fraction of the model's height *below* the model's lowest point
+ *     (2% of a 100 mm figure is a 2 mm gap under its feet), and
+ *   • leaving the grid at the world origin while the model is somewhere else. With centring off,
+ *     an STL authored in a CAD assembly is hundreds of units from the origin — the grid then sits
+ *     beside the model rather than under it, which reads as "the model is off the bed" even though
+ *     the model never moved.
+ *
+ * The grid therefore follows the model: centred on its footprint, at the height of its lowest
+ * point, in both centring modes. A pure function of the box so it can be checked without a
+ * renderer.
+ */
+export function gridPlacement(box) {
+  const centre = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  return {
+    x: centre.x,
+    y: box.min.y,
+    z: centre.z,
+    span: Math.max(size.x, size.z, 1e-3) * 3.5,
+  };
+}
+
+/**
  * Owns the WebGL scene: model + mask overlay, lights, orbit controls, brush cursor,
  * and the accelerated raycast used by every painting tool.
  */
@@ -313,11 +341,13 @@ export class Viewer {
       this.grid = null;
     }
     if (!this.boundingBox) return;
-    const size = this.boundingBox.getSize(new THREE.Vector3());
-    const span = Math.max(size.x, size.z) * 3.5;
+    const { x, y, z, span } = gridPlacement(this.boundingBox);
     this.grid = new THREE.GridHelper(span, 40, 0x33404f, 0x232a33);
-    this.grid.position.y = this.boundingBox.min.y - size.y * 0.02;
+    this.grid.position.set(x, y, z);
     this.scene.add(this.grid);
+    // The plate the model stands on, in world units: the grid is drawn on it, so a caller can
+    // say where the bed ended up (and how far the model's lowest point is above it).
+    this.bedY = y;
   }
 
   frameModel() {
