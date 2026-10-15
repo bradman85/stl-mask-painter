@@ -1,13 +1,13 @@
 /**
- * stencil.js — turn painted features into a printable paint stencil.
+ * stencil.js — turn a selection into a printable paint stencil.
  *
- * The painted area becomes a WINDOW in a thin shell that conforms to the model, so the
- * mask can be held on the figure and only the painted area is exposed to the brush.
+ * The selected area becomes a WINDOW in a thin shell that conforms to the model, so the
+ * mask can be held on the figure and only the selected area is exposed to the brush.
  *
  * Pipeline:
  *   1. weld the STL triangle soup into shared vertices; build adjacency + vertex normals
- *   2. geodesic (surface) distance field from the painted set — no tunnelling through air
- *   3. smooth it into a signed field: negative inside the painted area, positive outside
+ *   2. geodesic (surface) distance field from the selected set — no tunnelling through air
+ *   3. smooth it into a signed field: negative inside the selected area, positive outside
  *   4. clip the surface to the band [-overhang, coverRadius]: a smooth window edge and a
  *      smooth rim, independent of the mesh's triangle size
  *   5. offset the clipped surface outward on both sides and close it with walls along the
@@ -1397,18 +1397,91 @@ function signedVolume(positions, indices) {
 
 // ---------------------------------------------------------------- public API
 
-/** Builds the stencil's painted lookup: 1 for every vertex carrying one of `featureIds`. */
-export function paintedMaskFrom(ids, featureIds) {
-  const set = featureIds instanceof Set ? featureIds : new Set(featureIds);
-  const out = new Uint8Array(ids.length);
-  let n = 0;
-  for (let i = 0; i < ids.length; i += 1) {
-    if (ids[i] !== 0 && set.has(ids[i])) {
-      out[i] = 1;
-      n += 1;
+/**
+ * Makes sure every painted island dips below the window cut level, so every one of them opens.
+ *
+ * The window is cut where the field crosses `lo` — the inlay, a bite taken *inside* the painted
+ * area so the mask's lip overlaps bare model and paint cannot creep under the edge. Two things
+ * stop that crossing from ever forming on a small selection, both measured on the bundled figure:
+ *
+ *   - a one-triangle pick welds to three vertices and none of them is inside anything, so the
+ *     depth field is 0 across the whole island: there is no inside to bite into, and no vertex ever
+ *     reaches the level;
+ *   - the inside smoothing that shapes a good rim lifts a small island's values back towards its
+ *     surroundings — a 52-face patch is 0.53 deep, deeper than the 0.35 inlay, and still came out
+ *     of the build with no window at all.
+ *
+ * Either way the build reported success with `windowLoops: 0`: the shell had no opening and the
+ * selected faces were simply absent from it, down to `windowOpen: false`. That is the report
+ * "the individual faces do not process the stencil".
+ *
+ * So an island with no room inside it for that bite is given one: the whole island is set level
+ * with the rest of the window, a little past the cut, so every edge leaving it crosses cleanly.
+ * The cut then lands a fraction of an edge *outside* the island's own boundary, which is the honest
+ * place for it — an island thinner than the inlay has no inside to inset into, so its window is the
+ * island plus a small rim of bare model, and buildStencil says so in words (see the warning, and
+ * `thinIslands` / `thinIslandRim` in the stats).
+ *
+ * How far past the cut is not a free choice: the marker has to clear the distance at which a cut
+ * point is snapped back onto the island's own vertex (`posSnap` in clipToSolid, a hundredth of an
+ * edge). Snapping there collapses the ring of triangles around the window and leaves a shell with
+ * an edge used by four triangles, which is to say one a slicer refuses. A cut sits `t` along the
+ * edge from the island vertex to an unpainted neighbour, with `t = target / (target + neighbour's
+ * field)`; setting `target` from the *largest* neighbour field makes the shortest of those crossings
+ * exactly a quarter of an edge, a factor of twenty-five clear of the snap.
+ *
+ * Idempotent: an island already reaching the level is left alone, so re-running it on the field of
+ * a widened attempt changes nothing.
+ *
+ * @returns {{opened: number, rim: number}} how many islands needed opening, and how far past the
+ *   selection the widest of their windows reaches, in model units.
+ */
+function openSmallIslands(topo, paintedW, field, lo) {
+  const { wCount, neighborStart, neighbors, meanEdgeLength } = topo;
+  const snap = Math.max(meanEdgeLength * 0.02, 1e-7);
+  // An island dipping shallower than this has no clean crossing inside it to cut.
+  const room = meanEdgeLength * 0.25;
+  const seen = new Uint8Array(wCount);
+  const stack = [];
+  const island = [];
+  let opened = 0;
+  let rim = 0;
+  for (let start = 0; start < wCount; start += 1) {
+    if (!paintedW[start] || seen[start]) continue;
+    stack.length = 0;
+    island.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    let lowest = Infinity;
+    let neighbourMax = 0;
+    while (stack.length) {
+      const v = stack.pop();
+      island.push(v);
+      const f = field[v];
+      if (Number.isFinite(f) && f < lowest) lowest = f;
+      for (let k = neighborStart[v]; k < neighborStart[v + 1]; k += 1) {
+        const n = neighbors[k];
+        if (paintedW[n]) {
+          if (!seen[n]) {
+            seen[n] = 1;
+            stack.push(n);
+          }
+          continue;
+        }
+        const nf = field[n];
+        if (Number.isFinite(nf) && nf > neighbourMax) neighbourMax = nf;
+      }
     }
+    if (!(lowest > lo - room)) continue;
+    opened += 1;
+    const target = Math.max(snap * 5, (neighbourMax - lo) / 3);
+    const level = lo - target;
+    for (const v of island) field[v] = level;
+    // The crossing runs from the island's vertex out to an unpainted one, so where that neighbour
+    // already sits at the cut level the window reaches a whole edge past the selection.
+    rim = Math.max(rim, meanEdgeLength);
   }
-  return { painted: out, count: n };
+  return { opened, rim };
 }
 
 /**
@@ -1484,6 +1557,8 @@ export function buildStencil({ topology, painted, params = {}, onProgress = null
   const warnings = [];
   let field = null;
   let fieldBound = 0;
+  // Islands that had to be cut at their own edge because they are thinner than the inlay.
+  let thinIslands = { opened: 0, rim: 0 };
   let radius = p.coverRadius;
   let result = null;
   let attempts = 0;
@@ -1508,6 +1583,9 @@ export function buildStencil({ topology, painted, params = {}, onProgress = null
       }
       smoothField(topo, field, unpaintedW, p.smoothPasses, p.smoothStrength);
       smoothField(topo, field, paintedW, p.smoothInsidePasses, p.smoothStrength);
+      // A selection is a set of faces the user pointed at, so no island of it may come out of the
+      // build without a window: the smoothing above is allowed to shape the rim, not to erase one.
+      thinIslands = openSmallIslands(topo, paintedW, field, lo);
       fieldBound = bound;
       fieldMs += Date.now() - t0;
     }
@@ -1529,6 +1607,14 @@ export function buildStencil({ topology, painted, params = {}, onProgress = null
   if (!s.windowOpen) {
     w.push(
       'The window did not open: the painted area is smaller than the window overhang, so the mask covers it completely. Reduce the overhang or paint a bigger area.',
+    );
+  }
+  if (thinIslands.opened > 0) {
+    w.push(
+      `${thinIslands.opened} selected island${thinIslands.opened === 1 ? ' is' : 's are'} thinner than the ` +
+        `${p.overhang} window inlay, so ${thinIslands.opened === 1 ? 'its window was' : 'their windows were'} cut at ` +
+        `${thinIslands.opened === 1 ? 'its own' : 'their own'} edge instead of inset inside: a rim of up to ` +
+        `${thinIslands.rim.toFixed(2)} of bare model stays unpainted there. Set the window inlay to 0 for an exact cut.`,
     );
   }
   if (s.components > 1) {
@@ -1569,6 +1655,8 @@ export function buildStencil({ topology, painted, params = {}, onProgress = null
     stats: {
       ...s,
       paintedVertices: paintedVerts.length,
+      thinIslands: thinIslands.opened,
+      thinIslandRim: thinIslands.rim,
       attempts,
       smoothingPasses: p.smoothPasses,
       fieldMs,

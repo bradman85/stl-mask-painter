@@ -17,8 +17,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../vendor/three.module.js';
 import { buildTopology } from '../js/stencil.js';
-import { MaskLayer } from '../js/mask.js';
-import { createFeatureList } from '../js/features.js';
 import { centreTranslation, gridPlacement } from '../js/viewer.js';
 import {
   shellsOf,
@@ -26,10 +24,7 @@ import {
   facesOfShells,
   countFaces,
   filterSoup,
-  remapHistory,
-  inverseCornerMap,
   highlightArrays,
-  pickedCorners,
 } from '../js/select.js';
 import { drawHighlight, clearHighlight } from '../js/highlight.js';
 import { parseBinarySTL, fmt } from './helpers.mjs';
@@ -224,42 +219,12 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
     })(),
     `every one of ${cut.ids.length} corners kept its feature id`,
   );
-  check(
-    'an inverse corner map points back at the new position',
-    (() => {
-      const inv = inverseCornerMap(cut.cornerMap);
-      return inv[cut.cornerMap[0]] === 0 && inv[cut.cornerMap[cut.cornerMap.length - 1]] === cut.cornerMap.length - 1 &&
-        inv[0] === -1;
-    })(),
-    'corners that were dropped map to -1',
-  );
   const nothing = filterSoup({ positions: combined, ids }, new Uint8Array(faceCount));
   check('filtering everything out leaves an empty soup rather than throwing', nothing.faces === 0 && nothing.positions.length === 0);
 }
 
 // -------------------------------------------------------------- the highlight
 //
-// ------------------------------------------------------- the pick, as something to paint
-//
-// A pick is geometry and a stencil is built from paint, so the bridge between them is the picked
-// faces' own corners: three per face, in the mask's own face order (`3t`, `3t+1`, `3t+2`). Get that
-// wrong and "Paint picked faces" paints the triangles next to the ones you picked.
-{
-  const mask = new Uint8Array(4).fill(1);
-  mask[2] = 0;
-  check(
-    'a pick hands over its faces’ own three corners, in face order',
-    [...pickedCorners(mask)].join(',') === '0,1,2,3,4,5,9,10,11',
-    `corners ${[...pickedCorners(mask)].join(',')} for faces 0, 1 and 3`,
-  );
-  check('an empty pick has nothing to paint', pickedCorners(new Uint8Array(4)).length === 0);
-  check(
-    'and a pick of every face covers every corner once',
-    pickedCorners(new Uint8Array(5).fill(1)).length === 15,
-    `${pickedCorners(new Uint8Array(5).fill(1)).length} corners for 5 faces`,
-  );
-}
-
 // ------------------------------------------------- the pick is drawn, not just computed
 
 // One picked face has to be *visible*, and edges alone were the bug: three hairlines lying exactly
@@ -440,229 +405,5 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
   );
 }
 
-// -------------------------------------------------- the paint and its undo history
-
-{
-  const lower = boxSoup([0, -10, 0, 2, -8, 2]);
-  const upper = boxSoup([0, 0, 0, 4, 4, 4]);
-  const combined = combine(lower, upper);
-  const faceCount = facesOf(combined);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(combined, 3));
-  geometry.computeVertexNormals();
-  const layer = new MaskLayer(geometry, createFeatureList());
-
-  // Paint the *upper* model (faces 12..23, corners 36..71) and the stray, then remove the stray.
-  layer.beginStroke();
-  layer.paintIndices([...Array(36).keys()].map((i) => i + 36), 2);
-  layer.paintIndices([...Array(36).keys()], 5);
-  layer.endStroke();
-  const before = layer.ids.slice();
-
-  const keep = new Uint8Array(faceCount);
-  for (let t = 12; t < faceCount; t += 1) keep[t] = 1;
-  const cut = filterSoup({ positions: combined, ids: layer.ids }, keep);
-
-  check(
-    'a removal carries the paint of the surviving model, and only that',
-    (() => {
-      let feature2 = 0;
-      let other = 0;
-      for (let i = 0; i < cut.ids.length; i += 1) {
-        if (cut.ids[i] === 2) feature2 += 1;
-        else other += 1;
-      }
-      return feature2 === 36 && other === 0;
-    })(),
-    `${cut.ids.length} corners: 36 still painted, nothing else`,
-  );
-
-  const history = remapHistory(layer.history, cut.cornerMap, cut.ids.length);
-  check(
-    'the undo history is renumbered, not thrown away',
-    history.length === 1 && history[0].type === 'deltas' && history[0].idx.length === 36,
-    `${history.length} entr${history.length === 1 ? 'y' : 'ies'}, ${history[0]?.idx.length} corners`,
-  );
-  check(
-    'and undoing through it releases exactly the paint that survived',
-    (() => {
-      const rebuilt = new MaskLayer(buildGeometry(cut.positions), createFeatureList());
-      rebuilt.ids.set(cut.ids);
-      rebuilt.history = history;
-      rebuilt.undo();
-      let painted = 0;
-      for (let i = 0; i < rebuilt.ids.length; i += 1) if (rebuilt.ids[i] !== 0) painted += 1;
-      return painted === 0;
-    })(),
-    'the 36 painted corners went back to unpainted',
-  );
-
-  const snapshot = [{ type: 'snapshot', ids: before }];
-  const remappedSnapshot = remapHistory(snapshot, cut.cornerMap, cut.ids.length);
-  check(
-    'a whole-mask snapshot is rebuilt corner by corner',
-    (() => {
-      const s = remappedSnapshot[0].ids;
-      for (let i = 0; i < cut.cornerMap.length; i += 1) if (s[i] !== before[cut.cornerMap[i]]) return false;
-      return true;
-    })(),
-    `${remappedSnapshot[0].ids.length} corners sampled through the same map`,
-  );
-  check(
-    'entries that name a corner which is gone lose that corner',
-    (() => {
-      const entries = remapHistory(
-        [{ type: 'deltas', idx: Int32Array.from([0, 36]), prev: Int16Array.from([0, 0]), next: Int16Array.from([5, 2]) }],
-        cut.cornerMap,
-        cut.ids.length,
-      );
-      return entries.length === 1 && entries[0].idx.length === 1 && entries[0].idx[0] === 0 && entries[0].next[0] === 2;
-    })(),
-    'the removed corner drops out, the survivor moves to corner 0',
-  );
-
-  function buildGeometry(positions) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    g.computeVertexNormals();
-    return g;
-  }
-}
-
-// ------------------------------------------------------------- the real model
-
-{
-  const parsed = parseBinarySTL(fs.readFileSync(path.resolve(here, '../../Sprunki Mercuy.stl')));
-  const topo = buildTopology(parsed.positions, parsed.positions.length / 3);
-  const shells = shellsOf(topo);
-  const total = [...shells.shellFaces].reduce((a, b) => a + b, 0);
-
-  check(
-    'the real model is cut into models whose face counts add up',
-    total === topo.faceCount && shells.shellCount >= 1,
-    `${shells.shellCount} model${shells.shellCount === 1 ? '' : 's'}, ${fmt(total)} faces`,
-  );
-  check(
-    'the biggest model is the figure, not a sliver',
-    shells.shellFaces[0] / topo.faceCount > 0.5,
-    `${((shells.shellFaces[0] / topo.faceCount) * 100).toFixed(1)}% of the faces in Model 1`,
-  );
-
-  // The bug this pins: a stray model *below* the figure. The bed goes under the lowest point of
-  // everything in the file, so the figure ends up standing that much above the plate.
-  const stray = new Float32Array(parsed.positions.length);
-  for (let i = 0; i < stray.length; i += 3) {
-    stray[i] = parsed.positions[i] + 40;
-    stray[i + 1] = parsed.positions[i + 1] - 30;
-    stray[i + 2] = parsed.positions[i + 2];
-  }
-  const combined = combine(parsed.positions, stray);
-  const combinedFaces = facesOf(combined);
-  const combinedTopo = buildTopology(combined, combined.length / 3);
-  const combinedShells = shellsOf(combinedTopo);
-  check(
-    'a second copy written below the figure is a second model',
-    combinedShells.shellCount === 2 && combinedShells.shellFaces[1] === topo.faceCount,
-    `${combinedShells.shellCount} models, ${fmt(combinedShells.shellFaces[0])} + ${fmt(combinedShells.shellFaces[1])} faces`,
-  );
-
-  const figureBox = new THREE.Box3().setFromBufferAttribute(new THREE.BufferAttribute(parsed.positions, 3));
-  const combinedBox = new THREE.Box3().setFromBufferAttribute(new THREE.BufferAttribute(combined, 3));
-  const floatingOffset = centreTranslation(combinedBox);
-  const figureFeet = figureBox.min.y + floatingOffset.y;
-  check(
-    'with the stray below it, the figure stands above the bed instead of on it',
-    figureFeet > 10,
-    `the figure’s lowest point sits ${figureFeet.toFixed(2)} above the bed (file bottom ${combinedBox.min.y.toFixed(2)})`,
-  );
-
-  const keep = new Uint8Array(combinedFaces);
-  for (let t = 0; t < topo.faceCount; t += 1) keep[t] = 1;
-  const cut = filterSoup({ positions: combined }, keep);
-  const cutBox = new THREE.Box3().setFromBufferAttribute(new THREE.BufferAttribute(cut.positions, 3));
-  const cutOffset = centreTranslation(cutBox);
-  check(
-    'removing the stray model puts the figure back on the bed',
-    Math.abs(cutBox.min.y + cutOffset.y) < 1e-7 && cutOffset.y < floatingOffset.y,
-    `its lowest point lands at ${(cutBox.min.y + cutOffset.y).toFixed(4)} after the removal, ${cutOffset.y.toFixed(2)} below where the stray was holding it`,
-  );
-
-  // The app's own chain, in the order `rebuildModelFromSoup` runs it: filter the file, build the
-  // geometry, rebuild the mask layer over it, carry the paint and the history, then measure where
-  // the bed lands. The pieces are checked above one at a time; this is them joined up, on the real
-  // model, with a real mask layer.
-  {
-    const source = new THREE.BufferGeometry();
-    source.setAttribute('position', new THREE.BufferAttribute(combined, 3));
-    source.computeVertexNormals();
-    const layer = new MaskLayer(source, createFeatureList());
-    layer.beginStroke();
-    layer.paintIndices([...Array(15000).keys()], 3); // a band of the figure
-    layer.endStroke();
-    const paintedBefore = layer.stats().painted;
-
-    const filtered = filterSoup(
-      { positions: combined, normals: source.attributes.normal.array, ids: layer.ids },
-      keep,
-    );
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(filtered.positions, 3));
-    geometry.setAttribute('normal', new THREE.BufferAttribute(filtered.normals, 3));
-    geometry.computeVertexNormals();
-    geometry.computeBoundingBox();
-    const overlay = geometry.clone();
-    const rebuilt = new MaskLayer(overlay, createFeatureList());
-    rebuilt.ids.set(filtered.ids);
-    overlay.setAttribute('color', new THREE.BufferAttribute(rebuilt.colors, 4));
-    rebuilt.refreshColors();
-    rebuilt.history = remapHistory(layer.history, filtered.cornerMap, rebuilt.vertexCount);
-
-    check(
-      'the removed model’s faces are gone from the geometry in hand, and only those',
-      Math.floor(geometry.attributes.position.count / 3) === topo.faceCount &&
-        filtered.faces === topo.faceCount,
-      `${geometry.attributes.position.count} corners = ${topo.faceCount} faces (the file had ${fmt(combinedFaces * 2)})`,
-    );
-    check(
-      'the rebuilt mask layer holds the paint of the surviving vertices, count for count',
-      rebuilt.stats().painted === paintedBefore && paintedBefore === 15000,
-      `${fmt(rebuilt.stats().painted)} painted of ${fmt(rebuilt.vertexCount)} corners`,
-    );
-    check(
-      'its own spatial grid is built over the new geometry, so the brush still finds vertices',
-      rebuilt.nearestVertex([parsed.positions[0], parsed.positions[1], parsed.positions[2]]) >= 0,
-      'a vertex query on the rebuilt model answers',
-    );
-    check(
-      'and the bed is measured from the geometry in hand',
-      (() => {
-        const box = new THREE.Box3().setFromBufferAttribute(geometry.attributes.position);
-        const offset = centreTranslation(box);
-        const grid = gridPlacement(box);
-        return Math.abs(box.min.y + offset.y) < 1e-7 && Math.abs(grid.y - box.min.y) < 1e-7;
-      })(),
-      'the surviving model’s lowest point lands on the grid plane',
-    );
-  }
-
-  const placed = gridPlacement(new THREE.Box3(new THREE.Vector3(-2, 40, -3), new THREE.Vector3(5, 140, 4)));
-  check(
-    'the bed is drawn on the model’s own lowest point, not a fraction of its height below it',
-    placed.y === 40 && placed.x === 1.5 && placed.z === 0.5,
-    `grid at (${placed.x}, ${placed.y}, ${placed.z}); the old rule dropped it 2% of the model's height below the feet, to 38.00`,
-  );
-  const offOrigin = gridPlacement(new THREE.Box3(new THREE.Vector3(300, 0, -400), new THREE.Vector3(320, 10, -380)));
-  check(
-    'and under the model’s own footprint, so an off-origin file is never beside the grid',
-    offOrigin.x === 310 && offOrigin.z === -390 && offOrigin.span >= 70,
-    `grid centre (${offOrigin.x}, ${offOrigin.z}), spanning ${offOrigin.span.toFixed(0)} units`,
-  );
-  check(
-    'the span still follows the model’s footprint',
-    new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(10, 10, 4)).getSize(new THREE.Vector3()).x * 3.5 ===
-      gridPlacement(new THREE.Box3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(10, 10, 4))).span,
-  );
-}
-
-console.log(`\n${failures === 0 ? 'all model-cleanup checks passed' : `${failures} failure(s)`}`);
+console.log(`\n${failures === 0 ? 'all select checks passed' : `${failures} failure(s)`}`);
 process.exit(failures === 0 ? 0 : 1);

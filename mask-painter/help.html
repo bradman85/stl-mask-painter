@@ -131,21 +131,21 @@
   <div id="tocLinks">
     <a href="#start">Getting started</a>
     <a href="#topbar">Top bar — loading &amp; screenshots</a>
-    <a href="#features">Features (the palette)</a>
-    <a href="#paint">Paint</a>
-    <a class="sub" href="#paint-tools">Tools</a>
-    <a class="sub" href="#paint-box">Box paint</a>
-    <a class="sub" href="#paint-parts">Seam parts</a>
-    <a class="sub" href="#paint-radius">Radius, mirror</a>
-    <a class="sub" href="#paint-candidates">The panel list</a>
+    <a href="#selection">Selection</a>
+    <a class="sub" href="#select">The tools</a>
+    <a class="sub" href="#select-box">The rectangle</a>
+    <a class="sub" href="#parts">Seam panels</a>
+    <a class="sub" href="#select-candidates">The panel list</a>
     <a href="#cleanup">Cleaning up the model</a>
-    <a href="#mask">Mask</a>
-    <a href="#stencil">Paint stencil (STL)</a>
+    <a href="#windows">Windows</a>
+    <a class="sub" href="#windows-list">The window list</a>
+    <a href="#tint">Tint &amp; view</a>
+    <a href="#stencil">Stencil (STL)</a>
     <a href="#view">Model &amp; view</a>
     <a href="#export">Export / import</a>
     <a class="sub" href="#mask-json">Mask JSON — the format</a>
     <a class="sub" href="#import-json">Import mask JSON</a>
-    <a class="sub" href="#ply">Painted shell PLY — the format</a>
+    <a class="sub" href="#ply">Selected shell PLY — the format</a>
     <a class="sub" href="#stl">Stencil STL — the format</a>
     <a href="#shortcuts">Keyboard &amp; mouse</a>
     <a href="#howitworks">How it works, and what it cannot do</a>
@@ -157,7 +157,7 @@
 <h1>What every control does</h1>
 <p class="lead">
   One section here for each panel of the app, in the order the panel shows them, plus the
-  detail of the three file formats (mask JSON, the painted-shell PLY and the stencil STL) and
+  detail of the three file formats (selection JSON, the selected-shell PLY and the stencil STL) and
   the honest limits of each step. Every heading in the app has a small
   <span class="pill">?</span> that opens this page at that section.
 </p>
@@ -173,16 +173,16 @@
     <li>Load a model — <b>Open STL…</b>, <b>Load example model</b>, or drop an <code>.stl</code>
       anywhere on the viewport. <b>The app opens empty</b>: it does not fetch the bundled example
       for you, so the first model in the session is the one you chose.</li>
-    <li>Paint the areas that must stay exposed: brush, region fill, or click a whole
-      <b>Part</b> in one go.</li>
-    <li>Press <b>Build stencil</b> in the <a href="#stencil">Paint stencil</a> panel and check
+    <li>Select the areas that must stay exposed: click a whole <b>Part</b> in one go, then refine
+      it with <b>Select faces</b>, or drag a rectangle over a region.</li>
+    <li>Press <b>Build stencil</b> in the <a href="#stencil">Stencil (STL)</a> panel and check
       the preview.</li>
-    <li><b>Export stencil STL</b> and print it. Hold the print on the figure; the painted
+    <li><b>Export stencil STL</b> and print it. Hold the print on the figure; the selected
       areas are the windows.</li>
   </ol>
   <p>
-    Along the way you can save and reload the painting itself as
-    <a href="#mask-json">mask JSON</a>, and export the painted shell as
+    Along the way you can save and reload the selection itself as
+    <a href="#mask-json">selection JSON</a>, and export the selected shell as
     <a href="#ply">PLY</a> for use in other tools.
   </p>
 </section>
@@ -197,8 +197,8 @@
         Loads any binary or ASCII <code>.stl</code> from disk. Parsing uses three.js'
         STLLoader; normals in the file are ignored and recomputed from the triangles, because
         STL normals are frequently wrong or zero. After loading, the camera frames the model,
-        a pick acceleration structure (BVH) is built, a fresh mask is created at the model's
-        vertex count and the brush radius is set from the model's size.
+        a pick acceleration structure (BVH) is built, a fresh selection is created over the
+        model's faces and the stencil panel's defaults are set from the model's size.
         <br>Cost: about 0.3 s for the bundled 422,658-triangle model, most of it the BVH.
       </td>
     </tr>
@@ -214,7 +214,7 @@
     <tr>
       <td class="k">Screenshot</td>
       <td>
-        Saves a PNG of the viewport exactly as rendered, including the paint overlay and, if it
+        Saves a PNG of the viewport exactly as rendered, including the selection tint and, if it
         is on, the stencil preview and seam lines. The filename is the model name plus
         <code>-mask-view.png</code>.
       </td>
@@ -241,197 +241,92 @@
     </tr>
   </table>
   <div class="note">
-    <strong>Loading a second model replaces the mask.</strong> The painting is per vertex, so a
-    mask only means anything for the model it was painted on. <b>Open mask (JSON)</b> warns if
-    the vertex count differs, but it cannot map a mask onto different geometry.
+    <strong>Loading a second model replaces the selection.</strong> A selection is a set of
+    triangles of the loaded mesh, so it only means anything for the model it was made on.
+    <b>Open selection (JSON)</b> warns if the vertex count differs, but it cannot map a selection
+    onto different geometry.
   </div>
 </section>
 
-<section class="doc" id="features">
-  <h2>Features (the palette) <a class="anchor" href="#features">#</a></h2>
-  <p>
-    A "feature" is a named colour. Painting assigns a feature id to vertices, and the id — not
-    the colour — is what the mask and the exports carry; the colour is how you see it.
-  </p>
-  <table>
-    <tr><th>Control</th><th>What it does</th></tr>
-    <tr>
-      <td class="k">Feature row</td>
-      <td>
-        Click to make it the current feature (what the brush, fill and Part tools paint with).
-        The number on the right is how many vertices currently carry that feature. The row
-        turns dim when the feature is hidden from view.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">◉ / ◌<small>mini button, left of ✕</small></td>
-      <td>
-        Hides or shows that feature's paint in the viewport. Hiding is a <em>view</em> setting:
-        it changes nothing about the mask, what gets exported, or what the stencil turns into a
-        window. Useful to see a small feature underneath a big one.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">✕</td>
-      <td>
-        Removes the feature from the palette and clears its paint from the mask. It asks first
-        when the feature has paint, and the whole thing is one undo step
-        (<kbd>Ctrl</kbd>+<kbd>Z</kbd> brings both the feature and its paint back if nothing else
-        was painted in between).
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Colour swatch</td>
-      <td>Colour used for the next feature you add. Changing it does not recolour existing features.</td>
-    </tr>
-    <tr>
-      <td class="k">New feature name</td>
-      <td>Name for the next feature; <kbd>Enter</kbd> adds it. Empty names become "Feature N".</td>
-    </tr>
-    <tr>
-      <td class="k">Add</td>
-      <td>
-        Appends the feature with the next free id (1…32,000; id 0 is reserved for "unpainted")
-        and selects it. Ids are never reused inside a session, so an exported JSON keeps
-        pointing at the right features.
-      </td>
-    </tr>
-  </table>
-  <h3>Default palette</h3>
-  <p>
-    Eyes <span class="pill" style="border-color:#4ea1ff">#4ea1ff</span>,
-    Pupils <span class="pill" style="border-color:#111820">#111820</span>,
-    Mouth <span class="pill" style="border-color:#ff4d6d">#ff4d6d</span>,
-    Cheeks <span class="pill" style="border-color:#ff8fb1">#ff8fb1</span>,
-    Ears <span class="pill" style="border-color:#b06bff">#b06bff</span>,
-    Head <span class="pill" style="border-color:#ffd23f">#ffd23f</span>,
-    Body <span class="pill" style="border-color:#3ddc84">#3ddc84</span>,
-    Arms <span class="pill" style="border-color:#2fd0c5">#2fd0c5</span>,
-    Legs <span class="pill" style="border-color:#ff9f45">#ff9f45</span>,
-    Markings <span class="pill" style="border-color:#ff6bd6">#ff6bd6</span>.
-    Press <kbd>1</kbd>…<kbd>9</kbd> to switch to the first nine.
-  </p>
-  <h3>What a feature does when the stencil is built</h3>
-  <p>
-    Nothing, directly: the window is <em>everything painted</em>, whatever feature it belongs
-    to. Features exist so you can paint several areas in different colours, see them apart,
-    count them, and clear them one at a time. Two features painted next to each other become a
-    single window, joined at the seam between them.
-  </p>
-</section>
-
-<section class="doc" id="paint">
-  <h2>Paint <a class="anchor" href="#paint">#</a></h2>
+<section class="doc" id="selection">
+  <h2>Selection — the one thing this app does <a class="anchor" href="#selection">#</a></h2>
   <p class="lead">
-    Six tools, all painting the current feature, all undoable, all one step per stroke, click
-    or drag.
+    Select the part of the model the stencil should expose. <b>Build stencil</b> is built from that
+    selection and nothing else, and every tool writes the same selection.
+  </p>
+  <p>
+    There is <b>one selection</b>, and it is a set of <b>triangles</b>: a triangle is what the cursor
+    is over, what a seam separates, and what a rectangle covers. Nothing is painted, there is no
+    palette and no colours — an earlier version of this app painted feature ids onto vertices and
+    built the stencil from the paint, which turned out to be a second, harder way of saying
+    "these triangles".
+  </p>
+  <p>
+    The two tools are two ways of adding to that one set, and each can build on the other:
+  </p>
+  <table>
+    <tr><th>Tool</th><th>Adds</th><th>Shortcut</th></tr>
+    <tr><td class="k">Part</td><td>Every triangle of the seam-bounded panel under the cursor — a head, a torso, a limb</td><td><kbd>P</kbd></td></tr>
+    <tr><td class="k">Select models</td><td>The whole separate model under the cursor (the shells inside one file), for taking a stray one out</td><td><kbd>S</kbd></td></tr>
+    <tr><td class="k">Select faces</td><td>One triangle at a time, or a rectangle's worth of them</td><td><kbd>Shift</kbd>+<kbd>S</kbd></td></tr>
+  </table>
+  <p>
+    So the usual way through a model is: take the head with <b>Part</b>, switch to
+    <b>Select faces</b> and take the eyes back off it a few triangles at a time,
+    <b>Shift</b>-click another panel to add it, then <b>Build stencil</b> from what is left.
+    <b>Switching tools never clears the selection</b>, because a selection is not a tool's private
+    state — and that is the whole arrangement.
   </p>
 
-  <h3 id="paint-tools">Tools</h3>
+  <h3 id="select">The tools, and the three modifiers</h3>
   <table>
-    <tr><th>Tool</th><th>What it does</th></tr>
+    <tr><th>Gesture</th><th>What it does</th></tr>
     <tr>
-      <td class="k">Brush <small><kbd>B</kbd></small></td>
+      <td class="k">Click</td>
       <td>
-        Left-drag stamps a sphere of the brush radius along the path: every vertex within the
-        radius of the hit point gets the feature. Stamps are sub-sampled while dragging (the
-        step tracks the on-screen size of the brush), so a fast stroke stays smooth and does
-        not paint the same vertices twenty times. The whole drag is one undo step.
-        <br>A brush stamp is a <em>sphere</em>, so on a thin part it can reach the far side —
-        use <b>Part</b> or <b>Region fill</b> when that matters.
+        Takes the panel (Part) or the triangle (Select faces) under the cursor, and makes the
+        selection <em>exactly</em> that. A second click on the same thing takes it off again.
       </td>
     </tr>
     <tr>
-      <td class="k">Region fill <small><kbd>F</kbd></small></td>
-      <td>
-        Flood-fills the connected surface from the clicked point, walking vertex to vertex
-        over the mesh and refusing to cross a step where the surface turns by more than the
-        <b>seam angle</b>. It stops at creases, at the vertex budget, and (with mirroring on)
-        runs a second fill from the mirrored point. One click, one undo step.
-      </td>
+      <td class="k"><kbd>Shift</kbd>+click</td>
+      <td>Adds to the selection and keeps everything already selected — another panel, another triangle, another model.</td>
     </tr>
     <tr>
-      <td class="k">Part <small><kbd>P</kbd></small></td>
-      <td>
-        Paints the whole panel of the model under the cursor — see
-        <a href="#paint-parts">seam parts</a> below. Click replaces the current feature's paint
-        with that panel, <kbd>Shift</kbd>-click adds a second panel, <kbd>Alt</kbd>-click (or
-        <kbd>Ctrl</kbd>-click) removes one — the only tool that reacts to a modifier click, so
-        the modifier is not treated as "not painting" while this tool is active. Every click
-        also lists <a href="#paint-candidates">the other panels near the cursor</a>, which is how
-        you select a thin or hidden one.
-      </td>
+      <td class="k"><kbd>Alt</kbd>+click <small>or <kbd>Ctrl</kbd>+click</small></td>
+      <td>Takes what the click covers off the selection, keeping the rest. This is how a panel selected with Part is trimmed back to shape.</td>
     </tr>
     <tr>
-      <td class="k">Erase <small><kbd>E</kbd></small></td>
+      <td class="k">Drag <small>Select faces</small></td>
       <td>
-        The brush, painting "unpainted" instead of a feature. Use it to take back part of a bad
-        stroke without losing the rest, or to open a gap between two windows.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Pick <small><kbd>I</kbd></small></td>
-      <td>
-        Eyedropper: the painted vertices near the cursor vote (weighted by distance) and the
-        winning feature becomes current. The neighbourhood vote is deliberate — on a dense mesh
-        the single triangle under the cursor can be unpainted while the surface around it is
-        not.
-        <br><b>It previews before you click.</b> While the Pick tool is active the ring takes
-        the colour of the feature under the cursor and the cursor line reads
-        <code>Pick: Eyes (click to paint with it)</code> — or <code>nothing painted</code>, with
-        a grey ring. So a click that would do nothing is visible before you make it.
-        <br><b>A click hands control back</b> to whatever you were painting with, and the
-        status bar says which feature you picked and how many vertices carry it — picking the
-        feature you already had no longer looks like a no-op. Hold <kbd>Shift</kbd> while
-        clicking to stay on the Pick tool and sample several areas in a row.
-        <br>Both messages distinguish the two empty cases: <i>nothing painted here</i> (that
-        feature is painted elsewhere) versus <i>nothing painted anywhere nearby</i> (paint an
-        area first).
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Box paint <small><kbd>X</kbd></small></td>
-      <td>
-        <b>This paints.</b> Drag a rectangle over the model: every vertex under it that faces you is
-        painted with the current feature, in one undo step. <kbd>Alt</kbd>-drag (or
-        <kbd>Ctrl</kbd>-drag) releases paint instead, and <kbd>Esc</kbd> throws a drag away — see
-        <a href="#paint-box">Box paint</a> below. To <em>pick</em> the faces inside a rectangle
-        instead, drag in <a href="#cleanup">Select faces</a>: painting and picking are two
-        different things, which is why they are not two buttons called "Box".
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Select models<br><small><kbd>S</kbd></small></td>
-      <td>
-        Pick whole models — the separate shells inside one file — and take them out of the model:
-        see <a href="#cleanup">Cleaning up the model</a>. A click picks the model under the
-        cursor, Alt-click unpicks one, <kbd>Ctrl</kbd>+<kbd>A</kbd> picks the lot. Paints nothing.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Select faces<br><small><kbd>Shift</kbd>+<kbd>S</kbd></small></td>
-      <td>
-        The same tool with the pick set to one triangle at a time: the face under the cursor is
-        tinted white and the picked faces yellow, so a click is judged before it happens. Shift-click
-        adds a face, Alt-click takes one off, and <b>dragging a rectangle</b> picks everything
-        inside it when you release — <kbd>Shift</kbd> adds the box's faces, <kbd>Alt</kbd> takes
-        them off. It paints nothing: <b>Paint picked faces</b> is the one-click way to turn the
-        pick into a window, and <b>Remove picked</b> takes it out of the model.
+        Draws a rectangle and takes everything inside it when you release — see
+        <a href="#select-box">the rectangle</a>. A press that does not move is still the click above.
       </td>
     </tr>
   </table>
-
-  <h3 id="paint-box">Box paint — everything under the rectangle</h3>
   <p>
-    Scrubbing a big area with the brush leaves the strokes to be tidied up by hand, and the Part
-    tool takes whole panels whether the panel is inside the area you wanted or not. Box paint is
-    the middle: hold the left button and drag a rectangle over the viewport, and every vertex
-    whose <em>screen position</em> falls inside it is painted. It is called <b>Box paint</b> and
-    not "Box select" on purpose — it paints, and <a href="#cleanup">Select faces</a> is where a
-    rectangle picks triangles instead. The rectangle is a screen-space
-    selection, not a volume: the mesh's own coordinates go through the model, view and projection
-    matrices, divided by the clip-space <code>w</code>, and compared with the box — which is why
-    it selects exactly what you can see under the rectangle, from any camera angle.
+    Three modifiers mean the same thing in every tool — <em>plain replaces, Shift adds, Alt takes
+    off</em> — so refining a panel with Select faces is the same gesture at a finer scale rather
+    than a different convention. Nothing filters a modifier out before a tool sees it: that is
+    exactly the class of bug that once made the documented "Alt-click removes a panel" do nothing
+    at all.
+  </p>
+  <p>
+    The selection is drawn as an amber tint over the model's own surface, and the triangle under the
+    cursor is outlined white, so a click is judged before it happens. Above 150,000 selected faces
+    the tint is switched off rather than crawling — the panel's count line says so, and
+    <a href="#tint">Selection tint</a> is where the overlay itself is turned down.
+  </p>
+
+  <h3 id="select-box">The rectangle — everything under a drag</h3>
+  <p>
+    Selecting a large area a triangle at a time is slow, and Part takes whole panels whether the
+    panel is inside the area you wanted or not. So in <b>Select faces</b>, dragging draws a
+    rectangle over the viewport, and every triangle whose <em>screen</em> centre falls inside it is
+    selected when you release. It is a screen-space selection, not a volume: the mesh's own
+    coordinates go through the model, view and projection matrices, divided by the clip-space
+    <code>w</code>, and compared with the box — so it selects exactly what you can see under it,
+    from any camera angle.
   </p>
   <table>
     <tr><th>Detail</th><th>Behaviour</th></tr>
@@ -439,69 +334,62 @@
       <td class="k">Only what faces you</td>
       <td>
         A rectangle over the face of a closed figure also covers the back of the head, whose
-        vertices project into the same pixels. Those are culled with the vertex normal against the
-        camera, and the status bar says how many were left alone
-        (<code>3,410 in the rectangle face the camera (196 face away and were left alone)</code>),
-        so a box over a solid part takes the surface you can see and no more. The Brush, Region
-        fill and Part tools work in model space and have no such rule — this is the one tool with
-        a front-facing notion at all.
+        triangles project into the same pixels. Those are culled with each triangle's own normal
+        against the camera (the same test the GPU uses to discard back faces), and the status bar
+        says how many were left alone, so a box over a solid part takes the surface you can see and
+        no more.
       </td>
     </tr>
     <tr>
-      <td class="k">Mirroring</td>
+      <td class="k">Plain, <kbd>Shift</kbd>, <kbd>Alt</kbd></td>
       <td>
-        With <a href="#paint-radius">Mirror across X</a> on, the box is taken again on the other
-        side of the plane: a vertex is selected when <em>its own</em> pixel is in the rectangle or
-        when the pixel of its mirror image is, with that image's own outward normal facing the
-        camera. One drag, symmetric mask — the same thing the mirrored brush does, expressed as
-        the reflection of the rectangle rather than of a sphere.
+        A plain drag makes the selection exactly the box's triangles; <kbd>Shift</kbd>-drag adds
+        them to what was already selected; <kbd>Alt</kbd>-drag (or <kbd>Ctrl</kbd>-drag) takes them
+        off. A rectangle is never a toggle per triangle — toggling forty thousand triangles one at a
+        time is not a selection anybody can reason about.
       </td>
     </tr>
     <tr>
-      <td class="k">Erasing</td>
-      <td>
-        <kbd>Alt</kbd>-drag or <kbd>Ctrl</kbd>-drag releases paint under the rectangle instead of
-        painting it — the same modifier the Part tool uses to remove a panel, and the reason the
-        modifier is not filtered out as "not painting" while this tool is active.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Undo</td>
-      <td>One drag is one step, however many vertices it took, and <b>Undo</b> takes the whole box back.</td>
+      <td class="k">One edit</td>
+      <td>One drag is one undo step, however many triangles it took, and <b>Undo</b> takes the whole box back. A drag that selects what is already selected is not an undo step at all.</td>
     </tr>
     <tr>
       <td class="k">When it takes nothing</td>
       <td>
-        A rectangle over the background, or one whose vertices all face away, says so in the
-        status bar rather than looking like a dead tool. Starting the drag does not need the model
-        under the cursor: a box may begin on the background and be dragged over the part you want.
+        A rectangle over the background, or one whose triangles all face away, says so in the status
+        bar rather than looking like a dead tool. The drag does not need the model under the cursor
+        to start: a box may begin on the background and be dragged over the part you want.
       </td>
+    </tr>
+    <tr>
+      <td class="k"><kbd>Esc</kbd></td>
+      <td>Throws the rectangle away and leaves the selection alone. Switching tool mid-drag does the same.</td>
     </tr>
   </table>
   <div class="note">
-    <strong>A box in the viewport is a box in pixels.</strong> Move the camera and the same
-    screen rectangle covers different vertices — that is the point of a rubber band, but it does
-    mean a selection is only as repeatable as the camera is. The Brush radius, the seam angle and
-    the Part tool's panel cuts play no part here: the rectangle is the whole rule.
+    <strong>A box in the viewport is a box in pixels.</strong> Move the camera and the same screen
+    rectangle covers different triangles — that is the point of a rubber band, but it does mean a
+    selection is only as repeatable as the camera is.
   </div>
 
-  <h3 id="paint-parts">Seam parts — clicking a whole panel</h3>
+  <h3 id="parts">Seam panels — clicking a whole panel</h3>
   <p>
-    Hand-painting an eye or a shirt front exactly is fiddly. The Part tool cuts the model into
-    panels first and paints the one you click, so the window is exactly that panel.
+    Selecting an eye or a shirt front exactly, a triangle at a time, is fiddly. The Part tool cuts
+    the model into panels first and selects the one you click, so the selection is exactly that
+    panel.
   </p>
   <ul>
     <li>
       The <b>panel a click selects is the one under the cursor</b>: the ray is resolved to the
-      triangle the cursor is on, in the model's own face order — the order the panels were cut
-      in (<code>sourceTriangleIndex</code> in <code>js/viewer.js</code>). The pick acceleration
-      structure indexes the mesh in its own order, so that translation is what keeps a click on
-      an eyebrow from painting a panel somewhere else entirely.
+      triangle the cursor is on, in the model's own face order — the order the panels were cut in
+      (<code>sourceTriangleIndex</code> in <code>js/viewer.js</code>). The pick acceleration
+      structure indexes the mesh in its own order, so that translation is what keeps a click on an
+      eyebrow from selecting a panel somewhere else entirely.
     </li>
     <li>
-      A <b>seam</b> is an edge whose two faces meet at more than the <b>seam angle</b> — a
-      crease, not a smooth curve. Faces are flood-filled without crossing seams; each connected
-      group is a part.
+      A <b>seam</b> is an edge whose two faces meet at more than the <b>seam angle</b> — a crease,
+      not a smooth curve. Faces are flood-filled without crossing seams; each connected group is a
+      part.
     </li>
     <li>
       <b>Seam angle</b> (3°–60°, default 8°) is the only knob. Lower cuts finer (more, smaller
@@ -511,9 +399,9 @@
     <li>
       The <b>preset row</b> under the slider is the same control with the measured sweet spots
       named — <b>Face details 5°</b>, <b>Portrait 8°</b> (the default), <b>Body parts 12°</b>,
-      <b>Broad shapes 25°</b>. One click moves the slider, re-cuts the model and lights the
-      button up, and the status bar reports the panel count and the size of the biggest panel so
-      you can see what the cut did before you click on the model.
+      <b>Broad shapes 25°</b>. One click moves the slider, re-cuts the model and lights the button
+      up, and the status bar reports the panel count and the size of the biggest panel so you can
+      see what the cut did before you click on the model.
     </li>
     <li>
       <b>Show seams</b> draws the seams as yellow lines, so you can see where a click will stop
@@ -521,15 +409,13 @@
       about half a second.
     </li>
     <li>
-      Panels smaller than 0.02% of the mesh are <em>merged</em> into the neighbour they share
-      the longest seam with. Without that, the default 8° cut of the bundled model gives 7,550
-      parts, most of them single triangles, and clicking one paints a speck. After merging:
-      26 panels.
+      Panels smaller than 0.02% of the mesh are <em>merged</em> into the neighbour they share the
+      longest seam with. Without that, the default 8° cut of the bundled model gives 7,550 parts,
+      most of them single triangles, and clicking one selects a speck. After merging: 26 panels.
     </li>
     <li>
-      Segmentation is cached per model and angle; everything else (painting, the stencil) uses
-      the same cached welded mesh, so it is a one-off cost of roughly 0.4 s on the bundled
-      model.
+      Segmentation is cached per model and angle; the stencil build uses the same cached welded
+      mesh, so it is a one-off cost of roughly 0.4 s on the bundled model.
     </li>
   </ul>
   <p>
@@ -545,23 +431,23 @@
     <tr><td class="k">35°</td><td>12</td><td>226k (53%)</td><td>two blobs and slivers — too coarse to click</td></tr>
   </table>
   <p>
-    The default is the <em>coarsest</em> cut at which the small facial panels survive as panels
-    of their own, and it is still coarse enough that a whole torso or limb is one click. At 12°
-    a click aimed at an eyebrow selects the 48% panel behind it, which is why the Part tool
-    feels like it runs backward there; that is what the preset row is for.
+    The default is the <em>coarsest</em> cut at which the small facial panels survive as panels of
+    their own, and it is still coarse enough that a whole torso or limb is one click. At 12° a
+    click aimed at an eyebrow selects the 48% panel behind it, which is why the Part tool feels
+    like it runs backward there; that is what the preset row is for.
   </p>
-  <h4 id="paint-candidates">The panel list — when the click selects the wrong thing</h4>
+
+  <h4 id="select-candidates">The panel list — when the click selects the wrong thing</h4>
   <p>
-    A click can only ever select the panel the ray lands on. On the bundled model that is a
-    problem, because one panel covers <b>43% of the mesh and most of the front view</b> while
-    the face details are <b>0.8–2.4% of the mesh</b>: strips a few pixels wide. A click that
-    misses a strip by two pixels paints the panel behind it — nearly half the model — and the
-    strip stays bare. That looks like the tool ran backward; it did not, it selected the face it
-    hit.
+    A click can only ever select the panel the ray lands on. On the bundled model that is a problem,
+    because one panel covers <b>43% of the mesh and most of the front view</b> while the face
+    details are <b>0.8–2.4% of the mesh</b>: strips a few pixels wide. A click that misses a strip
+    by two pixels selects the panel behind it — nearly half the model — and the strip stays bare.
+    That looks like the tool ran backward; it did not, it selected the face it hit.
   </p>
   <p>
-    So after every Part click the panel lists the panels with surface within a brush radius of
-    the click, nearest first, each labelled with its size and how far away it is:
+    So after every Part click the panel lists the panels with surface within a few mesh steps of the
+    click, nearest first, each labelled with its size and how far away it is:
   </p>
 <pre>Panel 1 covers 42.8% of the mesh — a near-miss on a thin panel lands here.
 Panels within 3.2 units of the click; click one to select it instead:
@@ -573,80 +459,55 @@ Panels within 3.2 units of the click; click one to select it instead:
     the ray landed on the 42.8% panel, and both details are on the list, one click away.
   </p>
   <p>
-    The status bar says the same thing in words, naming the smaller panel it thinks you were
-    aiming at and the preset that would cut it out on its own:
+    The status bar says the same thing in words, naming the smaller panel it thinks you were aiming
+    at and the preset that would cut it out on its own:
   </p>
-<pre>Selected part 1 of 26 — 180,718 faces (42.8% of the mesh), 542,154 vertices painted as “Eyes” (seams at 8°). That is 43% of the model — the detail you aimed at is probably Part 9 (8,477 faces, 2.01% of the mesh, 0.1 away): click it in the list above or take the Face details cut (5°).</pre>
+<pre>Selected part 1 of 26 — 180,718 faces (42.8% of the mesh), 180,718 faces added to the selection (180,718 of 422,658 selected in all, seams at 8°). That is 43% of the model — the detail you aimed at is probably Part 9 (8,477 faces, 2.01% of the mesh, 0.1 away): click it in the list above or take the Face details cut (5°).</pre>
   <p>
-    Clicking one selects it with the current feature, exactly as if you had hit it. There is no
-    pixel-hunting and no guessing: the list is a geometric query, so it also finds panels
+    Clicking a row adds that panel to the selection, exactly as if you had Shift-clicked it. There
+    is no pixel-hunting and no guessing: the list is a geometric query, so it also finds panels
     <em>hidden behind</em> the surface you actually hit, which no amount of zooming would.
   </p>
 
   <div class="note">
-    <strong>A click can be a whole limb.</strong> If it selects more of the model than you
-    wanted, the status bar names the smaller panel it thinks you aimed at and the finer preset
-    that would cut it out; otherwise pick the panel you meant from the list above. If the panel
-    is bigger than the mask material around it, the shell around it will be a band rather than a
-    ring — see <a href="#stencil">Widen the reach</a>.
+    <strong>Invert is the answer to "I meant everything except that".</strong> A click — Part
+    especially — can only select what it lands on, and the complement is often the thing you
+    wanted: select the panel that got in the way, press <b>Invert selection</b>
+    (<kbd>Shift</kbd>+<kbd>I</kbd>), and the selection is everything else, in one undoable step.
   </div>
   <div class="note">
-    <strong>The complement is one click away.</strong> If you wanted the opposite of what you
-    selected, <b>Invert mask</b> in the <a href="#mask">Mask</a> panel swaps painted for
-    unpainted in a single undoable step.
+    <strong>A click can be a whole limb.</strong> If it selects more of the model than you wanted,
+    the status bar names the smaller panel it thinks you aimed at and the finer preset that would
+    cut it out; otherwise pick the panel you meant from the list above. If the panel is bigger than
+    the mask material around it, the shell around it will be a band rather than a ring — see
+    <a href="#stencil">Widen the reach</a>.
   </div>
 
-  <h3 id="paint-radius">Radius, mirroring and the rest</h3>
+  <h3 id="select-more">Select all, select none, invert, and the history</h3>
   <table>
     <tr><th>Control</th><th>What it does</th></tr>
-    <tr>
-      <td class="k">Brush radius <small><kbd>[</kbd> <kbd>]</kbd></small></td>
-      <td>
-        Radius of the brush sphere in model units. The starting value is derived from the
-        model's diagonal, so a 10 cm figure gets a sensible brush without touching the slider.
-        The slider tops out at 16 units; <kbd>[</kbd> and <kbd>]</kbd> nudge it by 0.4.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Mirror across X plane <small><kbd>M</kbd></small></td>
-      <td>
-        Paints the mirrored point too, about the plane <code>x = </code> the number beside it
-        (defaults to the model's centre). Every tool honours it: the brush mirrors, region fill
-        runs a second fill from the mirrored point, the Part tool paints both parts, and
-        <a href="#paint-box">Box paint</a> takes the reflection of the rectangle. Turn
-        mirroring off when the model is not symmetric — the fill's mirrored run has no seed
-        normal to test against, so it can spread further than you expect on a asymmetric mesh.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Max vertices <small>Region fill</small></td>
-      <td>
-        Budget for one flood fill (default 200,000). The fill stops when it reaches it, and the
-        status bar says it was truncated. It exists because a 180° angle on a closed model
-        floods the entire shell, which is slow but rarely what you want.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Undo <small><kbd>Ctrl</kbd>+<kbd>Z</kbd></small></td>
-      <td>
-        Steps back one <em>edit</em>: a whole brush stroke (however many stamps), a fill, one
-        Part click, a clear, a palette removal. 40 steps are kept; older ones are dropped.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Redo <small><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></small></td>
-      <td>Re-applies what undo took back. Painting anything new clears the redo stack.</td>
-    </tr>
-    <tr>
-      <td class="k">Navigate: off <small><kbd>Space</kbd></small></td>
-      <td>
-        Painting owns the left mouse button, so orbiting needs the right button (or holding
-        <kbd>Space</kbd>). This button latches the left button into orbit mode for when that is
-        more comfortable; the status text flips to <b>Navigate: on</b>. Releasing
-        <kbd>Space</kbd> always returns to painting.
-      </td>
-    </tr>
+    <tr><td class="k">Select all <small><kbd>Ctrl</kbd>+<kbd>A</kbd></small></td><td>Takes every triangle in the model, so a few can be clicked back off. The fastest way to say "all of it except these bits".</td></tr>
+    <tr><td class="k">Select none <small><kbd>Esc</kbd></small></td><td>Clears the selection. Nothing else changes.</td></tr>
+    <tr><td class="k">Invert selection <small><kbd>Shift</kbd>+<kbd>I</kbd></small></td><td>Swaps what is selected for what is not. One undo step, and the status bar reports both counts.</td></tr>
+    <tr><td class="k">Count models</td><td>Cuts the file into its separate models and reports them in the status bar — the shells inside one file, and how big the rest of them are.</td></tr>
+    <tr><td class="k">Remove selected</td><td>Takes the selected faces out of the model. Two clicks: the button reads <b>Click again to remove</b> for four seconds, because a browser confirm dialog is silently blocked in some embedded views. See <a href="#cleanup">Cleaning up the model</a>.</td></tr>
+    <tr><td class="k">Restore removed</td><td>Puts every removed face back, exactly as the file had them.</td></tr>
+    <tr><td class="k">Undo <small><kbd>Ctrl</kbd>+<kbd>Z</kbd></small></td><td>Steps back one <em>edit</em>: a Part click, a triangle, a whole rectangle, an invert, a trim, a removal. 40 steps are kept; older ones are dropped.</td></tr>
+    <tr><td class="k">Redo <small><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></small></td><td>Re-applies what undo took back. Selecting anything new clears the redo stack, because a new edit is a new branch.</td></tr>
+    <tr><td class="k">Navigate: off <small><kbd>Space</kbd></small></td><td>Selecting owns the left mouse button, so orbiting needs the right button (or holding <kbd>Space</kbd>). This button latches the left button into orbit mode for when that is more comfortable; the status text flips to <b>Navigate: on</b>. Releasing <kbd>Space</kbd> always returns to selecting.</td></tr>
   </table>
+  <p>
+    Undo walks the <em>selection</em>, not the tint: the tint is derived from the selection, so a
+    history of tints could be undone into a picture the selection no longer describes. A gesture
+    that changes nothing — clicking a triangle that is already selected — is not an undo step, so
+    <kbd>Ctrl</kbd>+<kbd>Z</kbd> never steps through clicks that did nothing.
+  </p>
+  <div class="note">
+    <strong>Nothing about selecting touches the model.</strong> Every export, clear and undo
+    describes the same loaded geometry, so the same model can be selected over any number of times.
+    The one exception is deliberate and has its own button: <b>Remove selected</b> takes faces out
+    of the model, and <b>Restore removed</b> puts them back.
+  </div>
 </section>
 
 <section class="doc" id="cleanup">
@@ -655,7 +516,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     An STL is not a scene. Exporters routinely write several models into one file — a figure plus
     the base it was cut from, a duplicate left beside it, a blob from a boolean that did not
     finish — and nothing in the format says they are separate objects. Two things go wrong because
-    of it: the extra geometry gets painted and built into the mask, and the part you want can end
+    of it: the extra geometry gets selected and built into the window, and the part you want can end
     up <em>hanging in the air</em>, because the bed sits under the lowest point of <b>everything</b>
     in the file, stray model included. The <b>Select models</b> and <b>Select faces</b> buttons
     (one tool, two scopes) are how both are dealt with: pick the geometry you do not want and take
@@ -686,7 +547,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     </tr>
     <tr>
       <td class="k">Select none</td>
-      <td>Unpicks everything (<kbd>Esc</kbd> does the same). Nothing else is touched — no paint,
+      <td>Unpicks everything (<kbd>Esc</kbd> does the same). Nothing else is touched — no selection,
         no geometry.</td>
     </tr>
     <tr>
@@ -726,7 +587,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     the cursor and nothing else. The face under the cursor is tinted white and the picked faces
     yellow while this tool is up, so "click the face you can see" means something on a surface that is
     otherwise one unbroken grey: turn on <b>Show seams</b> in the
-    <a href="#paint-parts">Part tool's</a> options as well if you want the panel boundaries drawn
+    <a href="#parts">Part tool's</a> options as well if you want the panel boundaries drawn
     at the same time. This is the tool for geometry that is not a separate model — a spure, a
     chunk welded to the figure, a ring of triangles that came out wrong — and for taking one face
     out to see how the stencil reacts to a hole.
@@ -744,29 +605,27 @@ Panels within 3.2 units of the click; click one to select it instead:
     big to tint and reports the count instead.
   </div>
   <div class="note">
-    <strong>A pick is not paint.</strong> Everything this panel does to a pick — <b>Paint picked
-    faces</b>, <b>Remove picked</b>, <b>Restore removed</b> — acts on the geometry, and the stencil
-    is built from *painted vertices*. So selecting a region and pressing <b>Build stencil</b> gets<br>
-    <code>Nothing painted yet — the stencil is built from paint, and 20,780 picked faces are only
-    selected. “Paint picked faces” paints them as “Eyes”, then build.</code> — one click makes the
-    selection a window: <b>Paint picked faces</b> paints every picked triangle with the current
-    feature as a single undo step, and then the stencil has something to build around.
+    <strong>A selection is what the stencil is built from.</strong> There is nothing to convert
+    first: <b>Build stencil</b> uses the selected triangles directly, and the panel's count line
+    reports the two numbers that matter — how many of the model's faces are selected, and how many
+    corners of the file's soup that is, which is what the builder consumes. Selecting a region and
+    pressing <b>Build stencil</b> is the whole workflow.
   </div>
   <div class="note">
     <strong>Faces are the file's own triangles.</strong> A dense scan has hundreds of thousands of
-    them, so picking a region face by face is a job for a few faces, not for a whole area — paint,
-    the Part tool and <a href="#paint-box">Box paint</a> are the region tools. The nearest paint
-    tool to this one is the <a href="#paint-parts">Part tool</a>, which takes one whole
-    seam-bounded panel per click.
+    them, so selecting a region a triangle at a time is a job for a few triangles, not for a whole
+    area — the <a href="#select-box">rectangle</a> and the
+    <a href="#parts">Part tool</a> are the region tools. Part takes one whole seam-bounded panel
+    per click; the rectangle takes what you can see inside it.
   </div>
 
   <h3 id="cleanup-what-happens">What a removal does</h3>
   <ul>
     <li>
-      <b>The paint stays where it was painted.</b> The mask is per vertex and the surviving
-      vertices are the same vertices, only renumbered — every kept corner is carried over through
-      a corner map, and so is the mask's undo history, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> keeps
-      working across a removal.
+      <b>The selection survives the cut.</b> Every surviving face is carried over through a face
+      map — what was selected and stayed selected is still selected, only renumbered — and the undo
+      history is renumbered with it, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> keeps working across a
+      removal. Taking a stray model out and then building what is left is two moves, not three.
     </li>
     <li>
       <b>The model is re-measured and re-placed.</b> The bounding box, the fit, the camera and the
@@ -780,8 +639,8 @@ Panels within 3.2 units of the click; click one to select it instead:
       something about a model that is no longer loaded. The mask itself is untouched.
     </li>
     <li>
-      <b>The export is the model in hand.</b> A removed model is not painted, not welded into a
-      stencil and not in the painted shell — but it is also still in the file on disk: nothing here
+      <b>The export is the model in hand.</b> A removed model is not selected, not welded into a
+      stencil and not in the selected shell — but it is also still in the file on disk: nothing here
       rewrites your STL, and <b>Restore removed</b> brings it back.
     </li>
   </ul>
@@ -798,167 +657,153 @@ Panels within 3.2 units of the click; click one to select it instead:
   </p>
 </section>
 
-<section class="doc" id="mask">
-  <h2>Mask <a class="anchor" href="#mask">#</a></h2>
+<section class="doc" id="windows">
+  <h2>Windows <a class="anchor" href="#windows">#</a></h2>
   <p class="lead">
-    How the painting is stored and how it is drawn — plus the buttons that take paint back and
-    the trim that takes out what a printer cannot use.
+    Every separate group of selected faces is one <b>window</b> in the built stencil — one opening.
+    These two buttons find and drop the ones you did not mean.
   </p>
   <p>
-    An STL has no UVs, so there is nowhere to put a texture: the mask is <b>per vertex</b>.
-    Every vertex of the model carries a feature id (0 = unpainted) and a colour, and those
-    colours are drawn as a second copy of the model pulled slightly in front of the surface
-    with <code>polygonOffset</code>, which is why paint reads as a 3D shell hugging the figure
-    rather than a flat decal. Unpainted vertices carry alpha 0, so nothing shows through except
-    the paint.
+    The selection is drawn as an amber tint over the model: the faces you selected, and nothing
+    else. The window a stencil ends up with is the <em>connected</em> part of that selection on the
+    welded surface — two groups that do not touch become two windows, and if they are far apart the
+    print splits into separate pieces to hold against the figure.
   </p>
   <table>
     <tr><th>Control</th><th>What it does</th></tr>
     <tr>
-      <td class="k">Mask opacity</td>
+      <td class="k">Drop windows under (% of the model)</td>
       <td>
-        Opacity of the paint layer. At 100% (default) the paint hides the model under it; lower
-        values let the figure's own shading show through the paint, which is useful on dark
-        colours. The layer's <em>colours</em> are unaffected — this is only how strongly the
-        overlay is blended.
+        The size that counts as a speck, as a share of the model's diagonal — 2% by default, about
+        2.6 units on the bundled figure, and it runs 0–100: at 100 every window but the largest is
+        under it. A selection always ends up with company: a sliver of a panel the click clipped, a
+        triangle picked by mistake, a speck left where a rectangle crossed a seam. A <b>window</b>
+        is one connected selected area of the <em>welded</em> surface — the same thing the stencil
+        build calls a window. Welded because an STL repeats every vertex once per triangle, so two
+        triangles that share an edge share no vertex index at all and only the weld makes them
+        neighbours.
       </td>
     </tr>
     <tr>
-      <td class="k">Show mask layer</td>
-      <td>Hides the paint layer entirely without touching the mask. The fastest way to see what the bare model looks like.</td>
-    </tr>
-    <tr>
-      <td class="k">Ghost shell (dim unpainted area)</td>
+      <td class="k">Drop small windows</td>
       <td>
-        Gives unpainted vertices a faint alpha so the whole surface reads as a translucent
-        shell and the painted regions stand out in context. Purely a view setting; it does not
-        change the mask or the exports.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Show base model</td>
-      <td>Shows or hides the original model mesh. Off is handy when you want to look at the mask alone (with the grid still on, for scale).</td>
-    </tr>
-    <tr>
-      <td class="k">Show ground grid</td>
-      <td>Ground plane grid, sized from the model's bounding box. Useful for judging how big a mask window is before building it.</td>
-    </tr>
-    <tr>
-      <td class="k">Wireframe</td>
-      <td>Draws the model's triangles as wireframe — the quickest way to see whether the mesh is fine enough for the mask edge you want. A coarse mesh gives a blocky window edge.</td>
-    </tr>
-    <tr>
-      <td class="k">Hide all paint</td>
-      <td>
-        Hides every feature at once (and a second click shows them again, since it checks
-        whether anything is visible). A view setting; the mask is untouched. With nothing
-        painted it says so instead of doing nothing.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Invert mask <small><kbd>Shift</kbd>+<kbd>I</kbd></small></td>
-      <td>
-        Swaps painted for unpainted: every painted vertex is released and every unpainted vertex
-        takes the <em>current</em> feature. One undo step, and it is the only action here that
-        can touch every vertex, so it reports both numbers in the status bar.
-        <br><b>It is the answer to "I meant everything except that".</b> A click — Part
-        especially — can only select what it lands on, and the complement is usually the thing
-        you wanted: paint the panel that got in the way, invert, and the window is everything
-        else. Note that it collapses a multi-feature mask onto the current feature, because
-        this is a single-selection invert rather than a per-feature one.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Clear feature</td>
-      <td>
-        Clears the paint of the <em>selected</em> feature only. Disabled — with a tooltip
-        telling you how many vertices it would clear — when that feature has no paint. One undo
-        step.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Clear all</td>
-      <td>
-        Wipes the whole mask. For safety it arms on the first click (the button becomes
-        <b>Click again to clear</b> for four seconds) and wipes on the second; the status bar
-        reports how many vertices went. One undo step, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings
-        it all back. It does not ask with a browser dialog, because dialogs are silently blocked
-        inside some embedded browser views.
-        <br><b>A built stencil stays where it is</b> — clearing the paint does not remove the
-        shell in the viewport. <b>Discard stencil</b> in the stencil panel is the button for
-        that; the status bar points at it whenever you clear with a build in hand.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Trim windows under (% of the model)</td>
-      <td>
-        The size that counts as a speck, as a share of the model's diagonal — 2% by default,
-        about 2.6 units on the bundled figure, and it runs 0–100: at 100 every window but the
-        largest is under it. A mask is painted with a brush, so it always ends up with company:
-        a dab beside the eye instead of on it, a stamp from a stroke that ran off the edge of the
-        part, a speck left where a fill stopped at a seam. A <b>window</b> is one connected
-        painted area of the <em>welded</em> surface — the same thing the stencil build calls a
-        window. Welded because an STL repeats every vertex once per triangle, so two triangles
-        that share an edge share no vertex index at all and only the weld makes them neighbours.
-      </td>
-    </tr>
-    <tr>
-      <td class="k">Trim windows / List windows</td>
-      <td>
-        <b>Trim windows</b> releases every painted window smaller than the threshold above. One
-        undo step, like every other mask edit. Sizes are the windows' bounding boxes rather than
-        their vertex counts, because a speck is a size on the print: the same speck is 40
-        vertices on a coarse mesh and 4,000 on a dense one.
+        Releases every window smaller than the threshold above. One undo step, like every other
+        selection edit. Sizes are the windows' bounding boxes rather than their triangle counts,
+        because a speck is a size on the print: the same speck is 40 triangles on a coarse mesh and
+        4,000 on a dense one.
         <br><b>The largest window is always kept</b>, so a threshold set too high can shrink a
-        mask to its main region but never wipe it out (the status bar says when it was spared).
-        <br><b>A threshold can only say “smaller than this”, and only about whole windows.</b>
-        That leaves one shape of mask it can never help: a mask that is <em>one</em> connected
-        region — two panels that touch, a stroke back and forth, a region fill — has nothing a
-        size test can ever release, however high it is set. The status bar says so in those
-        words rather than looking like a dead button, and <b>List windows</b> is the way
-        through: it lists every painted window on the mask with its size, how much of the model
-        that is, the features it is painted with, and two buttons. <b>Remove</b> releases that
-        one window — the largest included — and <b>Keep only</b> releases every other window,
-        which is how you keep one panel out of the several you painted. Both are one undo step,
-        and the list rebuilds itself from what is left, so the numbers on screen are the numbers
-        in the mask. The header also reports how many windows the threshold would release, which
-        is how you choose one instead of guessing.
-        <br><b>The list is hidden as soon as the mask changes</b> — every row names the vertices
-        behind it, so after another stroke the rows would describe a mask that no longer exists.
-        Press the button again; it only costs the island walk.
-        <br>Why it matters for the stencil: every painted window becomes <em>its own window</em>
-        in the shell, and windows that do not touch become separate pieces — ten specks are ten
-        windows and ten loose shells: each one is placed on the plate when you export
-        (<b>Sit the exported part on the bed</b>), so they print — but they are separate pieces to
-        hold against the figure, not one mask. Trim or remove first, then build.
+        selection to its main region but never wipe it out (the status bar says when it was
+        spared).
+        <br><b>A threshold can only say “smaller than this”, and only about whole windows.</b> That
+        leaves one shape of selection it can never help: a selection that is <em>one</em> connected
+        region — two panels that touch, a rectangle across a limb — has nothing a size test can
+        ever release, however high it is set. The status bar says so in those words rather than
+        looking like a dead button, and <b>List windows</b> is the way through.
       </td>
     </tr>
     <tr>
-      <td class="k">Paint stats<small>bottom line</small></td>
+      <td class="k">List windows</td>
+      <td>Names every window in the selection — see below. With nothing selected there is no list to show, and the panel says so rather than opening an empty box.</td>
+    </tr>
+  </table>
+
+  <h3 id="windows-list">The window list — removing one by name</h3>
+  <p>
+    The list is the half of the trim that a size threshold cannot be. Two panels that touch weld
+    into a single window, so a selection built by Shift-clicking neighbours is one island and no
+    threshold, however high, will ever release part of it — the trim only ever releases islands
+    <em>other</em> than the largest. Here each window has a name, a size and its own two buttons:
+  </p>
+  <table>
+    <tr><th>Button</th><th>What it does</th></tr>
+    <tr>
+      <td class="k"><b>Remove</b></td>
       <td>
-        "N of M vertices painted (x% of the mask)", where M is the model's vertex count (three
-        per triangle: 1,267,974 for the bundled model). This is the number the
-        <a href="#mask-json">mask JSON</a> and the <a href="#stencil">stencil build</a> start
-        from.
+        Releases the window that row names — the largest included, which is exactly the one the
+        trim refuses. One undo step, and the list rebuilds itself from what is left.
+      </td>
+    </tr>
+    <tr>
+      <td class="k"><b>Keep only</b></td>
+      <td>
+        Releases every <em>other</em> window, which is the way to keep one panel out of the several
+        that were selected. Disabled when there is only one window — there is nothing else to
+        release, and a disabled button is honest about it.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Each row shows</td>
+      <td>
+        The vertices inside the window, how many units across it is (and what share of the model's
+        size that is) and how many triangles it came to, so a speck is recognisable as a speck.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Hide this list</td>
+      <td>
+        Dismisses it. The list describes the selection as it was when it was built, so
+        <b>any</b> change to the selection hides it rather than showing rows that no longer exist —
+        <b>List windows</b> rebuilds it from the selection in hand.
       </td>
     </tr>
   </table>
   <div class="note">
-    <strong>Picking is not an edit.</strong> The Pick tool changes which feature the tools draw
-    with; it does not change the mask, so it is not an undo step. Everything that <em>does</em>
-    change the mask is.
-  </div>
-  <div class="note">
-    <strong>Nothing about painting touches the model.</strong> No export, no clear and no undo
-    changes the loaded geometry, so the same model can be repainted any number of times.
+    <strong>Nothing about a selection touches the model.</strong> No export, no trim and no undo
+    changes the loaded geometry, so the same model can be selected over and over. Removing faces is
+    the one edit that does, and it has its own two buttons — see
+    <a href="#cleanup">Cleaning up the model</a>.
   </div>
 </section>
 
+<section class="doc" id="tint">
+  <h2>Tint &amp; view <a class="anchor" href="#tint">#</a></h2>
+  <table>
+    <tr><th>Control</th><th>What it does</th></tr>
+    <tr>
+      <td class="k">Selection tint</td>
+      <td>
+        Opacity of the selection's tint over the surface. At 100% (default) it hides the model
+        under it; lower values let the figure's own shading show through, which is useful on dark
+        models and when judging a window's edge against a seam.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Show the selection tint</td>
+      <td>Hides the tint entirely without touching the selection. The fastest way to see what the bare model looks like — and note that the selection is still there: <b>Build stencil</b> still uses it.</td>
+    </tr>
+    <tr>
+      <td class="k">Ghost shell (dim everything not selected)</td>
+      <td>
+        Gives the unselected surface a faint alpha, so the whole figure reads as a translucent
+        shell with the selection standing out in context. Purely a view setting; it does not change
+        the selection or the exports.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Show base model</td>
+      <td>Shows or hides the original mesh. Off is handy when you want to look at the selection alone, with the grid still on for scale.</td>
+    </tr>
+    <tr>
+      <td class="k">Show ground grid</td>
+      <td>Ground plane grid, sized from the model's bounding box. Useful for judging how big a window is before building it.</td>
+    </tr>
+    <tr>
+      <td class="k">Wireframe</td>
+      <td>
+        Draws the model's triangles as wireframe — the quickest way to see whether the mesh is fine
+        enough for the window edge you want, and where a triangle-level pick will land. A coarse
+        mesh gives a blocky window edge.
+      </td>
+    </tr>
+  </table>
+</section>
+
 <section class="doc" id="stencil">
-  <h2>Paint stencil (STL) <a class="anchor" href="#stencil">#</a></h2>
+  <h2>Stencil (STL) <a class="anchor" href="#stencil">#</a></h2>
   <p class="lead">
-    Turns the painted area into the <b>window</b> of a printable shell that conforms to the
-    model. Print it, hold it on the figure, and only the painted area is exposed to the brush.
+    Turns the selected area into the <b>window</b> of a printable shell that conforms to the
+    model. Print it, hold it on the figure, and only the selected area is exposed — to the brush, in
+    the real world.
   </p>
   <table>
     <tr><th>Control</th><th>What it does</th></tr>
@@ -967,25 +812,25 @@ Panels within 3.2 units of the click; click one to select it instead:
       <td>
         Runs the whole pipeline below and reports what came out. The first build also welds the
         model into a shared-vertex mesh (a one-off cost, cached — the status text and the panel
-        say how long each part took). If you repaint afterwards, the panel says the part is
-        stale and you build again; repainting does not silently invalidate the geometry you
+        say how long each part took). If you change the selection afterwards, the panel says the part is
+        stale and you build again; selecting more does not silently invalidate the geometry you
         already have.
         <br><b>Save first if you are stopping here.</b> The build itself is not stored anywhere:
-        <b>Save mask (JSON)</b> in the Export / import panel keeps the windows and the numbers
+        <b>Save selection (JSON)</b> in the Export / import panel keeps the windows and the numbers
         above, so you can come back later and keep adding panels.
-        <br><b>Windows are painted islands.</b> Every painted area that does not touch the next
+        <br><b>Windows are selected islands.</b> Every selected area that does not touch the next
         one becomes a window of its own, and an island too far away to bridge becomes a piece of
-        its own — so a few stray brush dabs are a part with a few extra windows and often several
-        loose shells. <b>List windows</b> and <b>Trim windows</b> in the Mask panel take those
-        out before you build.
+        its own — so a few stray selected triangles are a part with a few extra windows and often several
+        loose shells. <b>List windows</b> and <b>Drop small windows</b> in the Windows panel take
+        those out before you build.
       </td>
     </tr>
     <tr>
       <td class="k">Preview</td>
       <td>
         Keeps a copy of the built shell in the viewport, semi-transparent and double-sided, so
-        you can orbit around it and see the window. It is drawn <em>under</em> the paint layer,
-        so painted areas keep their exact colours and you can keep painting and clearing with
+        you can orbit around it and see the window. It is drawn <em>under</em> the selection tint,
+        so the selected faces keep their tint and you can keep selecting and unselecting with
         the preview on. With the preview off you are looking at the mask alone.
       </td>
     </tr>
@@ -995,16 +840,16 @@ Panels within 3.2 units of the click; click one to select it instead:
         Throws the built shell away — the preview in the viewport, the result in the panel and
         the <b>Export stencil STL</b> it enabled — so you can start over without reloading the
         model. Enabled once a build has succeeded, disabled again afterwards.
-        <br><b>It does not touch the mask.</b> A build is a snapshot of the paint, so clearing
-        or repainting and keeping the old shell is a fair comparison — the panel warns when the
-        paint no longer matches the build. Use <b>Clear all</b> (in the Mask panel) for the
-        paint, this button for the shell.
+        <br><b>It does not touch the selection.</b> A build is a snapshot of the selection, so
+        dropping it or selecting more and keeping the old shell is a fair comparison — the panel
+        warns when the selection no longer matches the build. Use <b>Select none</b> (or click things
+        off) for the selection, this button for the shell.
       </td>
     </tr>
     <tr>
       <td class="k">Reach (mm)</td>
       <td>
-        How far the mask material extends from the painted area's boundary, measured across the
+        How far the mask material extends from the selected area's boundary, measured across the
         surface (not through the air). Default is about 11.5% of the model's diagonal — 15 mm on
         the bundled figure. It is the main "how much plastic" control: small reach = a band
         around the window, large reach = a shell that wraps the figure.
@@ -1015,7 +860,7 @@ Panels within 3.2 units of the click; click one to select it instead:
       <td>
         Sheet thickness away from the window: 1.19 mm by default (0.92% of the diagonal). The
         window edge itself is deliberately thinner (~0.4 mm, derived as half the wall) so a
-        brush stroke meets a thin lip rather than a wall, and paint cannot wick under it.
+        brush (the physical one) meets a thin lip rather than a wall, and paint cannot wick under it.
       </td>
     </tr>
     <tr>
@@ -1030,16 +875,16 @@ Panels within 3.2 units of the click; click one to select it instead:
     <tr>
       <td class="k">Window inlay (mm)</td>
       <td>
-        Mask material that overlaps the <em>painted</em> side of the window boundary, so brush
+        Mask material that overlaps the <em>selected</em> side of the window boundary, so brush
         strokes cannot creep under the window edge. 0.35 mm by default. Raising it makes the
-        window slightly smaller than the painted area and the edge more forgiving; setting it
-        to 0 puts the window exactly on the painted boundary.
+        window slightly smaller than the selected area and the edge more forgiving; setting it
+        to 0 puts the window exactly on the selected boundary.
       </td>
     </tr>
     <tr>
-      <td class="k">Widen the reach until the mask is one piece</td>
+      <td class="k">Widen the reach until the window is one piece</td>
       <td>
-        On by default. If the shell comes out in more than one piece (because the painted areas
+        On by default. If the shell comes out in more than one piece (because the selected areas
         are far apart, or the band cannot close around a big window), the reach is grown
         automatically — up to six times, in 25% steps — and the shell is rebuilt until it is a
         single piece or the limit is reached. Each attempt is a full build, so this is the main
@@ -1062,7 +907,7 @@ Panels within 3.2 units of the click; click one to select it instead:
         <br>With the box ticked, the exported file is moved so its lowest point is Z 0. <b>Only Z
         moves, and only in the copy that gets written</b> — X and Y stay where the model has them
         (the slicer's own arrange puts the part on the plate), and the mask, the panels, the
-        preview and the built shell are untouched, so nothing you see or paint changes. The
+        preview and the built shell are untouched, so nothing you see or select changes. The
         status line always says which of the three happened: it was moved (and by how far), it was
         already on Z 0, or the box was unticked and the file keeps the model's own coordinates.
         <br>It covers <b>every piece</b>, not just the lowest one. A slicer imports the shells of
@@ -1084,8 +929,8 @@ Panels within 3.2 units of the click; click one to select it instead:
         <a href="#stl">format is documented below</a>) named
         <code>&lt;model&gt;-paint-stencil.stl</code>. Enabled once a build has succeeded; a
         build that was refused leaves it disabled.
-        <br><b>It saves the mask on screen, never a stale build.</b> A build is a snapshot, so
-        if you have painted or cleared anything since, the export builds again first (the status
+        <br><b>It saves the selection on screen, never a stale build.</b> A build is a snapshot, so
+        if the selection has changed since, the export builds again first (the status
         bar says so) and writes that — otherwise Shift-clicking two more panels and pressing
         export would put last round's windows in a file with today's timestamp. If that rebuild
         is refused, nothing is written at all, and the status bar says why. The status line names
@@ -1097,7 +942,7 @@ Panels within 3.2 units of the click; click one to select it instead:
       <td class="k">Result panel<small>under the buttons</small></td>
       <td>
         Triangle count, how many pieces the shell came out in, <b>how many windows</b> it has
-        (the openings a brush can reach — one per separate painted area), the reach used, the
+        (the openings a paintbrush can reach in the real world — one per separate selected area), the reach used, the
         wall thickness range it achieved, the standoff, the bounding box,
         whether it is watertight, the measured clearance (see below), how long each stage took,
         and every warning the build produced. Warnings are not decoration: they are the
@@ -1115,17 +960,19 @@ Panels within 3.2 units of the click; click one to select it instead:
     </li>
     <li>
       <b>Surface distance field.</b> A geodesic (across-the-surface) distance is computed from
-      the painted set. Geodesic matters: a straight-line distance would jump across the gap
+      the selected set — every selected triangle, however small: an island with no room inside it
+      for the window inlay is cut at its own edge rather than dropped, so a single picked face is a
+      window of its own. Geodesic matters: a straight-line distance would jump across the gap
       between an arm and the body and start the window on the wrong limb.
     </li>
     <li>
-      <b>Smooth.</b> The field is smoothed — more passes inside the paint than outside — so the
+      <b>Smooth.</b> The field is smoothed — more passes inside the selection than outside — so the
       window edge is a smooth curve instead of following the mesh's triangles. This is why the
-      window edge insets a little inside the painted area.
+      window edge insets a little inside the selected area.
     </li>
     <li>
       <b>Clip.</b> The surface is cut to the band <code>[−inlay, reach]</code>: everything
-      within the reach of the paint, minus the window itself.
+      within the reach of the selection, minus the window itself.
     </li>
     <li>
       <b>Offset and close.</b> The clipped sheet is pushed out along its normals to the standoff
@@ -1145,7 +992,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     The standoff is the gap you ask for; the clearance is the gap you get. Every build measures
     the real distance from each inner-face vertex to the nearest surface triangle and reports
     the median, the minimum and how many spots are tighter than half the standoff. Measured on
-    the bundled figure with two eyes painted and 71,206 inner-face vertices:
+    the bundled figure with two eyes selected and 71,206 inner-face vertices:
   </p>
   <table>
     <tr><th>Standoff asked</th><th>Median</th><th>5th percentile</th><th>Minimum</th><th>Spots under 0.05 mm</th></tr>
@@ -1201,7 +1048,7 @@ Panels within 3.2 units of the click; click one to select it instead:
         moved); with it off, the model stays exactly where the file puts it.
         <br>It is a <b>view transform</b>, like the up axis: it moves the model in the scene and
         never the coordinates that the mask, the panels and every export are written in, so a
-        mask painted before or after still lines up with the original STL and the toggle can be
+        selection made before or after still lines up with the original STL and the toggle can be
         turned off at any time. The grid follows the model's own bounding box.
       </td>
     </tr>
@@ -1209,22 +1056,23 @@ Panels within 3.2 units of the click; click one to select it instead:
       <td class="k">Front / Back / Left / Right / Top / Home</td>
       <td>
         Camera presets that frame the whole model from that direction. <b>Home</b> is the
-        three-quarter view the model is loaded with. Painting works from any angle, but the
-        brush only reaches what you can see.
+        three-quarter view the model is loaded with. Selecting works from any angle, but a
+        <a href="#select-box">rectangle</a> only takes the faces pointing at you, and a click always
+        takes the triangle the ray hits first.
       </td>
     </tr>
     <tr>
       <td class="k">Navigation</td>
       <td>
         Right-drag orbits, middle-drag pans, the wheel zooms. Holding <kbd>Space</kbd> lets the
-        left button orbit without disarming the paint tool. On a touch screen one finger paints
-        and two fingers pan and zoom.
+        left button orbit without disarming the selection tool. On a touch screen one finger
+        selects and two fingers pan and zoom.
       </td>
     </tr>
     <tr>
       <td class="k">Status bar<small>bottom of the viewport</small></td>
       <td>
-        Left: what just happened (what was painted, how many vertices, what was exported) and
+        Left: what just happened (what was selected, how many faces, what was exported) and
         any warning that needs your attention. Right: the cursor's model-space position and the
         frame rate.
       </td>
@@ -1237,35 +1085,36 @@ Panels within 3.2 units of the click; click one to select it instead:
   <table>
     <tr><th>Button</th><th>What it does</th></tr>
     <tr>
-      <td class="k">Save mask (JSON)</td>
+      <td class="k">Save selection (JSON)</td>
       <td>
-        <b>The session file.</b> Saves the windows you have marked up — the painted vertex list,
-        with the palette (feature ids, names, colours) and the <b>build settings</b> that were in
+        <b>The session file.</b> Saves the selection — the corner list inside the window, with the
+        one-id feature table the format carries, and the <b>build settings</b> that were in
         the stencil panel — as <code>&lt;model&gt;-mask.json</code>. It is the only format that
         can be loaded back into the app, so this is the button to press when you want to stop and
-        carry on later, or to send a mask to someone else.
-        <br>It saves what is painted <em>now</em>, including this round's Shift-clicked panels —
-        unlike <b>Export stencil STL</b>, which is the built shell and only as current as the last
-        build (the export rebuilds itself when the paint has moved on; see the stencil panel).
+        carry on later, or to send a selection to someone else.
+        <br>It saves what is selected <em>now</em>, including this round's Shift-clicked panels and
+        every picked triangle — unlike <b>Export stencil STL</b>, which is the built shell and only
+        as current as the last build (the export rebuilds itself when the selection has moved on;
+        see the stencil panel).
         <a href="#mask-json">Full schema below.</a> Refuses politely (with a status message) if
-        nothing is painted.
+        nothing is selected.
       </td>
     </tr>
     <tr>
-      <td class="k">Painted shell PLY</td>
+      <td class="k">Selected shell PLY</td>
       <td>
-        Saves the painted triangles as a binary PLY with per-vertex colours, for MeshLab,
-        Blender, CloudCompare and friends. It is a display/debug artefact, not a printable
-        part: the triangles are the painted surface itself, not a solid.
+        Saves the selected triangles as a binary PLY with per-vertex colours (the selection's own
+        colour), for MeshLab, Blender, CloudCompare and friends. It is a display/debug artefact,
+        not a printable part: the triangles are the selected surface itself, not a solid.
         <a href="#ply">Full layout below.</a>
       </td>
     </tr>
     <tr>
-      <td class="k">Open mask (JSON)…</td>
+      <td class="k">Open selection (JSON)…</td>
       <td>
-        Loads a saved mask — the windows come back, the palette is merged and the build settings
-        in the file are put back into the stencil panel — so you can load the model again later
-        and <b>keep adding windows</b>: open the file, Shift-click more panels, build again.
+        Loads a saved selection — the corners come back as the selection and the build settings in
+        the file are put back into the stencil panel — so you can load the model again later and
+        <b>keep adding windows</b>: open the file, Shift-click more panels, build again.
         <a href="#import-json">Behaviour below.</a>
       </td>
     </tr>
@@ -1282,24 +1131,23 @@ Panels within 3.2 units of the click; click one to select it instead:
     </tr>
   </table>
 
-  <h3 id="mask-json">Mask JSON — the format</h3>
+  <h3 id="mask-json">The selection JSON — the format</h3>
   <p>
     Format <code>stl-mask</code>, version 1. All coordinates are implicit: the file names
     vertices by their index in the model's triangle soup, in the order the STL lists them, so
-    the file is only meaningful for the model it was painted on.
+    the file is only meaningful for the model it was made on.
   </p>
 <pre>{
   "format": "stl-mask",
   "version": 1,
-  "model": "Sprunki Mercuy.stl",   // the file it was painted on, for reference only
+  "model": "Sprunki Mercuy.stl",   // the file it was made on, for reference only
   "unit": "model units",           // documentation: nothing is converted
   "vertexCount": 1267974,          // vertices in that model = 3 × its triangle count
-  "features": [                    // the palette that was in use
-    { "id": 1, "name": "Eyes",   "color": "#4ea1ff" },
-    { "id": 2, "name": "Pupils", "color": "#111820" }
+  "features": [                    // one entry: the single selection colour
+    { "id": 1, "name": "Selection", "color": "#ffc94d" }
   ],
   "paintedVertices": 6814,         // pairs below / 2
-  "painted": [ 12, 1, 13, 1, 14, 1, 27, 2, ... ],
+  "painted": [ 12, 1, 13, 1, 14, 1, 27, 1, ... ],
   "stencil": {                     // the build settings the mask was saved with
     "coverRadius": 15, "wall": 1.19, "standoff": 0.2, "overhang": 0.35, "growIfSplit": true
   }
@@ -1309,22 +1157,22 @@ Panels within 3.2 units of the click; click one to select it instead:
     <tr><td class="k">format / version</td><td>Checked on import; a file without <code>"format": "stl-mask"</code> is rejected with a readable message.</td></tr>
     <tr><td class="k">model</td><td>Recorded for reference. Never used to match anything, so renaming a model does not break its mask.</td></tr>
     <tr><td class="k">vertexCount</td><td>The model's vertex count when the mask was made. Import compares it against the loaded model and warns when they differ.</td></tr>
-    <tr><td class="k">features</td><td>Id, name and colour for each feature. Ids are 1…32,000; id 0 is "unpainted" and is never listed.</td></tr>
+    <tr><td class="k">features</td><td>The mask format's feature table. This app has exactly one feature — id 1, the selection — so the array holds one entry and every corner in <code>painted</code> carries id 1. It is kept so that a file saved by the earlier, painting version (several colours) still opens: the ids are read and all of them come back as the one selection. Id 0 means "not selected" and is never listed.</td></tr>
     <tr><td class="k">stencil</td><td>The build settings that were in the stencil panel when the mask was saved (reach, wall, standoff, window inlay, and whether the reach may widen until the part is one piece). Optional — an older file without it still loads; with it, <b>Open mask (JSON)</b> puts the numbers back into the panel so a reloaded session builds the same shell. Nothing in a build is stored, only how to make it: the geometry is rebuilt from the mask.</td></tr>
-    <tr><td class="k">painted</td><td>A flat list of <code>[vertexIndex, featureId]</code> pairs — one entry per painted vertex, nothing per unpainted vertex. This is the part that scales with how much you painted: 82,127 painted vertices is a 0.79 MB file, the whole model painted would be 11.2 MB (measured with the app's own writer).</td></tr>
+    <tr><td class="k">painted</td><td>A flat list of <code>[vertexIndex, featureId]</code> pairs — one entry per selected corner of the model's soup, nothing per unselected one. This is the part that scales with the selection: 82,127 corners is a 0.79 MB file, the whole model selected would be 11.2 MB (measured with the app's own writer).</td></tr>
   </table>
   <p>
-    Only painted vertices appear, so an empty mask is a valid but useless file (the app refuses
-    to export one). Vertices that are painted <em>after</em> the file was written are simply
-    absent from it.
+    Only selected corners appear, so an empty selection is a valid but useless file (the app
+    refuses to export one). Corners selected <em>after</em> the file was written are simply absent
+    from it.
   </p>
 
   <h4>Ready to import</h4>
   <p>
-    The block above is annotated, so it is not valid JSON. This one is: a complete mask for a
+    The block above is annotated, so it is not valid JSON. This one is: a complete selection for a
     12-triangle model (without a <code>stencil</code> block — that field is optional). Copy it,
     paste it into <code>example-mask.json</code>, and load it with
-    <b>Open mask (JSON)&#8230;</b> to see the round trip for yourself.
+    <b>Open selection (JSON)&#8230;</b> to see the round trip for yourself.
   </p>
 <pre class="json">{
   "format": "stl-mask",
@@ -1333,30 +1181,32 @@ Panels within 3.2 units of the click; click one to select it instead:
   "unit": "model units",
   "vertexCount": 36,
   "features": [
-    { "id": 1, "name": "Eyes", "color": "#4ea1ff" },
-    { "id": 2, "name": "Pupils", "color": "#111820" }
+    { "id": 1, "name": "Selection", "color": "#ffc94d" }
   ],
   "paintedVertices": 4,
-  "painted": [0, 1, 1, 1, 2, 1, 3, 2]
+  "painted": [0, 1, 1, 1, 2, 1, 3, 1]
 }</pre>
   <p>
     Loading it on the bundled figure (1,267,974 vertices) is accepted with a warning, because
     <code>vertexCount</code> does not match: the indices would land on the wrong vertices. On
-    the model it was written for, the four listed vertices come back painted — the first three
-    with feature 1, the fourth with feature 2.
+    the model it was written for, the four listed corners come back selected, and because a
+    selection is per triangle while the file is per corner, every triangle touching one of them is
+    selected — the two triangles those four corners belong to.
   </p>
 
-  <h3 id="import-json">Import mask JSON</h3>
+  <h3 id="import-json">Import a saved selection</h3>
   <p>What happens when you pick a file, in order:</p>
   <ol>
     <li>The JSON is parsed and validated: <code>format</code> must be <code>stl-mask</code> and
       <code>painted</code> must be an array of numbers. Anything else throws, and the status bar
-      shows the reason — your current painting is left alone.</li>
-    <li>Features are merged into the palette by id: ones you do not have are added, ones you do
-      have keep the colour and name you already have. Nothing is removed, so importing two
-      files with different palettes gives you the union.</li>
-    <li>The vertex list is applied to the mask: every pair sets that vertex's feature id
-      (replacing whatever was there), and the overlay is redrawn in one go.</li>
+      shows the reason — your current selection is left alone.</li>
+    <li>The feature table is read for its ids only. This app has one id, so whatever the file calls
+      its colours — one, or the ten of an older painting session — every listed corner becomes part
+      of the same selection.</li>
+    <li>The corner list becomes the selection: every triangle with a corner in the file is
+      selected, and the tint is derived from those triangles like any other selection. A loaded
+      window can therefore come back a rim thicker than it was saved, because the file is per corner
+      and the selection is per triangle.</li>
     <li>If the file's <code>vertexCount</code> differs from the loaded model, the status bar
       warns — indices then mean different vertices, so the result will be scrambled. Nothing is
       blocked, because a mask from a slightly re-exported mesh is often close enough to be
@@ -1364,35 +1214,39 @@ Panels within 3.2 units of the click; click one to select it instead:
     <li>If the file carries a <code>stencil</code> block, those build settings go back into the
       stencil panel, so the next build matches the one the file was saved from. A file without
       it just leaves the panel alone.</li>
-    <li>The whole import is one undo step: <kbd>Ctrl</kbd>+<kbd>Z</kbd> returns the mask to what
-      it was before (but leaves any features the import added).</li>
+    <li>The whole import is one undo step: <kbd>Ctrl</kbd>+<kbd>Z</kbd> returns the selection to
+      what it was before.</li>
   </ol>
   <div class="note">
-    <strong>Saving your place and carrying on.</strong> The mask JSON <em>is</em> the "save the
+    <strong>Saving your place and carrying on.</strong> The selection JSON <em>is</em> the "save the
     windows I have marked up and load them back to add more" file. Save it, close the tab (or
-    load a different model), then come back: load the model the mask was painted on, press
-    <b>Open mask (JSON)…</b>, and every window is where you left it. Shift-click more panels with
-    the <b>Part</b> tool, or paint with the brush, then build or press <b>Export stencil STL</b> —
-    the export rebuilds from the mask as it stands, so the file always holds every window, not
-    just the ones that were there at the last build. A built stencil is a snapshot and is not
-    stored in the file; the panel says the shell is stale when the mask and the build disagree.
+    load a different model), then come back: load the model the selection was made on, press
+    <b>Open selection (JSON)…</b>, and every window is where you left it. Shift-click more panels
+    with the <b>Part</b> tool, or pick a few triangles with <b>Select faces</b>, then build or press
+    <b>Export stencil STL</b> — the export rebuilds from the selection as it stands, so the file
+    always holds every window, not just the ones that were there at the last build. A built stencil
+    is a snapshot and is not stored in the file; the panel says the shell is stale when the
+    selection and the build disagree.
   </div>
   <div class="note">
-    <strong>Round trip is exact.</strong> Export → import on the same model reproduces the same
-    per-feature vertex counts; <code>test/app-path.test.mjs</code> exports and re-imports the mask it paints
-    (6,814 vertices on the bundled model) and checks every vertex and id comes back unchanged.
+    <strong>Round trip is exact for corners, and generous for triangles.</strong> Export → import
+    on the same model brings back exactly the corners the file lists; every triangle touching one of
+    them is selected, which is the reading that keeps a window whole.
+    <code>test/app-path.test.mjs</code> exports and re-imports a selection on the bundled model and
+    checks the corners come back unchanged and the selection that comes with them covers what it
+    covered.
   </div>
 
-  <h3 id="ply">Painted shell PLY — the format</h3>
+  <h3 id="ply">Selected shell PLY — the format</h3>
   <p>
     <code>binary_little_endian 1.0</code>, vertices with position and RGBA colour, faces as
-    triangles. Only triangles whose <em>three</em> vertices are all painted are written, and
-    the kept vertices are repacked onto their own list, so the file is the painted shell rather
+    triangles. Only triangles whose <em>three</em> vertices are all selected are written, and
+    the kept vertices are repacked onto their own list, so the file is the selected shell rather
     than the whole model.
   </p>
 <pre>ply
 format binary_little_endian 1.0
-comment STL mask export - per-vertex feature colours
+comment STL mask export - selected shell, per-vertex colour
 element vertex N
 property float x
 property float y
@@ -1408,11 +1262,11 @@ end_header
 &lt;M × (1 byte count = 3 + 12 bytes indices)&gt;</pre>
   <table>
     <tr><th>Detail</th><th>Behaviour</th></tr>
-    <tr><td class="k">Colour</td><td>The feature's colour, converted from the palette to 0–255 per channel, so what you see in the viewport is what other tools show.</td></tr>
-    <tr><td class="k">Alpha</td><td>255 for painted vertices, 0 for hidden or unpainted ones — so hiding a feature and exporting gives you its triangles at alpha 0 rather than dropping them.</td></tr>
-    <tr><td class="k">A shared triangle</td><td>A triangle with one unpainted corner is <em>not</em> included, which is why the exported triangle count is a little lower than the painted area suggests. A vertex shared by painted and unpainted triangles appears once.</td></tr>
+    <tr><td class="k">Colour</td><td>The selection's own colour (amber), converted to 0–255 per channel, so what you see in the viewport is what other tools show.</td></tr>
+    <tr><td class="k">Alpha</td><td>255 for selected corners, 0 for the rest — so a vertex the selection only touches appears at alpha 0 rather than being dropped.</td></tr>
+    <tr><td class="k">A shared triangle</td><td>A triangle with one unselected corner is <em>not</em> included, which is why the exported triangle count is a little lower than the selected area suggests. A vertex shared by selected and unselected triangles appears once.</td></tr>
     <tr><td class="k">Sizes</td><td>Byte size is <code>header + 16 × vertices + 13 × faces</code>; the app reports both counts and the file size after export.</td></tr>
-    <tr><td class="k">Not for printing</td><td>This is a zero-thickness copy of the painted surface, exactly where it was painted. For something to print, build the <a href="#stencil">stencil</a> instead.</td></tr>
+    <tr><td class="k">Not for printing</td><td>This is a zero-thickness copy of the selected surface, exactly where it was selected. For something to print, build the <a href="#stencil">stencil</a> instead.</td></tr>
   </table>
 
   <h3 id="stl">Stencil STL — the format</h3>
@@ -1437,45 +1291,38 @@ end_header
   <h2>Keyboard &amp; mouse <a class="anchor" href="#shortcuts">#</a></h2>
   <table>
     <tr><th>Key</th><th>Action</th></tr>
-    <tr><td class="k"><kbd>B</kbd></td><td>Brush tool</td></tr>
-    <tr><td class="k"><kbd>F</kbd></td><td>Region fill tool</td></tr>
     <tr><td class="k"><kbd>P</kbd></td><td>Part tool — click a whole seam-bounded panel</td></tr>
-    <tr><td class="k"><kbd>X</kbd></td><td>Box paint tool — drag a rectangle over what to paint</td></tr>
-    <tr><td class="k"><kbd>S</kbd></td><td>Select models — pick the model under the cursor and remove it</td></tr>
+    <tr><td class="k"><kbd>S</kbd></td><td>Select models — the pick is the whole model under the cursor</td></tr>
     <tr><td class="k"><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Select faces — the same tool with the pick set to single triangles</td></tr>
     <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all — pick every face in the model, then click off the few you want to keep</td></tr>
-    <tr><td class="k"><kbd>E</kbd></td><td>Erase tool</td></tr>
-    <tr><td class="k"><kbd>I</kbd></td><td>Pick tool (eyedropper)</td></tr>
-    <tr><td class="k"><kbd>1</kbd>…<kbd>9</kbd></td><td>Select the first nine features</td></tr>
-    <tr><td class="k"><kbd>M</kbd></td><td>Toggle mirroring across X</td></tr>
-    <tr><td class="k"><kbd>[</kbd> <kbd>]</kbd></td><td>Smaller / bigger brush</td></tr>
-    <tr><td class="k"><kbd>Space</kbd><small>hold</small></td><td>Orbit with the left button without leaving the paint tool</td></tr>
-    <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo one edit (a whole stroke, a fill, a part click, a clear)</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+<kbd>I</kbd></td><td>Invert the selection — the window becomes everything except what was selected</td></tr>
+    <tr><td class="k"><kbd>B</kbd></td><td>Build the stencil from the selection</td></tr>
+    <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>Undo one edit (a click, a rectangle, a panel, a window removal, an invert)</td></tr>
     <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Redo</td></tr>
+    <tr><td class="k"><kbd>Space</kbd><small>hold</small></td><td>Orbit with the left button without leaving the selection tool</td></tr>
     <tr><td class="k"><kbd>?</kbd> <small>or <kbd>F1</kbd></small></td><td>Open this guide in a new tab</td></tr>
-    <tr><td class="k"><kbd>Shift</kbd>+<kbd>I</kbd></td><td>Invert the mask (painted ⟷ unpainted); <kbd>I</kbd> on its own is the Pick tool</td></tr>
-    <tr><td class="k"><kbd>Shift</kbd>+click<small>Part tool</small></td><td>Add another panel to the current feature</td></tr>
-    <tr><td class="k"><kbd>Shift</kbd>+click<small>Pick tool</small></td><td>Pick a feature without switching back to the previous tool</td></tr>
-    <tr><td class="k"><kbd>Alt</kbd>+click<small>Part tool</small></td><td>Remove a panel from the paint</td></tr>
-    <tr><td class="k"><kbd>Alt</kbd>+drag<small>Box paint</small></td><td>Release paint under the rectangle instead of painting it</td></tr>
-    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged (Box paint, or the Select tool's box), or unpick everything (Select)</td></tr>
-    <tr><td class="k"><kbd>Shift</kbd>+drag<small>Select</small></td><td>Pick the faces inside the rectangle as well as the ones already picked</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+click<small>either tool</small></td><td>Add to the selection — another panel, another face, another model</td></tr>
+    <tr><td class="k"><kbd>Alt</kbd>+click<small>either tool</small></td><td>Take what the click covers off the selection</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+drag<small>Select faces</small></td><td>Add the faces inside the rectangle to the selection</td></tr>
+    <tr><td class="k"><kbd>Alt</kbd>+drag<small>Select faces</small></td><td>Take the faces under the rectangle off the selection</td></tr>
+    <tr><td class="k"><kbd>Esc</kbd></td><td>Throw away a rectangle being dragged, or clear the selection entirely</td></tr>
     <tr><td class="k">right-drag</td><td>Orbit</td></tr>
     <tr><td class="k">middle-drag</td><td>Pan</td></tr>
     <tr><td class="k">wheel</td><td>Zoom</td></tr>
     <tr><td class="k">drop an <code>.stl</code></td><td>Load it, same as <b>Open STL…</b></td></tr>
   </table>
-  <p>Shortcuts are ignored while a text or number field has focus, so typing a feature name is safe.</p>
+  <p>Shortcuts are ignored while a text or number field has focus, so typing in a number box is safe.</p>
 </section>
 
 <section class="doc" id="howitworks">
   <h2>How it works, and what it cannot do <a class="anchor" href="#howitworks">#</a></h2>
-  <h3>Three representations of the same idea</h3>
+  <h3>One selection, three representations of it</h3>
   <table>
     <tr><th>Thing</th><th>What it is</th><th>Where it lives</th></tr>
-    <tr><td class="k">Mask</td><td>A feature id per model vertex, plus colours</td><td>In memory; saved as <a href="#mask-json">mask JSON</a></td></tr>
-    <tr><td class="k">Painted shell</td><td>The painted triangles with per-vertex colours</td><td><a href="#ply">PLY</a>, for looking at in other tools</td></tr>
-    <tr><td class="k">Stencil</td><td>A printable solid whose window is the painted area</td><td><a href="#stl">Binary STL</a>, for printing</td></tr>
+    <tr><td class="k">Selection</td><td>A flag per triangle of the file — what every tool writes</td><td>In memory, and as the tint on the model</td></tr>
+    <tr><td class="k">Window</td><td>The corners of the selected triangles, one flag per soup corner</td><td>In memory; saved as <a href="#mask-json">selection JSON</a></td></tr>
+    <tr><td class="k">Selected shell</td><td>The selected triangles with per-vertex colours</td><td><a href="#ply">PLY</a>, for looking at in other tools</td></tr>
+    <tr><td class="k">Stencil</td><td>A printable solid whose window is the selected area</td><td><a href="#stl">Binary STL</a>, for printing</td></tr>
   </table>
 
   <h3>Things worth knowing before you print</h3>
@@ -1486,10 +1333,12 @@ end_header
       smoothing in the build hides some of it, not all.
     </li>
     <li>
-      <b>The window insets.</b> The window edge lands a couple of units inside the painted
+      <b>The window insets.</b> The window edge lands a little inside the selected
       boundary (the field is smoothed so the cut is not ragged), so a thin sliver of what you
-      painted stays covered by mask material. The <b>Window inlay</b> value is the deliberate
-      part of that overlap; on top of it, expect a small inset.
+      selected stays covered by mask material. The <b>Window inlay</b> value is the deliberate
+      part of that overlap; on top of it, expect a small inset. A selection with no room inside it
+      for the inlay — a single picked face — is cut at its own edge instead, which reaches at most
+      one triangle's width past the selection; the build says so when it happens.
     </li>
     <li>
       <b>Clearance at creases is zero, by design.</b> See
@@ -1505,17 +1354,17 @@ end_header
     <li>
       <b>A click selects the panel it hits — including when that is not what you aimed at.</b>
       On a mesh where one panel is half the model and the details are a fraction of a percent,
-      a near-miss paints the big panel and leaves the small one bare. The
-      <a href="#paint-candidates">panel list</a> and <kbd>Alt</kbd>-click are the fix; nothing
+      a near-miss selects the big panel and leaves the small one bare. The
+      <a href="#select-candidates">panel list</a> and <kbd>Alt</kbd>-click are the fix; nothing
       can make a two-pixel target easy to hit.
     </li>
     <li>
-      <b>One piece is preferred, not guaranteed.</b> Far-apart painted areas, or a window larger
+      <b>One piece is preferred, not guaranteed.</b> Far-apart selected areas, or a window larger
       than the band around it, give more than one shell. The app widens the reach while that
       helps, then says so in plain words instead of pretending.
     </li>
     <li>
-      <b>Nothing is sent anywhere.</b> Parsing, painting, segmentation and the stencil build all
+      <b>Nothing is sent anywhere.</b> Parsing, segmentation and the stencil build all
       run in the page; there is no server-side step and no telemetry.
     </li>
   </ul>
@@ -1524,7 +1373,7 @@ end_header
   <table>
     <tr><th>Step</th><th>Time</th><th>When</th></tr>
     <tr><td class="k">Load + BVH</td><td>~0.3 s</td><td>Per model</td></tr>
-    <tr><td class="k">Brush stamp</td><td>sub-millisecond</td><td>Every stamp while dragging</td></tr>
+    <tr><td class="k">Hover pick</td><td>sub-millisecond</td><td>Every mouse move over the model</td></tr>
     <tr><td class="k">Seam parts</td><td>~0.4 s</td><td>First Part click or <b>Show seams</b>, then cached per angle</td></tr>
     <tr><td class="k">Mesh weld</td><td>~0.4 s</td><td>First stencil build, then cached</td></tr>
     <tr><td class="k">Stencil build</td><td>0.7–1.5 s</td><td>Per build (plus each widening attempt, if it is on)</td></tr>
@@ -1547,42 +1396,49 @@ end_header
     <tr>
       <td class="k">test/stencil.test.mjs</td>
       <td>
-        Ten painted cases (single eye, both eyes, narrow cover, a dot smaller than the inlay, a
-        head cap, a front slab, two far-apart features, nothing painted, everything painted, and
+        Ten selected cases (single eye, both eyes, narrow cover, a dot smaller than the inlay, a
+        head cap, a front slab, two far-apart areas, nothing selected, everything selected, and
         a standoff sweep). For each: every edge used exactly twice with consistent winding and
         outward volume, the window genuinely open, mask material in the ring around it, the
         inner face never both behind the surface and inside the figure, thickness inside the
         expected band, one connected shell or an honest warning — and the exported STL re-read
-        and re-checked, same volume, still watertight.
+        and re-checked, same volume, still watertight. The dot smaller than the inlay is the one
+        that pins the report "picked faces never reach the stencil": the window has to open, and
+        the build has to say it was cut at the island's own edge.
       </td>
     </tr>
     <tr>
       <td class="k">test/app-path.test.mjs</td>
       <td>
-        The app's own classes on the real model: paint with <code>MaskLayer</code>, build with
-        the panel's default numbers, write the STL with the real writer, read the blob back,
-        and probe the result (0/139 probes over the paint hit material, 2901/2910 probes in the
-        ring do). Also cross-checks the reported clearance against an independent measurement
-        of every inner vertex.
+        The app's own classes on the real model: the selection is made the way the tools make it,
+        built with the panel's default numbers, written with the real writer, read back, and probed
+        (nothing over the window, nothing but mask material in the ring around it), with the
+        reported clearance cross-checked against an independent measurement of every inner vertex.
+        It also pins the two reports the app has had: that a build in hand is stale when the
+        selection has moved on and is rebuilt before export, and that <b>one picked face is a
+        window</b> — a one-face selection and a Part panel plus one picked face each open a window
+        where the pick is, by looking for the hole in the built shell with a ray rather than
+        trusting a count.
       </td>
     </tr>
     <tr>
-      <td class="k">test/painting.test.mjs</td>
+      <td class="k">test/selection.test.mjs</td>
       <td>
-        Editing behaviour: a 9-stamp stroke is one undo step, undo/redo restore the exact
-        vertex ids, the erase brush takes back part of a stroke, Clear feature and Clear all are
-        each one step, history is capped, and the colour buffer holds what the Mask buttons
-        claim (painted alpha 1, hidden and cleared alpha 0) with the right upload ranges. It also
-        covers invert (both directions, exactly mirrored counts, undo and redo) and redo after
-        the snapshot-based edits — Clear all, Clear feature and Invert — which is where redo used
-        to put the old image back instead of reapplying the change.
+        The one selection the whole app shares. Adding, removing and replacing a widget's worth of
+        faces on a made-up model — including that a click said twice changes nothing, so it is not
+        an undo step — select all, none and invert, the corner mapping that turns a seam panel into
+        faces, and the undo history: the exact faces back, redo after an add and after a removal,
+        and a snapshot renumbered across a soup that was cut. It also checks the one thing every
+        tool rests on: the tint holds the corners of the selected faces and nothing else, the
+        reopen path turns a saved corner list back into a selection, and the JSON writer produces
+        one `[corner, id]` pair per selected corner.
       </td>
     </tr>
     <tr>
       <td class="k">test/parts.test.mjs</td>
       <td>
         The seam rule on a cube where the answer is known, then on the real model: every face in
-        one part, sizes consistent, slivers merged, a part click painting exactly its vertices,
+        one part, sizes consistent, slivers merged, a part click selecting exactly its faces,
         shift-click composing two panels, and a clicked panel building a stencil whose window
         opens over it. It also drives a real raycast through a real camera over the whole
         viewport: every hit must report the triangle the cursor is on, in the model's own face
@@ -1591,12 +1447,12 @@ end_header
       </td>
     </tr>
     <tr>
-      <td class="k">test/parts.test.mjs</td>
+      <td class="k">test/parts.test.mjs<small>continued</small></td>
       <td>
         Also the panel-near-a-point query on a cube where the distances are known (0.62 to the
         four faces beside it, 1.03 to the one opposite), and on the real model: that the opening
         panel is 48% of the mesh, that the smallest is 0.05%, that the thin panel a click missed
-        is on the list within a brush radius, and that picking it paints exactly that panel and
+        is on the list within a click's reach, and that picking it selects exactly that panel and
         leaves the giant one alone.
       </td>
     </tr>
@@ -1627,7 +1483,7 @@ end_header
         face away. Then the real figure through the app's own camera and model group: every
         sampled vertex three.js puts inside the box was taken, every taken vertex projects inside
         it, a middle-of-the-body box takes 433,903 of the 930,758 vertices under it (496,855 face
-        away) in 29 ms, and the selection reaches the mask as the painted vertices — one undo step,
+        away) in 29 ms, and the selection reaches the mask as corners — one undo step,
         with undo and redo restoring the exact count.
       </td>
     </tr>
@@ -1640,8 +1496,8 @@ end_header
         has its own bounds and its own size while the picked faces match the count the list shows.
         Then the surgery: a filtered soup holds exactly the faces it should, triangle for
         triangle, the corner map points every surviving vertex back at the file it came from, the
-        paint on those vertices comes across unchanged, and the mask's undo history is renumbered
-        so Ctrl+Z still reaches the paint it used to. Then the real figure, where the point of the
+        selection on those faces comes across unchanged, and its undo history is renumbered so
+        Ctrl+Z still reaches the same triangles. Then the real figure, where the point of the
         feature is measured: a copy written 30 units below it lifts it off the bed by exactly
         that, removing the copy puts its lowest point back at 0, and the bed is drawn on the
         model's own lowest point instead of a fraction of its height below it.

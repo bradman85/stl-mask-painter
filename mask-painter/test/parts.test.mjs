@@ -4,15 +4,22 @@
 //
 // Three levels: the crease rule itself on a synthetic cube where the answer is known, the
 // segmentation of the real model (how many parts, how big, that every face lands in one), and
-// the end-to-end promise — paint a part, build a stencil, and the window opens over that part
-// and nothing else.
+// the end-to-end promise — select a part, build a stencil, and the window opens over that part
+// and nothing else. The selection is written the way the app writes it: faces in, corners out.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../vendor/three.module.js';
-import { MaskLayer } from '../js/mask.js';
-import { createFeatureList } from '../js/features.js';
+import { SelectionTint } from '../js/mask.js';
+import {
+  createSelection,
+  countSelected,
+  applyFaces,
+  paintedFromFaces,
+  facesFromVertices,
+  SelectionHistory,
+} from '../js/selection.js';
 import { buildTopology, buildStencil, stencilDefaultsForDiagonal, geodesicField } from '../js/stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from '../js/parts.js';
 import { sourceTriangleIndex } from '../js/viewer.js';
@@ -72,8 +79,15 @@ const positions = Float32Array.from(parsed.positions);
 const geometry = new THREE.BufferGeometry();
 geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 geometry.computeBoundingBox();
-const mask = new MaskLayer(geometry, createFeatureList());
-const topo = buildTopology(positions, mask.vertexCount);
+const tint = new SelectionTint(geometry);
+const topo = buildTopology(positions, tint.vertexCount);
+// The one selection, and the one step that shows it: faces -> corner flags. `paint()` is the
+// app's own `syncTint`, so every check below is reading the mask the stencil build reads.
+const faceCount = positions.length / 9;
+const selection = createSelection(faceCount);
+const history = new SelectionHistory({ limit: 40 });
+const paint = () => tint.setSelection(paintedFromFaces(selection));
+paint();
 
 const t0 = Date.now();
 // ---- panels near a point: what the Part panel offers when a click lands on the wrong one
@@ -205,27 +219,26 @@ check(
       found.every((n) => n.share === parts.partSizes[n.part] / topo.faceCount),
     found.map((n) => `part ${n.part + 1}:${fmt(n.faces)}@${n.distance.toFixed(1)}`).join(' '),
   );
-  // Choosing one from the list paints exactly that panel, not the one under the cursor.
+  // Choosing one from the list selects exactly that panel, not the one under the cursor.
   const pick = partSoupVertices(parts, thin.part, []);
-  mask.beginStroke();
-  const painted = mask.paintIndices(pick, 5);
-  const recorded = mask.endStroke();
-  mask.flush();
+  const picked = applyFaces(selection, facesFromVertices(pick, faceCount));
+  paint();
   check(
-    'picking a panel from the list paints exactly that panel',
-    recorded && painted === parts.partSizes[thin.part] * 3,
-    `part ${thin.part + 1}: ${fmt(painted)} of ${fmt(parts.partSizes[thin.part] * 3)} vertices`,
+    'picking a panel from the list selects exactly that panel',
+    picked === parts.partSizes[thin.part] && countSelected(selection) === parts.partSizes[thin.part],
+    `part ${thin.part + 1}: ${fmt(picked)} of ${fmt(parts.partSizes[thin.part])} faces`,
   );
   check(
     'and leaves the giant panel the click landed on alone',
-    mask.stats().counts.get(1) === undefined,
-    `feature 1 has ${fmt(mask.stats().counts.get(1) || 0)} vertices`,
+    tint.stats().painted === parts.partSizes[thin.part] * 3,
+    `${fmt(tint.stats().painted)} corners, all of them from that one panel`,
   );
-  // Leave the mask and the history exactly as this section found them, so the checks below
+  // Leave the selection and the history exactly as this section found them, so the checks below
   // (which count undo steps) still see a clean slate.
-  mask.clearAll();
-  mask.history.length = 0;
-  mask.redoStack.length = 0;
+  applyFaces(selection, new Uint8Array(faceCount));
+  paint();
+  history.undoStack.length = 0;
+  history.redoStack.length = 0;
 }
 
 const raw = buildParts(topo, { seamAngleDeg: DEFAULT_SEAM_ANGLE, minPartFaces: 0 });
@@ -342,7 +355,11 @@ check(
   );
 }
 
-// ---------------------------------------------------------------- painting a part
+// ------------------------------------------------------------- selecting a part
+//
+// A part arrives from the segmentation as a list of soup vertices, and the selection is a set of
+// faces: `facesFromVertices` is the join, and it is the same function `main.js` uses, so what is
+// checked here is what a Part click does.
 
 // A limb-sized part: big enough to be a real window, small enough to build quickly.
 const limbId = parts.partSizes.findIndex((n) => n >= 4000 && n <= 25000);
@@ -351,60 +368,64 @@ const limbIndices = partSoupVertices(parts, limbId);
 const unique = new Set(limbIndices);
 check('a limb-sized part exists to click', limbId >= 0 && limbFaces >= 4000, `part ${limbId}: ${fmt(limbFaces)} faces`);
 
-const before = Int16Array.from(mask.ids);
-mask.beginStroke();
-const painted = mask.paintIndices(limbIndices, 1);
-mask.endStroke();
+const before = Uint8Array.from(selection.faces);
+history.remember(selection);
+const picked = applyFaces(selection, facesFromVertices(limbIndices, faceCount));
+paint();
 check(
-  'clicking a part paints exactly its vertices',
-  painted === mask.stats().painted && painted === unique.size,
-  `${fmt(painted)} painted, ${fmt(unique.size)} unique vertices in the part`,
+  'clicking a part selects exactly its faces',
+  picked === limbFaces && countSelected(selection) === limbFaces && tint.stats().painted === unique.size,
+  `${fmt(picked)} faces, ${fmt(unique.size)} corners`,
 );
-check('one part click is one undo step', mask.history.length === 1 && mask.canUndo());
+check('one part click is one undo step', history.undoStack.length === 1 && history.canUndo);
 
-mask.undo();
+history.undo(selection);
+paint();
 let diff = 0;
-for (let i = 0; i < before.length; i += 1) if (before[i] !== mask.ids[i]) diff += 1;
-check('undo takes the whole part back', diff === 0 && mask.stats().painted === 0, `${fmt(diff)} vertices differ`);
-mask.redo();
-check('redo puts it back', mask.stats().painted === painted, `${fmt(mask.stats().painted)} painted`);
+for (let i = 0; i < before.length; i += 1) if (before[i] !== selection.faces[i]) diff += 1;
+check('undo takes the whole part back', diff === 0 && countSelected(selection) === 0, `${fmt(diff)} faces differ`);
+history.redo(selection);
+paint();
+check('redo puts it back', countSelected(selection) === picked, `${fmt(countSelected(selection))} faces`);
 
-// Shift-click adds another part to the same feature instead of replacing the selection.
+// Shift-click adds another part to the selection instead of replacing it.
 const secondId = parts.partSizes.findIndex((n, id) => id !== limbId && n >= 200 && n <= 3000);
 const secondIndices = partSoupVertices(parts, secondId);
+const secondFaces = parts.partSizes[secondId];
 const grouped = new Set([...unique, ...new Set(secondIndices)]);
-mask.beginStroke();
-mask.paintIndices(secondIndices, 1);
-mask.endStroke();
+const addedSecond = applyFaces(selection, facesFromVertices(secondIndices, faceCount), { add: true });
+paint();
 check(
   'two parts can be composed into one window (shift-click)',
-  mask.stats().painted === grouped.size && mask.stats().counts.get(1) === grouped.size,
-  `${fmt(mask.stats().painted)} vertices from parts ${limbId} and ${secondId}`,
+  addedSecond === secondFaces && countSelected(selection) === limbFaces + secondFaces &&
+    tint.stats().painted === grouped.size,
+  `${fmt(countSelected(selection))} faces from parts ${limbId} and ${secondId}, ${fmt(tint.stats().painted)} corners`,
 );
 // and a plain click on a third part replaces the selection rather than piling up
 const thirdId = parts.partSizes.findIndex((n, id) => id !== limbId && id !== secondId && n >= 200);
 const thirdIndices = partSoupVertices(parts, thirdId);
-mask.beginStroke();
-mask.paintIndices(mask.verticesOf(1, []), 0);
-mask.paintIndices(thirdIndices, 1);
-mask.endStroke();
+const thirdFaces = parts.partSizes[thirdId];
+applyFaces(selection, facesFromVertices(thirdIndices, faceCount));
+paint();
 check(
   'a plain click replaces the selection',
-  mask.stats().painted === new Set(thirdIndices).size,
-  `${fmt(mask.stats().painted)} vertices for part ${thirdId}`,
+  countSelected(selection) === thirdFaces && tint.stats().painted === new Set(thirdIndices).size,
+  `${fmt(countSelected(selection))} faces for part ${thirdId}, ${fmt(tint.stats().painted)} corners`,
 );
 
 // ------------------------------------------------- the window is the part, end to end
 
-mask.clearAll({ record: false });
-for (let i = 0; i < mask.vertexCount; i += 1) mask.ids[i] = 0;
-mask.refreshColors();
-mask.beginStroke();
-mask.paintIndices(limbIndices, 1);
-mask.endStroke();
+applyFaces(selection, new Uint8Array(faceCount));
+applyFaces(selection, facesFromVertices(limbIndices, faceCount));
+paint();
+check(
+  'one click on the limb is the whole window',
+  countSelected(selection) === limbFaces && tint.stats().painted === unique.size,
+  `${fmt(countSelected(selection))} faces selected`,
+);
 
-const paintedFlags = new Uint8Array(mask.vertexCount);
-for (let i = 0; i < paintedFlags.length; i += 1) if (mask.ids[i] !== 0) paintedFlags[i] = 1;
+// This is the object the build is handed: `main.js` derives it the same way, from the selection.
+const paintedFlags = paintedFromFaces(selection);
 const paintedFlagsW = new Uint8Array(topo.wCount);
 for (let i = 0; i < paintedFlags.length; i += 1) if (paintedFlags[i]) paintedFlagsW[topo.weldOf[i]] = 1;
 

@@ -1,22 +1,28 @@
 import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { Viewer } from './viewer.js';
-import { MaskLayer } from './mask.js';
-import { createFeatureList, nextFeatureId } from './features.js';
+import { SelectionTint } from './mask.js';
 import * as io from './io.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal } from './stencil.js';
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
 import { paintedIslands, planIslandTrim, maskWindows } from './cleanup.js';
 import { normaliseRect, rectSize } from './boxselect.js';
+import { shellsOf, shellSize, countFaces, filterSoup } from './select.js';
 import {
-  shellsOf,
-  shellSize,
-  facesOfShells,
-  countFaces,
-  filterSoup,
-  remapHistory,
-  pickedCorners,
-} from './select.js';
+  createSelection,
+  countSelected,
+  countChanges,
+  applyFaces,
+  setAll,
+  invertSelection,
+  paintedFromFaces,
+  facesFromVertices,
+  facesFromPainted,
+  remapSelection,
+  SelectionHistory,
+  SELECTION_COLOR,
+  SELECTION_ID,
+} from './selection.js';
 import { drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT } from './highlight.js';
 
 // The example model that ships next to this app (repo root).
@@ -25,26 +31,17 @@ const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
 const el = (id) => document.getElementById(id);
 const fmt = (n) => Number(n).toLocaleString('en-US');
 
-const TOOL_NAMES = {
-  brush: 'Brush',
-  fill: 'Region fill',
-  part: 'Part',
-  box: 'Box paint',
-  select: 'Select',
-  erase: 'Erase',
-  picker: 'Pick',
-};
+/**
+ * There are two tools, and they are both ways of selecting: panels cut by seams, and single
+ * triangles. Everything else this app used to have in the tool row — a brush, a region fill, a
+ * rectangle that painted, an eraser and an eyedropper — existed to paint the model in colours,
+ * which turned out to be a second, harder way of saying "these triangles".
+ */
+const TOOL_NAMES = { part: 'Part', select: 'Select' };
 
 const state = {
-  features: createFeatureList(),
-  currentFeatureId: 1,
-  tool: 'brush',
-  lastPaintTool: 'brush',
-  brushRadius: 3.2,
-  mirrorX: false,
-  mirrorPlaneX: 0,
+  tool: 'select',
   seamAngle: DEFAULT_SEAM_ANGLE,
-  fillLimit: 200000,
   navigate: false,
   upAxis: 'y',
 };
@@ -55,14 +52,21 @@ viewer.onFps = (fps) => {
   el('statusFps').textContent = `${fps} fps`;
 };
 
+/**
+ * The selection, drawn on the model.
+ *
+ * It is called the mask because that is what it becomes: the window of the shell the stencil build
+ * wraps. It holds no state of its own — every corner flag in it comes from `cleanup.selection`
+ * (`syncTint` is the one place that writes it), so "the stencil is built from the selection" is a
+ * fact about the data rather than a habit two pieces of code have to keep in step.
+ */
 let mask = null;
 let modelName = '';
-let stroke = null;
-let boxDrag = null;
-// A drag in the Select tool. Separate from `boxDrag` (the rectangle *paint* tool) on purpose: one
-// paints the vertices under a rectangle, the other picks the triangles inside it, and the two are
-// different enough that sharing a state object would make both harder to read.
 let selectDrag = null;
+// The selection's undo history: snapshots of the face array, one per edit.
+const history = new SelectionHistory({ limit: 40 });
+// Drawn before the first model is loaded, so the scratch array is not reallocated per edit.
+let tintScratch = null;
 // How far the pointer has to travel before a click becomes a drag. A click wobbles a pixel or two,
 // and a two-pixel box would pick nothing and read as a tool that had stopped working.
 const DRAG_SLOP = 3;
@@ -95,17 +99,26 @@ const parts = {
 const cleanup = {
   soup: null,
   removed: null,
-  selected: null,
+  // The selection: `{ faceCount, faces }`, the one thing every tool writes and the stencil reads.
+  selection: null,
   liveFace: null,
   shells: null,
   shellsKey: '',
   shellsPending: false,
-  outline: null,
   hover: null,
   hoverKey: '',
-  scope: 'models',
+  scope: 'faces',
   build: 0,
   armedAt: 0,
+  /**
+   * The selected faces as a plain `0/1` array.
+   *
+   * A getter rather than a second field: the array is the selection's own storage, and a copy
+   * kept alongside it is a copy that can drift.
+   */
+  get selected() {
+    return this.selection ? this.selection.faces : null;
+  },
 };
 
 // The named seam-angle cuts the preset row offers. The angles are the measured sweet spots on
@@ -145,9 +158,8 @@ window.maskPainter = {
   exportStencilSTL,
   ensureParts,
   currentParts: () => parts.data,
-  paintPartAt,
+  selectPartAt,
   setSeamAngle,
-  invertPaint,
   selectAllFaces,
   selectNoFaces,
   invertPickedFaces,
@@ -158,13 +170,26 @@ window.maskPainter = {
   get cleanup() {
     return cleanup;
   },
-  selectIo: { shellsOf, filterSoup, remapHistory, countFaces },
+  get history() {
+    return history;
+  },
+  selectIo: {
+    shellsOf,
+    filterSoup,
+    countFaces,
+    createSelection,
+    countSelected,
+    applyFaces,
+    paintedFromFaces,
+    facesFromVertices,
+    facesFromPainted,
+    remapSelection,
+  },
   trimWindows,
   listWindows,
   releaseWindows,
   setCentreOnGrid: (on) => viewer.setCentreOnGrid(on),
   islandIo: { paintedIslands, planIslandTrim, maskWindows },
-  pickFeatureUnderPoint: (p, radius) => mask.featureUnderPoint(p, radius ?? maskedPickRadius()),
   openGuide,
   stencilOutOfDate,
   rebuildStencil,
@@ -173,21 +198,15 @@ window.maskPainter = {
   get stencil() {
     return stencil;
   },
-  paintAt(x, y) {
-    const hit = viewer.pick(x, y);
-    if (!hit || !mask) return 0;
-    mask.beginStroke();
-    const n = paintHit(hit);
-    mask.endStroke();
-    mask.flush();
-    updateStats();
-    return n;
+  /** What a click in the viewport selects, for scripted checks. */
+  selectAt(x, y, opts = {}) {
+    return selectClickAt({ x, y }, opts);
   },
 };
 
 // ---------------------------------------------------------------- helpers
 
-const nextPaint = () =>
+const nextFrame = () =>
   new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
 
 function setStatus(msg) {
@@ -204,10 +223,6 @@ function openGuide(hash = '') {
 function setLoading(show, text) {
   el('loading').hidden = !show;
   if (text) el('loadingText').textContent = text;
-}
-
-function featureById(id) {
-  return state.features.find((f) => f.id === id) || null;
 }
 
 // Pointer capture throws for pointer ids the browser never activated (synthetic events),
@@ -228,15 +243,10 @@ function releasePointer(id) {
   }
 }
 
-function paintId() {
-  return state.tool === 'erase' ? 0 : state.currentFeatureId;
-}
-
-function screenRadiusPx(worldRadius, worldPoint) {
-  const dist = viewer.camera.position.distanceTo(worldPoint);
-  const halfFov = THREE.MathUtils.degToRad(viewer.camera.fov / 2);
-  const rect = canvas.getBoundingClientRect();
-  return (worldRadius / Math.max(dist * Math.tan(halfFov), 1e-6)) * (rect.height / 2);
+/** What the HUD calls the tool in hand — the two scopes of Select pick different things. */
+function toolLabel(tool = state.tool, scope = cleanup.scope) {
+  if (tool === 'part') return TOOL_NAMES.part;
+  return scope === 'models' ? 'Select models' : 'Select faces';
 }
 
 // ------------------------------------------------------------ model load
@@ -258,7 +268,7 @@ async function loadFromURL(url) {
 async function loadFromBuffer(buffer, name) {
   const t0 = performance.now();
   setLoading(true, 'Parsing STL…');
-  await nextPaint();
+  await nextFrame();
 
   let geometry;
   try {
@@ -277,16 +287,17 @@ async function loadFromBuffer(buffer, name) {
   captureSoup(geometry);
 
   setLoading(true, 'Preparing mask layer…');
-  await nextPaint();
+  await nextFrame();
 
   const overlayGeometry = geometry.clone();
-  mask = new MaskLayer(overlayGeometry, state.features);
+  mask = new SelectionTint(overlayGeometry);
   overlayGeometry.setAttribute('color', new THREE.BufferAttribute(mask.colors, 4));
-  resetPickedFaces();
+  tintScratch = null;
+  resetSelection();
 
   const triangles = geometry.attributes.position.count / 3;
   setLoading(true, `Building pick acceleration for ${fmt(triangles)} triangles…`);
-  await nextPaint();
+  await nextFrame();
 
   const tBvh = performance.now();
   viewer.setGeometry(geometry, {
@@ -300,18 +311,10 @@ async function loadFromBuffer(buffer, name) {
   modelName = name;
   resetStencil();
 
-  // Sensible defaults from the model's own size.
   const size = geometry.boundingBox.getSize(new THREE.Vector3());
-  const center = geometry.boundingBox.getCenter(new THREE.Vector3());
-  const diag = size.length();
-  state.brushRadius = Math.max(0.3, Math.round((diag / 40) * 10) / 10);
-  el('brushRadius').value = String(Math.min(16, state.brushRadius));
-  state.mirrorPlaneX = Math.round(center.x * 100) / 100;
-  el('mirrorPlaneX').value = String(state.mirrorPlaneX);
 
   el('seamAngleVal').textContent = `${state.seamAngle}°`;
-applyDisplayState();
-  renderPalette();
+  applyDisplayState();
   updateStats();
   updateHud();
 
@@ -321,7 +324,8 @@ applyDisplayState();
   setLoading(false);  setStatus(
     `Loaded ${name} in ${Math.round(performance.now() - t0)} ms (pick acceleration ${bvhMs} ms); ` +
       `${centreNote()}, and the bed is under its lowest point (${viewer.bedY.toFixed(2)}). ` +
-      `Left-drag to paint “${featureById(state.currentFeatureId)?.name || 'feature'}”.`,
+      'Click a panel with Part (P) to take the whole of it, or drag a box in Select faces ' +
+      '(Shift+S); “Build stencil” turns the selection into the shell.',
   );
 }
 
@@ -355,177 +359,26 @@ function onCentreToggle(e) {
   );
 }
 
-// ------------------------------------------------------------- painting
-
-function paintHit(hit) {
-  const id = paintId();
-  const r = state.brushRadius;
-  const p = [hit.localPoint.x, hit.localPoint.y, hit.localPoint.z];
-  let changed = mask.paintSphere(p, r, id);
-  if (state.mirrorX) {
-    changed += mask.paintSphere([state.mirrorPlaneX * 2 - p[0], p[1], p[2]], r, id);
-  }
-  return changed;
-}
+// --------------------------------------------------------------- selecting
 
 /**
- * Feature under the cursor for the eyedropper. The vote itself lives in the mask
- * (`featureUnderPoint`), which is also what the hover preview uses, so what the ring shows
- * before a click is exactly what the click picks.
+ * A press in the viewport. Both tools select; neither paints.
+ *
+ * Select starts a drag that is decided on release — a click picks the one thing under the cursor,
+ * a drag picks what the rectangle covers — and Part acts on the press itself, because the panel it
+ * selects is the one the cursor is over.
  */
-function featureUnderHit(hit) {
-  if (!hit) return { id: 0, painted: 0 };
-  const radius = maskedPickRadius();
-  return mask.featureUnderPoint([hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], radius);
-}
-
-/** How far the eyedropper looks: the brush, or a couple of mesh steps, whichever is larger. */
-function maskedPickRadius() {
-  return Math.max(state.brushRadius, mask.estimateEdgeLength() * 2);
-}
-
-/**
- * The eyedropper. Picking changes nothing about the model, so the feedback has to be
- * deliberate: the hover preview has already put the candidate feature's colour on the ring,
- * this reports the feature and how much of it is under the cursor, and — unless you hold
- * Shift — the tool hands back to whatever you were painting with, so the pick is something
- * you can use immediately.
- */
-function pickAt(hit, { stay = false } = {}) {
-  const { id, painted } = featureUnderHit(hit);
-  if (!id) {
-    setStatus(
-      painted
-        ? 'Nothing painted under the cursor — that feature is painted elsewhere on the model.'
-        : 'Nothing painted under the cursor — paint an area first (Brush, Region fill or Part), then pick its feature.',
-    );
-    return 0;
-  }
-  state.currentFeatureId = id;
-  const name = featureById(id)?.name || String(id);
-  const total = mask.stats().counts.get(id) || 0;
-  renderPalette();
-  if (stay) {
-    updateHud();
-    setStatus(`Picked “${name}” — ${fmt(total)} vertices painted with it. Shift-click to keep picking.`);
-  } else {
-    const back = state.lastPaintTool === 'picker' ? 'brush' : state.lastPaintTool;
-    setTool(back);
-    setStatus(
-      `Picked “${name}” (${fmt(total)} vertices). Now painting with it as the ${TOOL_NAMES[back]} — ` +
-        'Shift-click with Pick to sample several areas without switching back.',
-    );
-  }
-  return id;
-}
-
-function paintSegment(from, to) {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  const dist = Math.hypot(dx, dy);
-  const step = Math.min(24, Math.max(2, screenRadiusPx(state.brushRadius, lastWorldPoint || viewer.viewCenter || new THREE.Vector3()) * 0.35));
-  const n = Math.min(64, Math.max(1, Math.ceil(dist / step)));
-  const minSkip = (state.brushRadius * 0.25) ** 2;
-  for (let i = 1; i <= n; i += 1) {
-    const t = i / n;
-    const hit = viewer.pick(from.x + dx * t, from.y + dy * t);
-    if (!hit) continue;
-    if (lastWorldPoint && hit.worldPoint.distanceToSquared(lastWorldPoint) < minSkip) continue;
-    lastWorldPoint = hit.worldPoint;
-    stroke.changed += paintHit(hit);
-    updateCursor(hit);
-  }
-  mask.flush();
-  updateHud();
-}
-
-let lastWorldPoint = null;
-
-/**
- * Only the Part tool does anything with modifier clicks (Shift adds a panel, Alt/Ctrl removes
- * one). For every other tool a modifier click means "not painting" and is ignored — but it
- * must be ignored *here*, after this test, or Alt-click never reaches the Part tool.
- */
-function modifierClickIgnored(e) {
-  // More than one tool means something by a modifier: Box paint turns the drag into an erase, and
-  // Select takes the thing that was clicked *off* the pick (and turns a dragged box into an
-  // addition or a removal). Every other tool treats a modifier click as "not painting", here, so
-  // the modifier reaches the tools that use it.
-  return (
-    (e.altKey || e.ctrlKey || e.metaKey) &&
-    state.tool !== 'part' &&
-    state.tool !== 'box' &&
-    state.tool !== 'select'
-  );
-}
-
 function onPointerDown(e) {
   if (!mask) return;
-  if (e.button !== 0 || state.navigate || modifierClickIgnored(e)) return;
-  // The box is the one tool that does not need the model under the cursor: a rectangle may be
-  // started on the background and dragged over the part of the model you want.
-  if (state.tool === 'box') {
-    startBoxSelect(e);
-    return;
-  }
-  // The Select tool does not paint at all. A press starts a drag that is decided on release: a
-  // click picks the one thing under the cursor (what it has always done), and a drag draws a
-  // rubber band whose contents are picked on mouse-up — the box is a gesture of this tool rather
-  // than a tool of its own.
-  if (state.tool === 'select') {
-    startSelectDrag(e);
-    return;
-  }
-  const hit = viewer.pick(e.clientX, e.clientY);
-  if (!hit) {
-    if (state.tool === 'picker') setStatus('Nothing under the cursor — click on the model surface.');
-    return;
-  }
-  e.preventDefault();
-
-  if (state.tool === 'picker') {
-    pickAt(hit, { stay: e.shiftKey });
-    return;
-  }
-
+  if (e.button !== 0 || state.navigate) return;
   if (state.tool === 'part') {
-    partClick(e);
+    const hit = viewer.pick(e.clientX, e.clientY);
+    if (!hit) return;
+    e.preventDefault();
+    void partClick(e);
     return;
   }
-
-  capturePointer(e.pointerId);
-
-  if (state.tool === 'fill') {
-    mask.beginStroke();
-    const res = mask.fillFrom([hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], {
-      id: paintId(),
-      angleLimitDeg: state.seamAngle,
-      maxVertices: state.fillLimit,
-      seedNormal: state.mirrorX ? null : hit.localNormal,
-    });
-    if (state.mirrorX) {
-      mask.fillFrom([state.mirrorPlaneX * 2 - hit.localPoint.x, hit.localPoint.y, hit.localPoint.z], {
-        id: paintId(),
-        angleLimitDeg: state.seamAngle,
-        maxVertices: state.fillLimit,
-        seedNormal: null,
-      });
-    }
-    mask.endStroke();
-    mask.flush();
-    updateStats();
-    setStatus(
-      `Region fill: ${fmt(res.changed)} vertices${res.truncated ? ' (hit the max-vertex limit)' : ''}.`,
-    );
-    return;
-  }
-
-  mask.beginStroke();
-  stroke = { pointerId: e.pointerId, last: { x: e.clientX, y: e.clientY }, changed: 0 };
-  lastWorldPoint = hit.worldPoint;
-  stroke.changed += paintHit(hit);
-  updateCursor(hit);
-  mask.flush();
+  startSelectDrag(e);
 }
 
 function onPointerMove(e) {
@@ -534,38 +387,16 @@ function onPointerMove(e) {
     moveSelectDrag(e);
     return;
   }
-  if (boxDrag) {
-    moveBoxSelect(e);
-    return;
-  }
-  if (stroke) {
-    paintSegment(stroke.last, { x: e.clientX, y: e.clientY });
-    stroke.last = { x: e.clientX, y: e.clientY };
-    el('statusCursor').textContent = cursorText(lastWorldPoint);
-    return;
-  }
   const hit = viewer.pick(e.clientX, e.clientY);
-  // With the eyedropper the ring shows the candidate *before* the click, so the tool reads
-  // as alive even when the click would change nothing (picking the feature you already have).
-  hoverPick = hit && state.tool === 'picker' ? featureUnderHit(hit) : null;
-  if (state.tool === 'select') {
-    // The face under the cursor is outlined before the click, so "the face under the cursor"
-    // is something you can see rather than something you have to believe.
-    updateHoverFace(hit ? hit.faceIndex : null);
-    el('statusCursor').textContent = hit ? `face ${fmt(hit.faceIndex)}` : '';
-    return;
-  }
-  updateCursor(hit);
-  el('statusCursor').textContent = hit ? cursorText(hit.worldPoint) + pickHint() : '';
-}
-
-let hoverPick = null;
-
-function pickHint() {
-  if (state.tool !== 'picker') return '';
-  if (!hoverPick || !hoverPick.id) return '  ·  Pick: nothing painted';
-  const f = featureById(hoverPick.id);
-  return `  ·  Pick: ${f?.name || hoverPick.id} (click to paint with it)`;
+  // The face under the cursor is outlined before the click, so "the face under the cursor" is
+  // something you can see rather than something you have to believe — and it is outlined whichever
+  // selection tool is in hand, because both of them are aiming at a face.
+  updateHoverFace(hit ? hit.faceIndex : null);
+  el('statusCursor').textContent = hit
+    ? state.tool === 'part'
+      ? `face ${fmt(hit.faceIndex)} — click to select the panel it belongs to`
+      : `face ${fmt(hit.faceIndex)}`
+    : '';
 }
 
 function cursorText(p) {
@@ -574,32 +405,18 @@ function cursorText(p) {
 }
 
 function endStroke() {
-  if (selectDrag) {
-    finishSelectDrag();
-    return;
-  }
-  if (boxDrag) {
-    finishBoxSelect();
-    return;
-  }
-  if (!stroke) return;
-  releasePointer(stroke.pointerId);
-  stroke = null;
-  const recorded = mask.endStroke();
-  mask.flush();
-  if (recorded) updateStats();
-  updateUndoButtons();
+  if (selectDrag) finishSelectDrag();
 }
 
-// ------------------------------------------------------ box paint (rubber band that paints)
+// ------------------------------------------------- the rectangle a selection drag draws
 
 /**
  * The rectangle a drag is drawing, in the pixels the viewer's selection is measured in.
  *
  * The app's own coordinates everywhere else are the file's, and they are not what a rubber band
  * is drawn in: the drag is in pixels, canvas-relative (`clientX/Y` minus the canvas rect), and the
- * inverse transform — `viewer.selectInScreenRect` — is what turns those pixels back into the
- * vertices underneath them.
+ * inverse transform — `viewer.facesInScreenRect` — is what turns those pixels back into the faces
+ * underneath them.
  */
 function canvasPoint(e) {
   const rect = canvas.getBoundingClientRect();
@@ -623,94 +440,16 @@ function hideBoxRect() {
   if (node) node.hidden = true;
 }
 
-function startBoxSelect(e) {
-  e.preventDefault();
-  capturePointer(e.pointerId);
-  const p = canvasPoint(e);
-  boxDrag = { pointerId: e.pointerId, from: p, to: p, erase: e.altKey || e.ctrlKey || e.metaKey };
-  viewer.hideCursor();
-  showBoxRect(p, p);
-  setStatus(
-    `Box paint: drag a rectangle over what to ${boxDrag.erase ? 'release' : 'paint'} — ` +
-      'only the surface facing you is taken (Esc cancels).',
-  );
-}
-
-function moveBoxSelect(e) {
-  const p = canvasPoint(e);
-  boxDrag.to = p;
-  showBoxRect(boxDrag.from, p);
-  const { width, height } = rectSize(normaliseRect(boxDrag.from, p));
-  el('statusCursor').textContent = `${Math.round(width)} × ${Math.round(height)} px`;
-}
-
-function cancelBoxSelect() {
-  if (!boxDrag) return;
-  releasePointer(boxDrag.pointerId);
-  boxDrag = null;
-  hideBoxRect();
-  viewer.hideCursor();
-  setStatus('Box paint cancelled — nothing painted.');
-}
-
-/**
- * Applies the rectangle that was just released: the vertices under it, painted with the current
- * feature (or released, if the drag was Alt/Ctrl), in one undo step.
- *
- * The counts the status line reports are the honest part of a screen-space selection: how many
- * vertices were under the rectangle at all, how many of those faced away and were left alone, and
- * how many came from the mirrored box, so a surprising result can be read off the status bar
- * instead of guessed at.
- */
-function finishBoxSelect() {
-  const drag = boxDrag;
-  boxDrag = null;
-  releasePointer(drag.pointerId);
-  hideBoxRect();
-  if (!mask) return;
-
-  const sel = viewer.selectInScreenRect(normaliseRect(drag.from, drag.to), {
-    mirror: state.mirrorX ? { planeX: state.mirrorPlaneX } : null,
-  });
-  if (!sel.count) {
-    setStatus(
-      sel.covered
-        ? `Box paint: all ${fmt(sel.covered)} vertices in the rectangle face away — nothing painted.`
-        : 'Box paint: nothing under the rectangle — drag it over the model.',
-    );
-    return;
-  }
-
-  const id = drag.erase ? 0 : paintId();
-  mask.beginStroke();
-  const changed = mask.paintIndices(sel.vertices, id);
-  const recorded = mask.endStroke();
-  mask.flush();
-  updateStats();
-  updateUndoButtons();
-  const name = featureById(state.currentFeatureId)?.name || 'feature';
-  setStatus(
-    `Box paint: ${fmt(changed)} vertices ${drag.erase ? 'released' : `painted as “${name}”`} — ` +
-      `${fmt(sel.count)} of the ${fmt(sel.covered)} in the rectangle face the camera` +
-      (sel.hidden ? ` (${fmt(sel.hidden)} face away and were left alone)` : '') +
-      (sel.mirrored ? `, plus ${fmt(sel.mirrored)} mirrored across X` : '') +
-      (recorded ? '.' : ' — every one of them already had that paint.'),
-  );
-}
-
 // ------------------------------------------------------ select (click, and a rubber band)
 
 /**
  * A press in the Select tool. Nothing is picked yet: this only starts the gesture.
  *
  * A **click** picks the one thing under the cursor — the face, or the model, the current scope
- * selects — which is what this tool has always done. A **drag** draws a rectangle and picks
- * everything inside it when the button comes up. The rectangle used to be a tool of its own — the
- * **Box select** button — which read as a selection mode and was not one: that tool paints every
- * vertex under the rectangle, which is why it is called **Box paint** now. Selecting by box is a
- * gesture of selecting, so it lives here, and the distinction a user has to hold is between
- * *picking* geometry and *painting* it, rather than between two buttons whose names both begin
- * with "Box".
+ * selects — and a **drag** draws a rectangle and picks everything inside it when the button comes
+ * up. The rectangle used to be a tool of its own — the **Box select** button — because back then
+ * "select" meant paint and the box did not paint. With one selection there is nothing for a second
+ * button to mean: picking a rectangle is a gesture of the Select tool, so it lives here.
  */
 function startSelectDrag(e) {
   e.preventDefault();
@@ -772,16 +511,13 @@ function cancelSelectDrag() {
  * the selection now" is what a rubber band means elsewhere. Shift adds and Alt takes off, which
  * is the same pair of modifiers a click uses.
  */
-function applyPickToSelection(wanted, { add = false, remove = false } = {}) {
-  let changed = 0;
-  for (let t = 0; t < cleanup.selected.length; t += 1) {
-    const want = remove ? (wanted[t] ? 0 : cleanup.selected[t]) : add ? (wanted[t] ? 1 : cleanup.selected[t]) : wanted[t] ? 1 : 0;
-    if (cleanup.selected[t] !== want) {
-      cleanup.selected[t] = want;
-      changed += 1;
-    }
-  }
-  return changed;
+function applyPickToSelection(wanted, opts = {}) {
+  if (!cleanup.selection) return 0;
+  // Nothing to change means nothing to undo: a click that selects what is already selected must
+  // not put an entry in the history.
+  if (!countChanges(cleanup.selection, wanted, opts)) return 0;
+  history.remember(cleanup.selection);
+  return applyFaces(cleanup.selection, wanted, opts);
 }
 
 /**
@@ -811,7 +547,7 @@ function finishSelectDrag() {
     setStatus(
       sel.covered
         ? `Select: all ${fmt(sel.covered)} faces in the rectangle point away from you — nothing ` +
-            `picked (${fmt(pickedFaces())} still picked).`
+            `picked (${fmt(selectedFaces())} still picked).`
         : 'Select: nothing under the rectangle — drag it over the model.',
     );
     return;
@@ -822,13 +558,13 @@ function finishSelectDrag() {
     return;
   }
   const changed = applyPickToSelection(sel.faces, drag);
-  afterPickedFaces(changed);
+  afterSelection(changed);
   setStatus(
     `Select: ${fmt(sel.count)} face${sel.count === 1 ? '' : 's'} in the rectangle — ` +
       `${drag.remove ? `${fmt(changed)} taken off the pick` : drag.add ? `${fmt(changed)} added to the pick` : 'the pick is now exactly those'} · ` +
-      `${fmt(pickedFaces())} picked in all` +
+      `${fmt(selectedFaces())} selected in all` +
       (sel.hidden ? ` (${fmt(sel.hidden)} of the ${fmt(sel.covered)} under it face away and were left alone)` : '') +
-      '. “Paint picked faces” paints them, “Remove picked” takes them out.',
+      '. “Build stencil” turns the selection into the shell; “Remove selected” takes it out of the model.',
   );
 }
 
@@ -847,172 +583,69 @@ async function pickModelsInRect(sel, drag) {
   const wanted = new Uint8Array(shells.faceCount);
   for (let t = 0; t < shells.faceCount; t += 1) if (touched.has(shells.faceShell[t])) wanted[t] = 1;
   const changed = applyPickToSelection(wanted, drag);
-  afterPickedFaces(changed);
+  afterSelection(changed);
   const names = [...touched].sort((a, b) => a - b).map((s) => `Model ${s + 1}`).join(', ');
   setStatus(
     `Select: the rectangle covers ${names} — ${fmt(countFaces(wanted))} faces` +
       (drag.remove ? `, ${fmt(changed)} taken off the pick` : drag.add ? `, ${fmt(changed)} added to the pick` : ' picked') +
-      ` · ${fmt(pickedFaces())} picked in all.`,
+      ` · ${fmt(selectedFaces())} picked in all.`,
   );
-}
-
-function updateCursor(hit) {
-  if (!hit) {
-    viewer.hideCursor();
-    return;
-  }
-  let color = '#ffffff';
-  if (state.tool === 'erase') color = '#ff8a8a';
-  else if (state.tool === 'picker') {
-    // The feature under the cursor, so the ring previews exactly what a click would pick.
-    color = hoverPick && hoverPick.id ? featureById(hoverPick.id)?.color || '#ffe066' : '#6d747d';
-  }
-  else if (state.tool === 'fill') color = '#8affc1';
-  else if (state.tool === 'part') color = '#ffd24d';
-  else if (featureById(state.currentFeatureId)) color = featureById(state.currentFeatureId).color;
-  viewer.setCursor({
-    point: hit.worldPoint,
-    normal: hit.worldNormal,
-    radius: state.brushRadius,
-    color,
-  });
 }
 
 // ------------------------------------------------------------------- UI
 
-function renderPalette() {
-  const wrap = el('palette');
-  wrap.textContent = '';
-  state.features.forEach((f, index) => {
-    const row = document.createElement('div');
-    row.className = 'feature';
-    if (f.id === state.currentFeatureId) row.classList.add('active');
-    if (mask && mask.isHidden(f.id)) row.classList.add('off');
-    row.title = index < 9 ? `Press ${index + 1} to select “${f.name}”` : f.name;
-
-    const sw = document.createElement('i');
-    sw.className = 'swatch';
-    sw.style.background = f.color;
-
-    const name = document.createElement('span');
-    name.className = 'fname';
-    name.textContent = f.name;
-
-    const count = document.createElement('span');
-    count.className = 'fcount';
-    count.dataset.id = String(f.id);
-    count.textContent = '0';
-
-    const hide = document.createElement('button');
-    hide.className = 'mini';
-    hide.textContent = mask && mask.isHidden(f.id) ? '◌' : '◉';
-    hide.title = 'Hide or show this feature’s paint';
-    hide.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      toggleFeatureHidden(f.id);
-    });
-
-    const remove = document.createElement('button');
-    remove.className = 'mini';
-    remove.textContent = '✕';
-    remove.title = 'Remove this feature from the palette';
-    remove.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      removeFeature(f.id);
-    });
-
-    row.addEventListener('click', () => {
-      state.currentFeatureId = f.id;
-      renderPalette();
-      updateHud();
-    });
-
-    row.append(sw, name, count, hide, remove);
-    wrap.appendChild(row);
-  });
-}
-
-function toggleFeatureHidden(id) {
-  if (!mask) return;
-  mask.setHidden(id, !mask.isHidden(id));
-  mask.flush();
-  renderPalette();
-}
-
-function removeFeature(id) {
-  const stats = mask ? mask.stats().counts.get(id) || 0 : 0;
-  if (stats > 0 && !window.confirm(`“${featureById(id)?.name}” has ${fmt(stats)} painted vertices. Remove it and clear that paint?`)) {
-    return;
-  }
-  const entry = { type: 'snapshot', ids: mask.ids.slice() };
-  state.features = state.features.filter((f) => f.id !== id);
-  if (mask) {
-    mask.clearFeature(id, { record: false });
-    mask.history.push(entry);
-    mask.redoStack.length = 0;
-    mask.setFeatures(state.features);
-    mask.flush();
-  }
-  if (state.currentFeatureId === id) state.currentFeatureId = state.features[0]?.id ?? 0;
-  renderPalette();
-  updateStats();
-  updateHud();
-}
-
-function addFeature() {
-  const nameInput = el('featureName');
-  const colorInput = el('featureColor');
-  const name = nameInput.value.trim() || `Feature ${state.features.length + 1}`;
-  const feature = { id: nextFeatureId(state.features), name, color: colorInput.value };
-  state.features.push(feature);
-  state.currentFeatureId = feature.id;
-  if (mask) mask.setFeatures(state.features);
-  nameInput.value = '';
-  renderPalette();
-  updateStats();
-  updateHud();
-  setStatus(`Added feature “${name}”.`);
-}
-
+/**
+ * The one stats line, and the two buttons whose state hangs off the selection.
+ *
+ * It reports the selection twice over on purpose: **faces** is what the user selected and what the
+ * panel counts, and **corners in the window** is what the stencil build consumes, so the two
+ * numbers the app is reasoning about are both on screen.
+ */
 function updateStats() {
-  if (!mask) return;
-  const s = mask.stats();
-  el('paintStats').textContent =
-    `${fmt(s.painted)} of ${fmt(s.total)} vertices painted ` +
-    `(${((s.painted / s.total) * 100).toFixed(1)}% of the mask).`;
-  for (const node of document.querySelectorAll('.fcount')) {
-    node.textContent = fmt(s.counts.get(Number(node.dataset.id)) || 0);
+  const node = el('selectionStats');
+  if (node) {
+    if (!mask || !cleanup.selection) {
+      node.textContent = 'Load a model to see how much of it is selected.';
+    } else {
+      const faces = cleanup.selection.faces.length;
+      const picked = selectedFaces();
+      const corners = mask.stats().painted;
+      const removed = removedFaces();
+      node.textContent =
+        `${fmt(picked)} of ${fmt(faces)} faces selected (${((picked / Math.max(1, faces)) * 100).toFixed(1)}%) · ` +
+        `${fmt(corners)} of ${fmt(mask.vertexCount)} corners inside the window` +
+        (picked > HIGHLIGHT_FACE_LIMIT ? ' · too many to tint in the viewport, so the tint is off' : '') +
+        (removed ? ` · ${fmt(removed)} faces removed (Restore puts them back)` : '');
+    }
   }
-  const current = s.counts.get(state.currentFeatureId) || 0;
-  const clearBtn = el('clearFeatureBtn');
-  clearBtn.disabled = current === 0;
-  clearBtn.title = current
-    ? `Clear the ${fmt(current)} vertices painted as “${featureById(state.currentFeatureId)?.name || ''}” (Ctrl+Z undoes it)`
-    : 'The selected feature has no paint to clear';
-  if (stencil.result) updateStencilStats(s.painted);
+  const removeBtn = el('removeFacesBtn');
+  if (removeBtn) removeBtn.disabled = selectedFaces() === 0;
+  const restoreBtn = el('restoreFacesBtn');
+  if (restoreBtn) restoreBtn.disabled = removedFaces() === 0;
+  if (stencil.result) updateStencilStats(mask ? mask.stats().painted : 0);
   updateUndoButtons();
-  // The window list describes the mask as it was when it was built: every row is one connected
-  // painted region with the vertices behind it, so the moment the mask is edited the row sizes
-  // are wrong and the Remove buttons point at regions that no longer exist. Hiding it is the
-  // honest answer — "List windows" rebuilds it from the mask in hand.
+  // The window list describes the selection as it was when it was built: every row is one
+  // connected group of faces, so the moment the selection is edited the row sizes are wrong and
+  // the Remove buttons point at groups that no longer exist. Hiding it is the honest answer —
+  // "List windows" rebuilds it from the selection in hand.
   const windowBox = el('windowList');
   if (windowBox && !windowBox.hidden) windowBox.hidden = true;
 }
 
 function updateUndoButtons() {
-  el('undoBtn').disabled = !mask || !mask.canUndo();
-  el('redoBtn').disabled = !mask || !mask.canRedo();
+  el('undoBtn').disabled = !cleanup.selection || !history.canUndo;
+  el('redoBtn').disabled = !cleanup.selection || !history.canRedo;
 }
 
 function updateHud() {
-  const chip = el('hudFeature');
-  const painted = featureById(state.currentFeatureId);
-  const erasing = state.tool === 'erase';
-  chip.querySelector('.swatch').style.background = erasing ? '#ff8a8a' : painted?.color || '#666';
-  chip.querySelector('span').textContent = erasing ? 'Erasing' : painted?.name || '—';
-  el('hudTool').textContent = TOOL_NAMES[state.tool];
-  el('hudRadius').textContent = `r ${state.brushRadius.toFixed(1)}`;
-  el('brushRadiusVal').textContent = state.brushRadius.toFixed(1);
+  el('hudTool').textContent = toolLabel();
+  const node = el('hudSelection');
+  if (!node) return;
+  const picked = mask ? selectedFaces() : 0;
+  node.textContent = mask
+    ? `${fmt(picked)} face${picked === 1 ? '' : 's'} selected`
+    : 'nothing selected';
+  node.style.color = mask && picked ? SELECTION_COLOR : '';
 }
 
 /**
@@ -1028,32 +661,27 @@ function syncToolButtons() {
   }
 }
 
+/**
+ * Switches tool.
+ *
+ * Nothing is cleared, and that is the point of the whole arrangement: a panel selected with Part
+ * is exactly what Select faces is meant to refine triangle by triangle, and the faces selected one
+ * at a time are what Part adds a panel to. What changes is which panel is showing.
+ */
 function setTool(tool) {
-  // Remembered so the eyedropper can hand back to it after a pick.
-  if (tool !== 'picker') state.lastPaintTool = tool;
-  state.tool = tool;
+  state.tool = tool === 'part' ? 'part' : 'select';
   syncToolButtons();
-  el('fillOptions').classList.toggle('on', tool === 'fill');
-  el('seamOptions').classList.toggle('on', tool === 'fill' || tool === 'part');
-  el('boxOptions').classList.toggle('on', tool === 'box');
-  el('selectOptions').classList.toggle('on', tool === 'select');
-  hoverPick = null;
-  if (tool === 'select' && cleanup.scope === 'models') void ensureShells();
-  updatePickHighlight();
+  el('seamOptions').classList.toggle('on', state.tool === 'part');
+  el('selectOptions').classList.toggle('on', state.tool === 'select');
+  if (state.tool === 'select' && cleanup.scope === 'models') void ensureShells();
   renderShellList();
   renderModelPickHint();
-  if (tool !== 'select') clearHoverFace();
   // The panel list belongs to the click that produced it, not to the next tool.
-  if (tool !== 'part') hidePartCandidates();
+  if (state.tool !== 'part') hidePartCandidates();
   // A rectangle belongs to the tool that started it: switching tools mid-drag throws it away
   // rather than finishing a selection the user has already stopped asking for.
-  if (tool !== 'box' && boxDrag) {
-    releasePointer(boxDrag.pointerId);
-    boxDrag = null;
-  }
-  // The same for the Select tool's rectangle.
-  if (tool !== 'select' && selectDrag) cancelSelectDrag();
-  if (tool !== 'box') hideBoxRect();
+  if (state.tool !== 'select' && selectDrag) cancelSelectDrag();
+  hideBoxRect();
   updateHud();
 }
 
@@ -1071,7 +699,7 @@ function applyDisplayState() {
 
 function setNavigate(on) {
   state.navigate = on;
-  viewer.setPointerMode(on ? 'navigate' : 'paint');
+  viewer.setPointerMode(on ? 'navigate' : 'select');
   el('navigateBtn').textContent = `Navigate: ${on ? 'on' : 'off'}`;
   el('navigateBtn').classList.toggle('active', on);
 }
@@ -1098,24 +726,53 @@ function captureSoup(geometry) {
   for (let f = 0; f < cleanup.soup.faceCount; f += 1) cleanup.liveFace[f] = f;
   cleanup.build = 0;
   // The pick itself is sized from the mask layer, which does not exist yet at this point: the
-  // loader calls `resetPickedFaces()` again once it does.
+  // loader calls `resetSelection()` again once it does.
 }
 
 function faceCountInHand() {
   return mask ? Math.floor(mask.vertexCount / 3) : 0;
 }
 
-function resetPickedFaces() {
-  cleanup.selected = new Uint8Array(faceCountInHand());
+/** A model with nothing selected: the state every load starts from. */
+function resetSelection() {
+  cleanup.selection = createSelection(faceCountInHand());
+  tintScratch = null;
   cleanup.shells = null;
   cleanup.shellsKey = '';
-  clearPickHighlight();
   clearHoverFace();
+  syncTint();
   renderShellList();
-  updateCleanupStats();
+  updateStats();
+  updateHud();
 }
 
-function pickedFaces() {
+/**
+ * Shows the selection: the one place the face selection becomes the tint on the model.
+ *
+ * This is the whole "the stencil is built from what you selected" claim, made mechanical: the
+ * corner flags the stencil builder reads (`mask.ids`) are written here and nowhere else, from the
+ * faces, so no second copy of the selection can drift out of step with the first. Every edit — a
+ * panel, a click, a box, an invert, an undo — ends here.
+ */
+function syncTint() {
+  if (!mask || !cleanup.selection) return 0;
+  tintScratch = paintedFromFaces(cleanup.selection, tintScratch);
+  const corners = mask.setSelection(tintScratch);
+  mask.flush();
+  return corners;
+}
+
+/** What every selection edit does afterwards: show it, count it, and say what it means. */
+function afterSelection(changed) {
+  syncTint();
+  renderShellList();
+  updateStats();
+  renderModelPickHint();
+  updateHud();
+  return changed;
+}
+
+function selectedFaces() {
   return cleanup.selected ? countFaces(cleanup.selected) : 0;
 }
 
@@ -1143,14 +800,14 @@ async function ensureShells() {
     cleanup.shellsPending = false;
   }
   renderShellList();
-  updateCleanupStats();
+  updateStats();
   return cleanup.shells;
 }
 
 /** Says how many models the file holds, for the panel's own button. */
 function reportShells(shells) {
   renderShellList();
-  updateCleanupStats();
+  updateStats();
   if (!shells) {
     setStatus('Load a model first — there is nothing to count.');
     return;
@@ -1168,11 +825,11 @@ function reportShells(shells) {
   setStatus(
     `This file holds ${fmt(shells.shellCount)} separate models: the largest is ${fmt(biggest)} faces ` +
       `(${((biggest / shells.faceCount) * 100).toFixed(0)}% of the file), the rest have ${rest.join(', ')} faces. ` +
-      'The bed sits under the lowest point of any of them, so pick the models you do not want and “Remove picked”.',
+      'The bed sits under the lowest point of any of them, so select the models you do not want and “Remove selected”.',
   );
 }
 
-function isShellPicked(shell) {
+function isShellSelected(shell) {
   const shells = cleanup.shells;
   if (!shells || !cleanup.selected) return false;
   for (let t = 0; t < shells.faceCount; t += 1) {
@@ -1202,7 +859,7 @@ function renderShellList() {
     const btn = document.createElement('button');
     btn.className = 'candidate';
     const left = document.createElement('b');
-    left.textContent = `${isShellPicked(s) ? '\u2713 ' : ''}Model ${s + 1}`;
+    left.textContent = `${isShellSelected(s) ? '\u2713 ' : ''}Model ${s + 1}`;
     const right = document.createElement('small');
     right.textContent =
       `${fmt(faces)} faces (${((faces / shells.faceCount) * 100).toFixed(1)}% of the file) · ` +
@@ -1215,97 +872,6 @@ function renderShellList() {
   box.hidden = false;
 }
 
-function updateCleanupStats() {
-  const node = el('cleanupStats');
-  if (!node) return;
-  if (!cleanup.soup) {
-    node.textContent = 'Load a model to see the models inside the file.';
-    return;
-  }
-  const shells = cleanup.shells;
-  const removed = removedFaces();
-  node.textContent =
-    `${shells ? `${fmt(shells.shellCount)} model${shells.shellCount === 1 ? '' : 's'} in the file · ` : ''}` +
-    `${fmt(faceCountInHand())} faces in hand · ${fmt(pickedFaces())} face${pickedFaces() === 1 ? '' : 's'} picked` +
-    (removed ? ` · ${fmt(removed)} removed (Restore puts them back)` : '');
-  const removeBtn = el('removeFacesBtn');
-  if (removeBtn) {
-    removeBtn.disabled = pickedFaces() === 0;
-    removeBtn.textContent = 'Remove picked';
-  }
-  const restoreBtn = el('restoreFacesBtn');
-  if (restoreBtn) restoreBtn.disabled = removed === 0;
-  const paintBtn = el('paintPickedBtn');
-  if (paintBtn) paintBtn.disabled = pickedFaces() === 0;
-}
-
-/**
- * Paints the picked faces with the current feature, as one undo step.
- *
- * A pick is how this app says "these triangles" precisely — a spur, a ring that came out wrong,
- * the window you want stencilled — and a stencil is built from *paint*. This is the bridge between
- * the two, so turning a selected region into a window is a click instead of painting over it by
- * hand and hoping the brush covered it. The corners come from `pickedCorners` in the mask's own
- * face order, which is the order the brush, the region fill and every export use.
- */
-function paintPickedFaces() {
-  if (!mask || !cleanup.selected) return;
-  const picked = pickedFaces();
-  if (!picked) {
-    setStatus('Nothing is picked — pick the faces to paint first: Select faces (Shift+S), then click one or drag a box over them.');
-    return;
-  }
-  const corners = pickedCorners(cleanup.selected);
-  const id = state.currentFeatureId;
-  const name = featureById(id)?.name || 'feature';
-  mask.beginStroke();
-  const changed = mask.paintIndices(corners, id);
-  const recorded = mask.endStroke();
-  mask.flush();
-  updateStats();
-  updateUndoButtons();
-  setStatus(
-    `Painted “${name}” on ${fmt(changed)} of the ${fmt(corners.length)} corners of ` +
-      `${fmt(picked)} picked face${picked === 1 ? '' : 's'} — one undo step. “Build stencil” now ` +
-      `has a window to build.` +
-      (recorded ? '' : ' Every one of those corners already had that paint.'),
-  );
-}
-
-/**
- * The highlights live in `js/highlight.js`, which takes the group to draw into as an argument — so
- * the whole path (draw, replace, clear) runs under Node in `test/select.test.mjs` instead of only
- * in a browser. That matters: the first version of this code was reached for `viewer.modelGroup`
- * directly and took its colours as a destructured third argument, and the clearing call passed only
- * two — which threw on the first model load of every session and left the loading overlay on
- * "Preparing mask layer…" for ever. Nothing in the suite could see it, because nothing ran the
- * code. Now something does.
- */
-/**
- * The picked faces, in yellow. Empty or too big to draw: nothing, and the panel says which.
- *
- * Drawn whatever tool is in hand, which is the point of it: a pick is a selection that survives
- * switching tools (it is what **Remove picked** and **Paint picked faces** act on), so hiding its
- * tint merely because the brush is up made a pick that was still there look like it had been lost
- * — "pick some faces, switch to another tool, and the yellow faces disappear until you switch
- * back".
- */
-function updatePickHighlight() {
-  const faces = mask && pickedFaces() ? cleanup.selected : null;
-  cleanup.outline = faces
-    ? drawHighlight(viewer.modelGroup, mask.position.array, cleanup.outline, faces, {
-        color: 0xffd24d,
-        fillOpacity: 0.5,
-        lineOpacity: 0.95,
-        order: 2,
-      })
-    : clearHighlight(viewer.modelGroup, cleanup.outline);
-}
-
-function clearPickHighlight() {
-  cleanup.outline = clearHighlight(viewer.modelGroup, cleanup.outline);
-}
-
 /**
  * Highlights what is under the cursor before the click: the model it belongs to, or the single
  * face. A file with one model has nothing to choose between, so nothing is highlighted there and
@@ -1313,7 +879,7 @@ function clearPickHighlight() {
  * that means nothing.
  */
 function updateHoverFace(faceIndex) {
-  if (!mask || state.tool !== 'select' || faceIndex == null || faceIndex < 0 || faceIndex >= faceCountInHand()) {
+  if (!mask || faceIndex == null || faceIndex < 0 || faceIndex >= faceCountInHand()) {
     clearHoverFace();
     return;
   }
@@ -1346,62 +912,58 @@ function pickShell(shell, { add = false, remove = false } = {}) {
   if (!shells || shell < 0 || shell >= shells.shellCount) return 0;
   // A plain click toggles — "select all, then take the few off one by one" is the whole point —
   // while Shift and Alt say pick and unpick outright, for a row of clicks that must not flip.
-  const on = remove ? false : add ? true : !isShellPicked(shell);
+  const on = remove ? false : add ? true : !isShellSelected(shell);
   let changed = 0;
   for (let t = 0; t < shells.faceCount; t += 1) {
     if (shells.faceShell[t] !== shell) continue;
     if (cleanup.selected[t] === (on ? 1 : 0)) continue;
-    cleanup.selected[t] = on ? 1 : 0;
     changed += 1;
   }
-  afterPickedFaces(changed);
+  if (!changed) return 0;
+  history.remember(cleanup.selection);
+  for (let t = 0; t < shells.faceCount; t += 1) {
+    if (shells.faceShell[t] === shell) cleanup.selected[t] = on ? 1 : 0;
+  }
+  afterSelection(changed);
   setStatus(
-    `${on ? 'Picked' : 'Unpicked'} Model ${shell + 1} — ${fmt(changed)} faces (${fmt(shells.shellFaces[shell])} in the model). ` +
-      `${fmt(pickedFaces())} picked in all; “Remove picked” takes them out of the model.`,
+    `${on ? 'Selected' : 'Unselected'} Model ${shell + 1} — ${fmt(changed)} faces (${fmt(shells.shellFaces[shell])} in the model). ` +
+      `${fmt(selectedFaces())} selected in all; “Remove selected” takes them out of the model.`,
   );
   return changed;
 }
 
 /** Picks or unpicks a single face — one triangle of the file's own mesh. */
 function pickFace(faceIndex, { add = false, remove = false } = {}) {
-  if (!mask || !cleanup.selected || faceIndex == null || faceIndex < 0 || faceIndex >= cleanup.selected.length) {
+  if (!mask || !cleanup.selection || faceIndex == null || faceIndex < 0 || faceIndex >= cleanup.selected.length) {
     return 0;
   }
   const on = remove ? false : add ? true : !cleanup.selected[faceIndex];
+  if (cleanup.selected[faceIndex] === (on ? 1 : 0)) return 0;
+  history.remember(cleanup.selection);
   cleanup.selected[faceIndex] = on ? 1 : 0;
-  afterPickedFaces(1);
+  afterSelection(1);
   setStatus(
-    `${on ? 'Picked' : 'Unpicked'} face ${fmt(faceIndex)} of ${fmt(cleanup.selected.length)} — ` +
-      `${fmt(pickedFaces())} picked in all. Shift-click adds, Alt-click takes one off, “Select all” picks the lot.`,
+    `${on ? 'Selected' : 'Unselected'} face ${fmt(faceIndex)} of ${fmt(cleanup.selected.length)} — ` +
+      `${fmt(selectedFaces())} selected in all. Shift-click adds, Alt-click takes one off, “Select all” takes the lot.`,
   );
   return 1;
-}
-
-function afterPickedFaces(changed) {
-  updatePickHighlight();
-  renderShellList();
-  updateCleanupStats();
-  renderModelPickHint();
-  return changed;
 }
 
 /** What the status bar says about the pick while the Select tool is up. */
 function renderModelPickHint() {
   const node = el('selectHint');
   if (!node) return;
-  const picked = pickedFaces();
+  const picked = selectedFaces();
   const scope = cleanup.scope === 'models' ? 'whole models' : 'single faces';
   const shells = cleanup.shells;
   const oneModel = cleanup.scope === 'models' && shells && shells.shellCount === 1;
   node.textContent =
-    `Picking ${scope}: ${fmt(picked)} face${picked === 1 ? '' : 's'} picked of ${fmt(faceCountInHand())} ` +
-    (picked > HIGHLIGHT_FACE_LIMIT
-      ? '— too many to tint in the viewport, so the count is the whole answer. '
-      : '— the picked faces are tinted yellow, the one under the cursor white. ') +
+    `Selecting ${scope}: ${fmt(picked)} face${picked === 1 ? '' : 's'} selected of ${fmt(faceCountInHand())} ` +
+    '— the selected faces are tinted amber, the one under the cursor outlined white. ' +
     (oneModel
-      ? 'This file holds one model, so a click here picks the whole file: press “Select faces” (or Shift+S) to take single triangles out instead.'
+      ? 'This file holds one model, so a click here selects the whole file: press “Select faces” (or Shift+S) to take single triangles instead.'
       : cleanup.scope === 'models'
-        ? 'Click a model in the viewport or a row in the list; Alt-click unpicks one.'
+        ? 'Click a model in the viewport or a row in the list; Alt-click takes one off.'
         : 'Click a face; Shift-click adds, Alt-click takes one off.');
 }
 
@@ -1418,11 +980,10 @@ async function selectClickAt(client, { add = false, remove = false } = {}) {
   const hit = viewer.pick(client.x, client.y);
   if (!hit || hit.faceIndex == null) {
     if (!add && !remove) {
-      cleanup.selected.fill(0);
-      afterPickedFaces(0);
-      setStatus('Nothing under the cursor — the pick was cleared.');
+      selectNoFaces();
+      setStatus('Nothing under the cursor — the selection was cleared.');
     } else {
-      setStatus('Click on the model to pick it.');
+      setStatus('Click on the model to select it.');
     }
     return;
   }
@@ -1437,38 +998,39 @@ async function selectClickAt(client, { add = false, remove = false } = {}) {
   if (shells.shellCount === 1) {
     setStatus(
       'This file holds one model, so picking it is the whole file — “Select all” does the same. ' +
-        'Switch the pick to single faces to take a face out instead.',
+        'Switch to “Select faces” to take a single triangle instead.',
     );
   }
   pickShell(shell, { add, remove });
 }
 
 function selectAllFaces() {
-  if (!mask || !cleanup.selected) return;
-  cleanup.selected.fill(1);
-  afterPickedFaces(cleanup.selected.length);
+  if (!mask || !cleanup.selection) return;
+  if (selectedFaces() === cleanup.selection.faces.length) return;
+  history.remember(cleanup.selection);
+  const n = setAll(cleanup.selection, true);
+  afterSelection(n);
   setStatus(
-    `Picked all ${fmt(cleanup.selected.length)} faces. Click a model (or a face) to take it off the pick, ` +
-      'or “Invert pick” to swap what is picked for what is not.',
+    `Selected all ${fmt(n)} faces. Click a face to take it off the selection, or “Invert selection” ` +
+      'to swap what is selected for what is not.',
   );
 }
 
 function selectNoFaces() {
-  if (!mask || !cleanup.selected) return;
-  cleanup.selected.fill(0);
-  afterPickedFaces(0);
-  setStatus('Nothing picked.');
+  if (!mask || !cleanup.selection) return;
+  if (!selectedFaces()) return;
+  history.remember(cleanup.selection);
+  setAll(cleanup.selection, false);
+  afterSelection(0);
+  setStatus('Nothing selected.');
 }
 
 function invertPickedFaces() {
-  if (!mask || !cleanup.selected) return;
-  let n = 0;
-  for (let t = 0; t < cleanup.selected.length; t += 1) {
-    cleanup.selected[t] = cleanup.selected[t] ? 0 : 1;
-    if (cleanup.selected[t]) n += 1;
-  }
-  afterPickedFaces(n);
-  setStatus(`Pick inverted — ${fmt(n)} of ${fmt(cleanup.selected.length)} faces picked.`);
+  if (!mask || !cleanup.selection) return;
+  history.remember(cleanup.selection);
+  const n = invertSelection(cleanup.selection);
+  afterSelection(n);
+  setStatus(`Selection inverted — ${fmt(n)} of ${fmt(cleanup.selection.faces.length)} faces selected.`);
 }
 
 function setSelectScope(scope) {
@@ -1478,7 +1040,7 @@ function setSelectScope(scope) {
   if (cleanup.scope === 'models' && mask && cleanup.soup) void ensureShells();
   renderShellList();
   renderModelPickHint();
-  updateCleanupStats();
+  updateStats();
   if (state.tool === 'select' && mask) {
     setStatus(
       cleanup.scope === 'models'
@@ -1493,24 +1055,20 @@ function setSelectScope(scope) {
 /**
  * Takes the picked faces out of the model.
  *
- * Rebuilt from the file's own soup with a corner map, so the paint stays where it was painted and
- * the mask's undo history keeps working — the vertices that survived are the same vertices, only
- * renumbered. The geometry goes back through `viewer.setGeometry`, which re-measures the model
- * and re-places the bed: this is what puts a model that was standing on top of a stray one back
- * on the plate.
+ * Rebuilt from the file's own soup with a face map, so the selection and its undo history survive
+ * the cut, renumbered — the faces that stayed selected are still selected. The geometry goes back
+ * through `viewer.setGeometry`, which re-measures the model and re-places the bed: this is what
+ * puts a model that was standing on top of a stray one back on the plate.
  */
 async function rebuildModelFromSoup({ what, faces, restoring = false } = {}) {
   const soup = cleanup.soup;
-  setLoading(true, restoring ? 'Putting the model back…' : 'Rebuilding the model without the picked faces…');
-  await nextPaint();
+  setLoading(true, restoring ? 'Putting the model back…' : 'Rebuilding the model without the selected faces…');
+  await nextFrame();
 
   const keep = new Uint8Array(soup.faceCount);
   for (let f = 0; f < soup.faceCount; f += 1) keep[f] = cleanup.removed[f] ? 0 : 1;
 
-  const oldIds = mask.ids;
-  const oldHistory = mask.history;
-  const oldRedo = mask.redoStack;
-  const cut = filterSoup({ positions: soup.positions, normals: soup.normals, ids: oldIds }, keep);
+  const cut = filterSoup({ positions: soup.positions, normals: soup.normals }, keep);
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(cut.positions, 3));
@@ -1518,12 +1076,14 @@ async function rebuildModelFromSoup({ what, faces, restoring = false } = {}) {
   geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   const overlayGeometry = geometry.clone();
-  mask = new MaskLayer(overlayGeometry, state.features);
-  mask.ids.set(cut.ids);
+  mask = new SelectionTint(overlayGeometry);
   overlayGeometry.setAttribute('color', new THREE.BufferAttribute(mask.colors, 4));
-  mask.refreshColors();
-  mask.history = remapHistory(oldHistory, cut.cornerMap, mask.vertexCount);
-  mask.redoStack = remapHistory(oldRedo, cut.cornerMap, mask.vertexCount);
+  tintScratch = null;
+  // The selection survives the cut, renumbered: what was selected and stayed selected is still
+  // selected, which is what makes "take the stray model out, then stencil what is left" two moves
+  // rather than three. The history is renumbered with it, for the same reason.
+  cleanup.selection = remapSelection(cleanup.selection, cut.faceMap, cut.faces);
+  history.remap(cut.faceMap, cut.faces);
 
   viewer.setGeometry(geometry, {
     upAxis: state.upAxis,
@@ -1537,15 +1097,14 @@ async function rebuildModelFromSoup({ what, faces, restoring = false } = {}) {
   cleanup.shells = null;
   cleanup.shellsKey = '';
   resetStencil();
-  cleanup.selected = new Uint8Array(cut.faces);
-  clearPickHighlight();
   clearHoverFace();
   applyDisplayState();
+  syncTint();
+  renderShellList();
   updateStats();
   updateHud();
-  renderShellList();
-  updateCleanupStats();
   renderModelPickHint();
+  updateUndoButtons();
   setLoading(false);
 
   const size = viewer.boundingBox.getSize(new THREE.Vector3());
@@ -1584,24 +1143,26 @@ async function applyRemoval(origFaceList, { what = 'Removed' } = {}) {
   return true;
 }
 
-/** Removes every picked face. Two clicks: a confirm dialog is blocked in some embedded views. */
+/** Removes every selected face. Two clicks: a confirm dialog is blocked in some embedded views. */
 function removeClicked() {
   if (!requireModel()) return;
-  const picked = pickedFaces();
+  const picked = selectedFaces();
   if (!picked) {
-    setStatus('Nothing picked — click a model (or a face), or press “Select all”, then remove.');
+    setStatus('Nothing selected — click a model (or a face), or press “Select all”, then remove.');
     return;
   }
   const now = performance.now();
+  // Two clicks rather than window.confirm: a confirm dialog is silently blocked in some embedded
+  // browser views, which made the button look broken instead of asking.
   if (now - cleanup.armedAt > 4000) {
     cleanup.armedAt = now;
     el('removeFacesBtn').textContent = 'Click again to remove';
     const shells = cleanup.shells;
     const models = shells && cleanup.scope === 'models' ? shells.shellCount : 0;
     setStatus(
-      `Click “Remove picked” again within 4 seconds to take ${fmt(picked)} faces out of the model` +
+      `Click “Remove selected” again within 4 seconds to take ${fmt(picked)} faces out of the model` +
         (models ? ` (the file holds ${fmt(models)} models)` : '') +
-        '. The paint stays, and “Restore removed” puts the geometry back.',
+        '. The selection keeps every face that stays, and “Restore removed” puts the geometry back.',
     );
     return;
   }
@@ -1656,16 +1217,17 @@ function resetStencil() {
   updateStencilStats();
 }
 
-/** Every painted vertex, whichever feature it belongs to. The window is all of them. */
-function paintedMask() {
-  const painted = new Uint8Array(mask.vertexCount);
+/**
+ * The selection as the stencil build wants it: a flag per corner, plus how many are set.
+ *
+ * The corners come straight from the selected triangles, so there is no step where the selection
+ * is copied into something else that could disagree with it — and the count is the same number the
+ * panel shows.
+ */
+function selectedMask() {
+  const painted = paintedFromFaces(cleanup.selection);
   let count = 0;
-  for (let i = 0; i < painted.length; i += 1) {
-    if (mask.ids[i] !== 0) {
-      painted[i] = 1;
-      count += 1;
-    }
-  }
+  for (let i = 0; i < painted.length; i += 1) if (painted[i]) count += 1;
   return { painted, count };
 }
 
@@ -1695,7 +1257,7 @@ function stencilParamsFromInputs() {
 async function ensureTopology() {
   if (stencil.topology && stencil.topologyFor === modelName) return stencil.topology;
   setLoading(true, 'Welding the model into a shared-vertex surface…');
-  await nextPaint();
+  await nextFrame();
   const t0 = performance.now();
   stencil.topology = buildTopology(mask.position.array, mask.vertexCount);
   stencil.topologyFor = modelName;
@@ -1747,7 +1309,7 @@ async function ensureParts({ force = false } = {}) {
   try {
     const topology = await ensureTopology();
     setLoading(true, `Cutting the model into parts (seams at ${angle}°)…`);
-    await nextPaint();
+    await nextFrame();
     const t0 = performance.now();
     parts.data = buildParts(topology, { seamAngleDeg: angle });
     parts.key = key;
@@ -1816,35 +1378,43 @@ function clearSeams() {
 }
 
 /**
- * Paints one seam-bounded part. A plain click replaces the current feature's paint with the
- * part (the lasso "select this"), Shift adds another part, Alt removes one.
+ * Selects one seam-bounded part: the whole panel, every triangle of it, in the one selection.
+ *
+ * A plain click replaces the selection with the panel, Shift adds another panel to it, Alt takes
+ * one off — the same three modifiers Select faces uses on single triangles, so refining a panel
+ * afterwards is the same gesture at a finer scale rather than a different convention.
  *
  * `near` is where the click landed, in model space; it is only used to rank the other panels
  * that meet this one, which the panel offers as alternatives (see `renderPartCandidates`).
  */
-function paintPartAt(faceIndex, { add = false, remove = false, near = null } = {}) {
+function selectPartAt(faceIndex, { add = false, remove = false, near = null } = {}) {
   const d = parts.data;
   const topology = stencil.topology;
   if (!d || !topology || faceIndex == null || faceIndex < 0 || faceIndex >= d.facePart.length) return 0;
   return applyPartSelection(d.facePart[faceIndex], { add, remove, near });
 }
 
+/**
+ * A seam panel, written into the selection.
+ *
+ * The panel arrives as a list of soup vertices (that is how the segmentation carries it) and the
+ * selection is a set of faces, so it is mapped across by corner — three corners per triangle, so
+ * the panel's faces are exactly the triangles those corners belong to. This is the half of the
+ * arrangement that makes Part and Select faces the same statement: a click here and a box drag
+ * there write the same array, which is why either can build on what the other selected.
+ */
 function applyPartSelection(partId, { add = false, remove = false, near = null } = {}) {
   const d = parts.data;
   const topology = stencil.topology;
-  if (!d || !topology || !(partId >= 0)) return 0;
+  if (!d || !topology || !(partId >= 0) || !cleanup.selection) return 0;
   const indices = partSoupVertices(d, partId, partScratch);
-  const featureId = remove ? 0 : state.currentFeatureId;
-  mask.beginStroke();
-  if (!add && !remove) mask.paintIndices(mask.verticesOf(state.currentFeatureId, paintScratch), 0);
-  const changed = mask.paintIndices(indices, featureId);
-  const recorded = mask.endStroke();
-  mask.flush();
-  updateStats();
+  const wanted = facesFromVertices(indices, cleanup.selection.faces.length, partFacesScratch);
+  partFacesScratch = wanted;
+  const changed = applyPickToSelection(wanted, { add, remove });
+  afterSelection(changed);
 
   const faces = d.partSizes[partId];
   const share = faces / topology.faceCount;
-  const name = featureById(state.currentFeatureId)?.name || 'feature';
   const verb = remove ? 'Removed' : add ? 'Added' : 'Selected';
   const { found, radius } = renderPartCandidates(partId, near);
   // The detail the click was most likely aimed at: a panel near the click that is a small
@@ -1858,7 +1428,8 @@ function applyPartSelection(partId, { add = false, remove = false, near = null }
   const cutHint = finer ? ` or take the ${finer.label} cut (${finer.angle}°)` : '';
   setStatus(
     `${verb} part ${partId + 1} of ${d.partCount} — ${fmt(faces)} faces (${(share * 100).toFixed(1)}% of the mesh), ` +
-      `${fmt(changed)} vertices painted${remove ? '' : ` as “${name}”`} (seams at ${d.seamAngleDeg}°).` +
+      `${fmt(changed)} face${changed === 1 ? '' : 's'} ${remove ? 'taken off' : 'added to'} the selection ` +
+      `(${fmt(selectedFaces())} of ${fmt(cleanup.selection.faces.length)} selected in all, seams at ${d.seamAngleDeg}°).` +
       (target
         ? ` That is ${(share * 100).toFixed(0)}% of the model — the detail you aimed at is probably Part ${target.part + 1} ` +
           `(${fmt(target.faces)} faces, ${(target.share * 100).toFixed(2)}% of the mesh, ${target.distance.toFixed(1)} away): ` +
@@ -1872,6 +1443,9 @@ function applyPartSelection(partId, { add = false, remove = false, near = null }
       (add ? ' Shift-click another part to add it.' : ''),
   );
   if (share > 0.6) {
+    // A click that took more than half the model is almost never what was meant, and the panel
+    // says so where the slider is, next to the way out.
+
     el('partInfo').textContent =
       `Part ${partId + 1} is ${(share * 100).toFixed(0)}% of the model — ` +
       (finer
@@ -1880,7 +1454,7 @@ function applyPartSelection(partId, { add = false, remove = false, near = null }
   } else {
     reportParts();
   }
-  return recorded ? changed : 0;
+  return changed;
 }
 
 /**
@@ -1908,8 +1482,8 @@ function renderPartCandidates(partId, near) {
     box.hidden = true;
     return { found: [], radius: 0 };
   }
-  // How far to look: a few mesh steps, never less than the brush the user is used to.
-  const radius = Math.max(state.brushRadius, topology.meanEdgeLength * 4);
+  // How far to look: a few mesh steps, never less than the pick radius the tool is used with.
+  const radius = topology.meanEdgeLength * 4;
   const found = partsNearPoint(d, topology, [near.x, near.y, near.z], radius, { excludePart: partId, limit: 6 });
   if (!found.length) {
     box.hidden = true;
@@ -1928,7 +1502,7 @@ function renderPartCandidates(partId, near) {
     right.textContent =
       `${fmt(n.faces)} faces (${(n.share * 100).toFixed(2)}% of the mesh) · ${n.distance.toFixed(1)} away`;
     btn.append(left, right);
-    btn.title = `Select this panel (${fmt(n.faces)} faces) with the current feature`;
+    btn.title = `Select this panel (${fmt(n.faces)} faces)`;
     btn.addEventListener('click', () => applyPartSelection(n.part, { near }));
     list.appendChild(btn);
   }
@@ -1945,7 +1519,7 @@ function renderPartCandidates(partId, near) {
 }
 
 let partScratch = [];
-let paintScratch = [];
+let partFacesScratch = null;
 
 async function partClick(e) {
   if (!mask) return;
@@ -1953,12 +1527,12 @@ async function partClick(e) {
   if (!d) return;
   // faceIndex is the hit triangle in the file's own face order — the order the panels were cut
   // in. The BVH's own index counts in its internal order instead (see viewer.sourceTriangleIndex),
-  // and feeding that to facePart paints an unrelated panel, which reads as the tool ignoring
+  // and feeding that to facePart selects an unrelated panel, which reads as the tool ignoring
   // your click.
   const hit = viewer.pick(e.clientX, e.clientY);
   if (!hit || hit.faceIndex == null) return;
   updateSeams();
-  paintPartAt(hit.faceIndex, {
+  selectPartAt(hit.faceIndex, {
     add: e.shiftKey,
     remove: e.altKey || e.ctrlKey || e.metaKey,
     near: hit.localPoint,
@@ -1967,19 +1541,13 @@ async function partClick(e) {
 
 async function buildStencilPart() {
   if (!requireModel()) return null;
-  const { painted, count } = paintedMask();
+  const { painted, count } = selectedMask();
   if (!count) {
-    // A picked face is selected, not painted: the stencil is built from paint, and a pick is
-    // geometry. That distinction is invisible from the viewport — a yellow face looks like a
-    // marked one — so when there is a pick, the refusal says how to turn it into a window
-    // instead of leaving the button apparently doing nothing.
-    const picked = pickedFaces();
-    const name = featureById(state.currentFeatureId)?.name || 'feature';
+    // Nothing selected is a refusal worth wording: the button sits at the bottom of a long panel
+    // and "Build stencil does nothing" is the report this app has had more than any other.
     setStatus(
-      picked
-        ? `Nothing painted yet — the stencil is built from paint, and ${fmt(picked)} picked ` +
-            `face${picked === 1 ? '' : 's'} are only selected. “Paint picked faces” paints them as “${name}”, then build.`
-        : 'Nothing painted yet — paint the area the mask should expose, then build.',
+      'Nothing selected yet — the stencil is built from the selection: click a panel with Part ' +
+        '(P), or pick triangles with Select faces (Shift+S), then build.',
     );
     return null;
   }
@@ -1990,7 +1558,7 @@ async function buildStencilPart() {
 
   const params = stencilParamsFromInputs();
   setLoading(true, `Building the mask around ${fmt(count)} painted vertices…`);
-  await nextPaint();
+  await nextFrame();
   const tBuild = performance.now();
   const res = buildStencil({ topology: stencil.topology, painted, params });
   stencil.paintedCount = count;
@@ -2060,7 +1628,7 @@ function discardStencil() {
   el('stencilClearBtn').disabled = true;
   updateStencilStats();
   setStatus(
-    `Stencil discarded${triangles ? ` (${fmt(triangles)} triangles)` : ''}. The mask is untouched — ` +
+    `Stencil discarded${triangles ? ` (${fmt(triangles)} triangles)` : ''}. The selection is untouched — ` +
       'press “Build stencil” to make a new one.',
   );
 }
@@ -2090,7 +1658,7 @@ function updateStencilStats(paintedNow = null) {
   for (const w of res.warnings) lines.push(`⚠ ${w}`);
   const now = paintedNow === null ? (mask ? mask.stats().painted : null) : paintedNow;
   if (now !== null && now !== stencil.paintedCount) {
-    lines.push('⚠ the mask has been repainted since this was built — build again to match it, or “Discard stencil” to throw this one away.');
+    lines.push('⚠ the selection has changed since this was built — build again to match it, or “Discard stencil” to throw this one away.');
   }
   node.textContent = lines.join('\n');
 }
@@ -2170,13 +1738,13 @@ async function exportStencilSTL() {
   try {
     if (!requireModel()) return;
     if (!mask.stats().painted) {
-      setStatus('Nothing painted yet — paint the windows, build the stencil, then export.');
+      setStatus('Nothing selected yet — select the windows, build the stencil, then export.');
       return;
     }
     let res = stencil.result;
     let rebuilt = false;
     if (!res || stencilOutOfDate()) {
-      setStatus('The mask has changed since the last build — building again before exporting…');
+      setStatus('The selection has changed since the last build — building again before exporting…');
       res = await rebuildStencil();
       if (!res) return;
       if (!res.ok) {
@@ -2213,7 +1781,7 @@ async function exportStencilSTL() {
               : ` — sat on the bed: moved ${lowest > 0 ? 'down' : 'up'} ${Math.abs(lowest).toFixed(2)} mm so the part's lowest Z is 0 (X and Y untouched).`
           : ` — left in the model's own coordinates (lowest Z ${lowest.toFixed(2)}` +
             `${s.components === 1 ? '' : `, its ${s.components} pieces wherever the model has them`}), so it lines up with the figure in the slicer.`) +
-        (rebuilt ? ' Rebuilt from the current mask first, because the paint had changed since the last build.' : ''),
+        (rebuilt ? ' Rebuilt from the current selection first, because the selection had changed since the last build.' : ''),
     );
   } catch (err) {
     setLoading(false);
@@ -2264,19 +1832,24 @@ function applyStencilSettings(s) {
 }
 
 /**
- * Saves the painting as a session file: the windows (the painted vertices), the palette and the
- * build settings, so it can be opened again later on the same model and carried on from there.
+/**
+ * Saves the selection as a session file: the window (the corners inside it) and the build
+ * settings, so it can be opened again later on the same model and carried on from there.
+ *
+ * The file keeps the format's `features` array, with the one id this app now has. That is not a
+ * palette come back from the dead — it is what makes a mask saved by the previous, painting
+ * version of the app still open here.
  */
 function exportMaskJSON() {
   if (!requireModel()) return;
   const pairs = mask.paintedPairs();
   if (!pairs.length) {
-    setStatus('Nothing painted yet — paint a feature first.');
+    setStatus('Nothing selected yet — select the area the stencil should expose first.');
     return;
   }
   const data = io.buildMaskJSON({
     mask,
-    features: state.features,
+    features: [{ id: SELECTION_ID, name: 'Selection', color: SELECTION_COLOR }],
     modelName,
     pairs,
     stencil: stencilSettings(),
@@ -2284,8 +1857,8 @@ function exportMaskJSON() {
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   io.downloadBlob(`${io.safeBaseName(modelName)}-mask.json`, blob);
   setStatus(
-    `Saved mask: ${fmt(pairs.length / 2)} painted vertices, ${fmt(data.features.length)} features ` +
-      `(${(blob.size / 1048576).toFixed(1)} MB). “Open mask (JSON)” brings it back to carry on.`,
+    `Saved selection: ${fmt(pairs.length / 2)} corners inside the window ` +
+      `(${(blob.size / 1048576).toFixed(1)} MB). “Open selection (JSON)” brings it back to carry on.`,
   );
 }
 
@@ -2293,75 +1866,52 @@ function exportPLY() {
   if (!requireModel()) return;
   const { blob, triangles, vertices } = io.buildPLY(mask);
   if (!triangles) {
-    setStatus('Nothing painted yet — paint a feature first.');
+    setStatus('Nothing selected yet — select the area first.');
     return;
   }
   io.downloadBlob(`${io.safeBaseName(modelName)}-mask.ply`, blob);
-  setStatus(`Exported painted shell: ${fmt(triangles)} triangles, ${fmt(vertices)} vertices (${(blob.size / 1048576).toFixed(1)} MB).`);
+  setStatus(`Exported the selected shell: ${fmt(triangles)} triangles, ${fmt(vertices)} vertices (${(blob.size / 1048576).toFixed(1)} MB).`);
 }
 
+/**
+ * Opens a saved selection.
+ *
+ * The file carries a painted corner per entry, and a selection is a set of triangles, so the two
+ * meet by inclusion: every triangle that touches a saved corner is selected, and then the tint is
+ * derived from those faces as it is for any other selection. That is what lets a mask saved by the
+ * old palette version load as one selection instead of being refused, and it is also why a loaded
+ * window can come back a rim thicker than it was saved — the file is per corner, the selection is
+ * per triangle, and the larger of the two readings is the one that keeps a window whole.
+ */
 async function importMaskFile(file) {
   if (!requireModel()) return;
   try {
     const text = await file.text();
-    const { data, features, pairs, stencil: savedStencil } = io.parseMaskJSON(text);
+    const { data, pairs, stencil: savedStencil } = io.parseMaskJSON(text);
     if (data.vertexCount && data.vertexCount !== mask.vertexCount) {
       setStatus(
-        `Warning: mask was painted on ${fmt(data.vertexCount)} vertices but this model has ${fmt(mask.vertexCount)}.`,
+        `Warning: this selection was saved on ${fmt(data.vertexCount)} vertices but this model has ${fmt(mask.vertexCount)}.`,
       );
     }
-    const known = new Set(state.features.map((f) => f.id));
-    let added = 0;
-    for (const f of features) {
-      if (!known.has(f.id)) {
-        state.features.push(f);
-        known.add(f.id);
-        added += 1;
-      }
-    }
-    mask.setFeatures(state.features);
     mask.loadPairs(pairs);
-    mask.flush();
-    renderPalette();
-    updateStats();
-    // A loaded mask is not the mask the build in the panel was made from, whatever the counts
+    const painted = new Uint8Array(mask.vertexCount);
+    for (let i = 0; i < mask.vertexCount; i += 1) painted[i] = mask.ids[i] ? 1 : 0;
+    history.remember(cleanup.selection);
+    cleanup.selection = createSelection(mask.vertexCount / 3);
+    cleanup.selection.faces.set(facesFromPainted(painted, cleanup.selection.faces.length));
+    afterSelection(selectedFaces());
+    // A loaded selection is not the one the build in the panel was made from, whatever the counts
     // say, so the panel has to be told to compare them rather than left showing old numbers.
     updateStencilStats();
     const settings = applyStencilSettings(savedStencil);
     setStatus(
-      `Loaded mask: ${fmt(pairs.length / 2)} painted vertices${added ? `, ${added} new feature${added === 1 ? '' : 's'}` : ''}` +
-        `${settings ? ', build settings restored' : ''}, on “${featureById(state.currentFeatureId)?.name || 'feature'}”. ` +
-        'Shift-click more panels with the Part tool, then build again to see the windows.',
+      `Loaded the selection: ${fmt(pairs.length / 2)} corners inside the window, ` +
+        `${fmt(selectedFaces())} of ${fmt(cleanup.selection.faces.length)} faces selected` +
+        `${settings ? ', build settings restored' : ''}. Click a panel with Part to add to it, then “Build stencil”.`,
     );
   } catch (err) {
     setStatus(`Import failed: ${err.message}`);
   }
-}
-
-/**
- * Invert the mask: everything painted is released and everything not painted takes the current
- * feature. This is the escape hatch for "I meant the other thing" — a click can only select the
- * panel it lands on, and the complement is usually what the other thing is.
- */
-function invertPaint() {
-  if (!requireModel()) return;
-  const id = state.currentFeatureId;
-  if (!id || !featureById(id)) {
-    setStatus('Select a feature first — the inverted paint needs a colour to use.');
-    return;
-  }
-  const { cleared, painted } = mask.invert(id);
-  mask.flush();
-  updateStats();
-  if (!cleared && !painted) {
-    setStatus('Nothing to invert — the mask covers everything already; Ctrl+Z undoes an invert.');
-    return;
-  }
-  const name = featureById(id)?.name || '';
-  setStatus(
-    `Inverted the mask: ${fmt(painted)} vertices now painted as “${name}”, ${fmt(cleared)} released. ` +
-      'Ctrl+Z brings the previous mask back.',
-  );
 }
 
 /**
@@ -2380,7 +1930,7 @@ async function analyseWindows({ quiet = false } = {}) {
   if (!painted) {
     // Quiet when this is a refresh after an edit: the edit has a message of its own and the
     // caller has already said what happened.
-    if (!quiet) setStatus('Nothing painted yet — paint the area the mask should expose first.');
+    if (!quiet) setStatus('Nothing selected yet — select the area the mask should expose first.');
     return null;
   }
   const percent = Math.max(0, Math.min(100, Number(el('trimPercent').value) || 0));
@@ -2427,7 +1977,7 @@ function renderWindowList({ windows, topology: topo, painted }) {
     const info = document.createElement('small');
     info.textContent =
       `${fmt(w.vertices)} vertices · ${w.diagonal.toFixed(2)} units across ` +
-      `(${((w.diagonal / topo.diagonal) * 100).toFixed(1)}% of the model) · ${featureListText(w.features)}`;
+      `(${((w.diagonal / topo.diagonal) * 100).toFixed(1)}% of the model) · ${fmt(windowFaces(w))} faces`;
     const actions = document.createElement('span');
     actions.className = 'window-actions';
     const remove = document.createElement('button');
@@ -2467,11 +2017,17 @@ function renderWindowList({ windows, topology: topo, painted }) {
   box.hidden = false;
 }
 
-/** The features a window is painted with, as the palette names them. */
-function featureListText(features) {
-  return features
-    .map((f) => `${featureById(f.id)?.name || `feature ${f.id}`} ${fmt(f.vertices)}v`)
-    .join(' + ');
+/**
+ * The triangles a window covers.
+ *
+ * The island analysis reports the corners of the window (that is the shape a welded surface makes
+ * easy); a triangle is `floor(corner / 3)`, and the count is deduplicated because two corners of
+ * one triangle would otherwise count twice.
+ */
+function windowFaces(w) {
+  const seen = new Set();
+  for (const c of w.fileVertices) seen.add(Math.floor(c / 3));
+  return seen.size;
 }
 
 /**
@@ -2479,25 +2035,26 @@ function featureListText(features) {
  * from what is left.
  */
 async function releaseWindows(targets, what) {
-  const released = [];
-  for (const w of targets) released.push(...w.fileVertices);
-  if (!released.length) {
-    setStatus(`${what}: there was nothing painted left to release.`);
+  const corners = [];
+  for (const w of targets) corners.push(...w.fileVertices);
+  if (!corners.length || !cleanup.selection) {
+    setStatus(`${what}: there was nothing left to release.`);
     return;
   }
-  const before = mask.stats().painted;
-  mask.beginStroke();
-  const changed = mask.paintIndices(released, 0);
-  const recorded = mask.endStroke();
-  mask.flush();
-  updateStats();
+  const wanted = new Uint8Array(cleanup.selection.faces.length);
+  for (const c of corners) {
+    const t = Math.floor(c / 3);
+    if (t >= 0 && t < wanted.length) wanted[t] = 1;
+  }
+  const before = selectedFaces();
+  const changed = applyPickToSelection(wanted, { remove: true });
+  afterSelection(changed);
   updateStencilStats();
   setStatus(
-    `${what}: ${fmt(changed)} vertices released (${((changed / before) * 100).toFixed(1)}% of the mask), ` +
-      `${fmt(mask.stats().painted)} left. Ctrl+Z brings them back.` +
-      (stencil.result ? ' The built stencil is still in the viewport — build again to match the trimmed mask.' : ''),
+    `${what}: ${fmt(changed)} face${changed === 1 ? '' : 's'} unselected (of the ${fmt(before)} that were), ` +
+      `${fmt(selectedFaces())} selected in all. Ctrl+Z brings them back.` +
+      (stencil.result ? ' The built stencil is still in the viewport — build again to match the selection.' : ''),
   );
-  if (!recorded) setStatus(`${what}: nothing changed — those vertices were already released.`);
   await listWindows({ quiet: true });
 }
 
@@ -2532,8 +2089,8 @@ async function listWindows({ quiet = false } = {}) {
       `largest ${fmt(largest.vertices)} vertices, ${largest.diagonal.toFixed(2)} units across; smallest ` +
       `${fmt(smallest.vertices)}, ${smallest.diagonal.toFixed(2)} across. ` +
       (windows.length === 1
-        ? 'Everything painted is one window, so no size threshold can split it — Remove takes the whole of it ' +
-          'out, and the erase brush takes part of it back.'
+        ? 'Everything selected is one window, so no size threshold can split it — Remove takes the whole of it ' +
+          'out, and Select faces takes part of it back.'
         : `At under ${plan.threshold.toFixed(2)} units (${percent}% of the model's ` +
           `${topo.diagonal.toFixed(1)}-unit diagonal) Trim windows would release ${fmt(plan.doomedIslands)} of them ` +
           `(${fmt(plan.doomedVertices)} vertices).`) +
@@ -2550,8 +2107,8 @@ async function listWindows({ quiet = false } = {}) {
  * is untouched, and a built stencil is left in the viewport with the panel saying it is stale.
  *
  * A threshold can only ever say "smaller than this", so the refusal below names the two things
- * that can do the job when it cannot: the window list for a whole window, the erase brush for
- * part of one.
+ * that can do the job when it cannot: the window list for a whole window, Select faces for part of
+ * one.
  */
 async function trimWindows() {
   let got = null;
@@ -2570,7 +2127,7 @@ async function trimWindows() {
     setStatus(
       windows.length === 1
         ? `Nothing to trim: the whole mask is one painted window (${fmt(painted)} vertices), and a size ` +
-          'threshold can only release whole windows. “List windows” removes it, or the erase brush takes ' +
+          'threshold can only release whole windows. “List windows” removes it, or Select faces takes ' +
           'part of it back.'
         : `Nothing to trim under ${plan.threshold.toFixed(2)} units (${percent}% of the model's ` +
           `${topo.diagonal.toFixed(1)}-unit diagonal): ${fmt(windows.length)} windows, the smallest ` +
@@ -2579,22 +2136,24 @@ async function trimWindows() {
     );
     return;
   }
-  mask.beginStroke();
-  const changed = mask.paintIndices(plan.released, 0);
-  const recorded = mask.endStroke();
-  mask.flush();
-  updateStats();
+  const wanted = new Uint8Array(cleanup.selection.faces.length);
+  for (const c of plan.released) {
+    const t = Math.floor(c / 3);
+    if (t >= 0 && t < wanted.length) wanted[t] = 1;
+  }
+  const changed = applyPickToSelection(wanted, { remove: true });
+  afterSelection(changed);
   updateStencilStats();
   const kept = plan.islands - plan.doomedIslands;
   setStatus(
     `Trimmed ${fmt(plan.doomedIslands)} window${plural(plan.doomedIslands)} under ` +
-      `${plan.threshold.toFixed(2)} units (${percent}% of the model's size): ${fmt(changed)} vertices released, ` +
-      `${((changed / got.painted) * 100).toFixed(1)}% of the mask. ${fmt(kept)} window${plural(kept)} left, ` +
-      `the largest ${fmt(plan.largestVertices)} vertices. Ctrl+Z brings them back.` +
+      `${plan.threshold.toFixed(2)} units (${percent}% of the model's size): ${fmt(changed)} face${changed === 1 ? '' : 's'} unselected ` +
+      `(${((changed / Math.max(1, selectedFaces() + changed)) * 100).toFixed(1)}% of the selection). ` +
+      `${fmt(kept)} window${plural(kept)} left, the largest ${fmt(plan.largestVertices)} vertices. Ctrl+Z brings them back.` +
       (plan.sparedLargest ? ' The largest window is under the threshold too, so it was kept.' : '') +
-      (stencil.result ? ' The built stencil is still in the viewport — build again to match the trimmed mask.' : ''),
+      (stencil.result ? ' The built stencil is still in the viewport — build again to match the selection.' : ''),
   );
-  if (!recorded) setStatus('Nothing was released — the windows were already unpainted.');
+  if (!changed) setStatus('Nothing was dropped — those faces were already unselected.');
 }
 
 function screenshot() {
@@ -2614,8 +2173,8 @@ canvas.addEventListener('pointerdown', onPointerDown);
 canvas.addEventListener('pointermove', onPointerMove);
 canvas.addEventListener('pointerup', endStroke);
 canvas.addEventListener('pointercancel', endStroke);
-canvas.addEventListener('pointerleave', (e) => {
-  if (!stroke) {
+canvas.addEventListener('pointerleave', () => {
+  if (!selectDrag) {
     viewer.hideCursor();
     el('statusCursor').textContent = '';
   }
@@ -2631,11 +2190,6 @@ el('fileInput').addEventListener('change', async (e) => {
 
 el('loadExampleBtn').addEventListener('click', () => loadFromURL(DEFAULT_MODEL_URL));
 el('shotBtn').addEventListener('click', screenshot);
-el('addFeatureBtn').addEventListener('click', addFeature);
-el('featureName').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') addFeature();
-});
-
 for (const btn of document.querySelectorAll('.tool')) {
   btn.addEventListener('click', () => {
     setTool(btn.dataset.tool);
@@ -2648,16 +2202,6 @@ for (const btn of document.querySelectorAll('[data-view]')) {
   btn.addEventListener('click', () => viewer.setView(btn.dataset.view));
 }
 
-el('brushRadius').addEventListener('input', (e) => {
-  state.brushRadius = Number(e.target.value);
-  updateHud();
-});
-el('mirrorX').addEventListener('change', (e) => {
-  state.mirrorX = e.target.checked;
-});
-el('mirrorPlaneX').addEventListener('input', (e) => {
-  state.mirrorPlaneX = Number(e.target.value) || 0;
-});
 el('seamAngle').addEventListener('input', (e) => {
   state.seamAngle = Number(e.target.value);
   el('seamAngleVal').textContent = `${state.seamAngle}°`;
@@ -2681,9 +2225,6 @@ el('showSeams').addEventListener('change', async () => {
   } else {
     clearSeams();
   }
-});
-el('fillLimit').addEventListener('input', (e) => {
-  state.fillLimit = Math.max(1000, Number(e.target.value) || 200000);
 });
 
 el('overlayOpacity').addEventListener('input', (e) => {
@@ -2710,84 +2251,25 @@ el('upAxis').addEventListener('change', (e) => {
 });
 
 el('navigateBtn').addEventListener('click', () => setNavigate(!state.navigate));
+// Undo and redo walk the *selection*, not the tint: the tint is derived, so a history of tints
+// could be undone into a picture the selection no longer describes.
 el('undoBtn').addEventListener('click', () => {
-  if (mask?.undo()) {
-    mask.flush();
-    updateStats();
-    setStatus('Undo.');
-  }
+  if (!cleanup.selection || !history.undo(cleanup.selection)) return;
+  afterSelection(selectedFaces());
+  setStatus(`Undo — ${fmt(selectedFaces())} of ${fmt(cleanup.selection.faces.length)} faces selected.`);
 });
 el('redoBtn').addEventListener('click', () => {
-  if (mask?.redo()) {
-    mask.flush();
-    updateStats();
-    setStatus('Redo.');
-  }
+  if (!cleanup.selection || !history.redo(cleanup.selection)) return;
+  afterSelection(selectedFaces());
+  setStatus(`Redo — ${fmt(selectedFaces())} of ${fmt(cleanup.selection.faces.length)} faces selected.`);
 });
-el('clearFeatureBtn').addEventListener('click', () => {
-  if (!requireModel()) return;
-  const id = state.currentFeatureId;
-  const n = mask.stats().counts.get(id) || 0;
-  if (!n) {
-    setStatus(`Nothing painted for “${featureById(id)?.name || id}” — nothing to clear.`);
-    return;
-  }
-  mask.clearFeature(id);
-  mask.flush();
-  updateStats();
-  setStatus(`Cleared ${fmt(n)} vertices of “${featureById(id)?.name || id}”.`);
-});
-// Two clicks rather than window.confirm: a confirm dialog is silently blocked in some
-// embedded browser views, which made the button look broken instead of asking.
-let clearAllArmedAt = 0;
-el('clearAllBtn').addEventListener('click', () => {
-  if (!requireModel()) return;
-  if (!mask.stats().painted) {
-    setStatus('Nothing painted yet.');
-    return;
-  }
-  const now = performance.now();
-  if (now - clearAllArmedAt > 4000) {
-    clearAllArmedAt = now;
-    el('clearAllBtn').textContent = 'Click again to clear';
-    setStatus('Click “Clear all” again within 4 seconds to wipe the whole mask (Ctrl+Z undoes it).');
-    return;
-  }
-  clearAllArmedAt = 0;
-  el('clearAllBtn').textContent = 'Clear all';
-  const n = mask.stats().painted;
-  mask.clearAll();
-  mask.flush();
-  updateStats();
-  setStatus(
-    `Mask cleared (${fmt(n)} vertices). Ctrl+Z brings it back.` +
-      (stencil.result
-        ? ' The built stencil is still in the viewport — “Discard stencil” removes it, or paint and build again.'
-        : ''),
-  );
-});
-el('hideAllBtn').addEventListener('click', () => {
-  if (!requireModel()) return;
-  if (!mask.stats().painted) {
-    setStatus('Nothing painted yet.');
-    return;
-  }
-  const anyVisible = state.features.some((f) => !mask.isHidden(f.id));
-  for (const f of state.features) mask.setHidden(f.id, anyVisible);
-  mask.flush();
-  renderPalette();
-  setStatus(anyVisible ? 'All paint hidden.' : 'All paint shown.');
-});
-
 el('selectAllBtn').addEventListener('click', selectAllFaces);
 el('selectNoneBtn').addEventListener('click', selectNoFaces);
 el('selectInvertBtn').addEventListener('click', invertPickedFaces);
-el('paintPickedBtn').addEventListener('click', paintPickedFaces);
 el('removeFacesBtn').addEventListener('click', removeClicked);
 el('restoreFacesBtn').addEventListener('click', () => void restoreRemovedFaces());
 el('countModelsBtn').addEventListener('click', () => void ensureShells().then(reportShells));
 
-el('invertBtn').addEventListener('click', invertPaint);
 el('trimBtn').addEventListener('click', trimWindows);
 el('windowsBtn').addEventListener('click', () => listWindows());
 el('centreOnGrid').addEventListener('change', onCentreToggle);
@@ -2848,55 +2330,32 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       openGuide();
       break;
-    case 'b': setTool('brush'); break;
-    case 'f': setTool('fill'); break;
-    case 'e': setTool('erase'); break;
     case 's':
-      // Shift+S is the face half of the same tool: same panel, same pick, single triangles.
+      // Shift+S is the face half of the same tool: one selection, single triangles.
       setTool('select');
       setSelectScope(e.shiftKey ? 'faces' : 'models');
       break;
-    case 'x': setTool('box'); break;
+    case 'p': setTool('part'); break;
     case 'escape':
       if (selectDrag) cancelSelectDrag();
-      else if (boxDrag) cancelBoxSelect();
-      else if (state.tool === 'select' && pickedFaces()) selectNoFaces();
+      else if (state.tool === 'select' && selectedFaces()) selectNoFaces();
+      else hidePartCandidates();
       break;
     case 'i':
-      // Shift+I is the invert; I on its own is the eyedropper.
-      if (e.shiftKey) invertPaint();
-      else setTool('picker');
+      // Shift+I inverts the selection: the window becomes everything except what was selected.
+      if (e.shiftKey) invertPickedFaces();
       break;
-    case 'p': setTool('part'); break;
-    case 'm':
-      el('mirrorX').checked = !el('mirrorX').checked;
-      state.mirrorX = el('mirrorX').checked;
-      setStatus(state.mirrorX ? 'Mirror painting on.' : 'Mirror painting off.');
+    case 'b':
+      // B builds: the whole point of selecting, one keystroke from the selection.
+      el('stencilBuildBtn').click();
       break;
-    case '[':
-    case ']': {
-      const delta = e.key === '[' ? -0.4 : 0.4;
-      state.brushRadius = Math.min(16, Math.max(0.2, state.brushRadius + delta));
-      el('brushRadius').value = String(state.brushRadius);
-      updateHud();
-      break;
-    }
     case ' ': {
       if (!e.repeat) setNavigate(true);
       e.preventDefault();
       break;
     }
-    default: {
-      const n = Number(e.key);
-      if (Number.isInteger(n) && n >= 1 && n <= 9) {
-        const f = state.features[n - 1];
-        if (f) {
-          state.currentFeatureId = f.id;
-          renderPalette();
-          updateHud();
-        }
-      }
-    }
+    default:
+      break;
   }
 });
 
@@ -2907,14 +2366,13 @@ window.addEventListener('keyup', (e) => {
 // Boot: an empty app, waiting for a model.
 //
 // The bundled example is *not* fetched on start. Loading it automatically meant the first thing
-// the app did was spend a second parsing and welding somebody else's model — and the mask session
-// then began with a figure in it, which is wrong for the one job this tool has: paint windows on
+// the app did was spend a second parsing and welding somebody else's model — and the session then
+// began with a figure in it, which is wrong for the one job this tool has: select the windows on
 // **your** model. The example is one click away (**Load example model**, which is the only place
 // `DEFAULT_MODEL_URL` is used), and every panel already has an empty state.
-setTool('brush');
+setTool('select');
+setSelectScope('faces');
 setNavigate(false);
-syncSeamPresets();
-renderPalette();
 updateUndoButtons();
 updateHud();
 resetStencil();

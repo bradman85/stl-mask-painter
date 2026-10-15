@@ -4,7 +4,7 @@ Every feature the app exposes, with the steps to test it and what a correct resu
 It is derived from the on-screen guide (`help.html`), which explains what each control is *for*;
 this document is about proving it works.
 
-- **Running the checks:** `npm test` proves the geometry, the editing model, the segmentation,
+- **Running the checks:** `npm test` proves the geometry, the selection model, the segmentation,
   the stencil and the wiring without a browser. The items below are the interactive half — the
   things only a person in front of a viewport can confirm.
 - **Record as you go.** Each item ends with a verdict line: tick **pass** or **fail** and write
@@ -30,7 +30,7 @@ this document is about proving it works.
    bundled model with **Load example model** unless an item says otherwise. It is
    `Sprunki Mercuy.stl` — 422,658 triangles, 1,267,974 vertices, bounding box 60.1 × 103.4 ×
    53.0 units.
-4. Between sections, **reload the page** to start from a clean mask. Several checks are about
+4. Between sections, **reload the page** to start from a clean selection. Several checks are about
    *what changed*, which needs a known starting point.
 5. Timings below come from a desktop-class machine; treat them as orders of magnitude, not
    budgets.
@@ -40,7 +40,7 @@ this document is about proving it works.
 | Data | Where it comes from |
 | --- | --- |
 | The bundled figure | **Load example model** |
-| A tiny valid mask | The *Ready to import* block in [Export / import](help.html#mask-json) — 4 painted vertices on a 36-vertex model |
+| A tiny valid selection | The *Ready to import* block in [Export / import](help.html#mask-json) — 4 selected corners on a 36-vertex model |
 | A deliberately wrong mask | The same file, loaded while the bundled figure is open (its `vertexCount` is 36, the figure has 1,267,974) |
 | A non-STL file | Any `.png` or `.json` — used to prove drag & drop ignores it |
 
@@ -50,13 +50,24 @@ this document is about proving it works.
 | --- | --- |
 | [Getting started](help.html#start) | L1–L8, U1–U2 |
 | [Top bar](help.html#topbar) | L1–L8 |
-| [Features](help.html#features) | F1–F6 |
-| [Paint](help.html#paint) | P1–P19 |
-| [Cleaning up the model](help.html#cleanup) | P19 (shells, face picking, removal, the bed) |
-| [Mask](help.html#mask) | M1–M9 |
-| [Paint stencil](help.html#stencil) | S1–S13 (S13 covers the multi-piece export) |
-| [Model & view](help.html#view) | V1–V5 |
+| [Selection](help.html#selection) | P1–P3, P5, P9, P11–P12, M1, M3 |
+| [The tools](help.html#select) | P1–P5, K1 |
+| [The rectangle](help.html#select-box) | P6 |
+| [Seam panels](help.html#parts) | P1, P3–P4 |
+| [Select all, none, invert](help.html#select-more) | P8–P9 |
+| [Cleaning up the model](help.html#cleanup) | P12–P13, V5 |
+| [Whole models](help.html#cleanup-models) | P7, P12 |
+| [The bed](help.html#cleanup-bed) | P13 |
+| [Windows](help.html#windows) | M5–M6 |
+| [The window list](help.html#windows-list) | M4 |
+| [Tint & view](help.html#tint) | M1–M3 |
+| [Stencil](help.html#stencil) | S1–S13, P11, M6 |
+| [Model & view](help.html#view) | V1–V5, P10 |
 | [Export / import](help.html#export) | X1–X11 |
+| [Selection JSON](help.html#mask-json) | X1–X3, X9 |
+| [Importing](help.html#import-json) | X4–X7, X11 |
+| [Selected shell PLY](help.html#ply) | X8 |
+| [Stencil STL](help.html#stl) | S9–S10 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
 | [How it works](help.html#howitworks) | N1–N3 |
 | [How it is verified](help.html#tests) | N4 |
@@ -198,660 +209,337 @@ loads the model in 1.4 s and clears the overlay.
 
 ---
 
-# B. Features (the palette)
+# B. Selection — the tools
 
-#### F1 · Add a feature
+#### P1 · A Part click selects the whole panel
 
 **Steps**
-1. Pick a colour in the swatch, type a name, press **Enter** (or **Add**).
-2. Add a second one.
+1. Load the bundled model. Press <kbd>P</kbd> (or click **Part**).
+2. Click the face of the figure, somewhere well inside it.
+3. Click a shoe, then a whole leg.
 
-**Expected** Each feature is appended with the next free id (1, 2, …; id 0 is reserved for
-"unpainted") and becomes the current feature, so the next brush stroke uses it. Ids are never
-reused inside a session — an exported JSON keeps pointing at the right features.
-**Guide** [Features](help.html#features)
-**Automated** `test/painting.test.mjs` (feature list and ids), `test/help.test.mjs` (the default
-palette quoted in the guide matches the code).
+**Expected** The panel under the cursor is selected — every triangle of it — and the status bar
+reports `Selected part <n> of <m> — <faces> faces (<share>% of the mesh), <faces> faces added to the
+selection (<selected> of 422,658 selected in all, seams at 8°)`. On the face of the figure the panel
+is about 43% of the mesh and the bar adds the sentence naming the smaller panel the click probably
+aimed at (`the detail you aimed at is probably Part <n> …`), because a click can only ever select the
+panel it lands on. The selected triangles are tinted amber, the stats line counts them, and nothing
+is added to the mesh or the file.
+**Guide** [Selection](help.html#selection) · [Seam panels](help.html#parts)
+**Automated** `test/parts.test.mjs` — the seam rule on a cube with a known answer, then every face of
+one part on the real model, and a real raycast through a real camera reporting the model's own
+triangle order.
 **Result** ☐ pass ☐ fail — notes:
 
-#### F2 · Empty name
+#### P2 · Shift-click and Alt-click add and remove panels
 
 **Steps**
-1. Leave the name box empty and add a feature.
+1. With one panel selected, Shift-click a second one away from the first.
+2. Alt-click the second one.
+3. Alt-click the first one, then undo once.
 
-**Expected** It is called `Feature N`.
-**Guide** [Features](help.html#features)
-**Automated** `test/help.test.mjs` (the importer's fallback name is the documented one).
+**Expected** <kbd>Shift</kbd> adds the second panel to the same selection (`Added part … added to the
+selection`), <kbd>Alt</kbd> takes exactly that panel back off, and neither click clears what was
+there. Both are one undo step each, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> brings the panel back and
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> takes it off again. The stats line and the tint track
+every step.
+**Guide** [Selection](help.html#selection)
+**Automated** `test/selection.test.mjs` — adding, removing and replacing a widget's worth of faces,
+and that a gesture which changes nothing is not an undo step.
 **Result** ☐ pass ☐ fail — notes:
 
-#### F3 · Selecting and counting
+#### P3 · The panel list — when the click was a near-miss
 
 **Steps**
-1. Paint something with feature 1, then something with feature 2.
-2. Click the feature rows, then press `1`…`9`.
+1. With **Seams** cut at 8°, aim at a thin panel — an eyebrow, the mouth — and click a few pixels
+   off it, so a big panel gets selected.
+2. Look at the list that appeared under the seam slider, and click the entry for the panel you meant.
 
-**Expected** The clicked/pressed feature becomes current (the tools paint with it), and each row
-shows how many vertices currently carry it. Those counts update as you paint, erase and clear.
-**Guide** [Features](help.html#features)
-**Automated** `test/painting.test.mjs`, `test/parts.test.mjs` (per-feature vertex counts).
+**Expected** The list names the panels that meet the one selected, closest to the click first, with
+each row's face count, share of the mesh and distance; **Hide this list** closes it. Clicking a row
+selects that panel instead (one undo step, and it replaces the selection like a plain click does). A
+click that lands on nothing leaves the selection alone.
+**Guide** [Seam panels](help.html#parts)
+**Automated** `test/parts.test.mjs` — the panel-near-a-point query, including that the thin panel a
+click missed is on the list.
 **Result** ☐ pass ☐ fail — notes:
 
-#### F4 · Hide and show a feature
+#### P4 · Seam angle, the presets and Show seams
 
 **Steps**
-1. Paint two overlapping features.
-2. Press the `◉` / `◌` button on one of them.
-3. Build a stencil while one feature is hidden.
+1. Drag **Seam angle** from 8° up to 25° and down to 5°, clicking a panel at each setting.
+2. Press the four presets (**Face details 5°**, **Portrait 8°**, **Body parts 12°**, **Broad
+   shapes 25°**).
+3. Tick **Show seams**, orbit, then untick it.
 
-**Expected** Only the display changes: the row goes dim, the feature's paint disappears from the
-viewport, and *nothing else* changes — the paint count, the exported files and the stencil
-window are all unaffected. The built stencil is identical with the feature hidden or shown.
-**Guide** [Features](help.html#features)
-**Automated** `test/painting.test.mjs` — hiding is not an edit and does not touch the ids; the
-colour buffer test pins alpha 0 for hidden vertices.
+**Expected** A smaller angle cuts the model into more, smaller panels; 5° separates the eyes, brows
+and mouth into panels of their own, 25° merges the limbs into the body. Each preset moves the slider
+to its angle and lights itself up. The seam readout and the panel stats update with the slider; the
+panel list follows the angle after a rebuild of about half a second the first time. **Show seams**
+draws the panel boundaries as lines, and the Part click keeps selecting whole panels while it is on.
+**Guide** [Seam panels](help.html#parts)
+**Automated** `test/help.test.mjs` — the default angle and the four presets are the same in the code,
+the markup and the guide.
 **Result** ☐ pass ☐ fail — notes:
 
-#### F5 · Remove a feature
+#### P5 · Select faces — a click picks one triangle
 
 **Steps**
-1. Paint a feature, then press its `✕`.
-2. `Ctrl`+`Z`.
+1. Press <kbd>Shift</kbd>+<kbd>S</kbd> (or click **Select faces**), then click a single triangle on
+   the face of the figure.
+2. Click the same triangle again; then click three others with <kbd>Shift</kbd> held, and take one
+   back off with <kbd>Alt</kbd>.
+3. Watch the status bar and the stats line.
 
-**Expected** It asks first when the feature has paint. Confirming removes the feature *and*
-clears its paint in one undo step; undo brings both back (provided nothing else was painted in
-between). An unpainted feature is removed without asking.
-**Guide** [Features](help.html#features)
-**Automated** `test/painting.test.mjs` (clear-clear paths and their undo/redo).
+**Expected** One triangle is tinted per click and the status bar says `Selected face <i> of 422,658 —
+<n> selected in all. Shift-click adds, Alt-click takes one off, “Select all” takes the lot.` A second
+plain click on the same triangle unselects it; <kbd>Shift</kbd> adds without ever flipping,
+<kbd>Alt</kbd> removes. The stats line counts the faces and the corners inside the window.
+**Guide** [Selection](help.html#selection)
+**Automated** `test/selection.test.mjs` and `test/app-path.test.mjs` — the click path writes the one
+selection, and a one-face selection is a window in the built shell.
 **Result** ☐ pass ☐ fail — notes:
 
-#### F6 · Features do not change the window
+#### P6 · Select faces — the rectangle
 
 **Steps**
-1. Paint one area with feature 1 and a neighbouring area with feature 2.
-2. Build the stencil.
+1. With **Select faces** in hand, drag a rectangle over one eye and release.
+2. Drag another rectangle over the other eye with <kbd>Shift</kbd> held, then a third over one of
+   them with <kbd>Alt</kbd> held.
+3. Start a drag and press <kbd>Esc</kbd> before releasing it.
 
-**Expected** The window is everything painted, whatever feature it belongs to. Two features
-painted side by side become a single window joined at the seam. Features exist to see, count and
-clear areas separately — nothing more.
-**Guide** [Features](help.html#features)
-**Automated** `test/stencil.test.mjs` — "two far-apart features" case; `test/parts.test.mjs`
-(two panels composed with `Shift`-click build one window).
+**Expected** Releasing a plain drag makes the selection exactly the triangles the rectangle covered —
+and only those facing the camera: the status bar names how many were under it all told and how many
+of those faced away and were left alone. <kbd>Shift</kbd> adds the box's faces to the selection,
+<kbd>Alt</kbd> takes them off. <kbd>Esc</kbd> throws the drag away and says `the rectangle was
+cancelled — the pick is unchanged`. One drag is one undo step, however many triangles it took.
+**Guide** [The rectangle](help.html#select-box)
+**Automated** `test/boxselect.test.mjs` — the projection against three.js' own, the facing rule, a
+vertex behind the camera, and a mid-body box on the real figure.
 **Result** ☐ pass ☐ fail — notes:
 
----
-
-# C. Paint
-
-#### P1 · Brush stroke is one edit
+#### P7 · Select models — the shells in one file
 
 **Steps**
-1. Press `B`. Drag a long stroke across the torso.
-2. Note the painted count in the Mask panel.
-3. Press **Undo**, then **Redo**.
+1. Press <kbd>S</kbd> (or click **Select models**) on a file that holds more than one shell, and
+   click one of the models in the viewport.
+2. Use the model list that appears, then **Count models**.
 
-**Expected** The whole drag, however many stamps it contained, is one undo step. Undo removes
-all of it (the count returns to what it was before the stroke); redo restores the identical
-vertices, not a re-painted approximation.
-**Guide** [Paint](help.html#paint)
-**Automated** `test/painting.test.mjs` — a 9-stamp stroke paints 10,127 vertices as one history
-step; undo leaves zero difference and redo restores the same ids.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P2 · Fast strokes stay smooth
-
-**Steps**
-1. With the brush, drag quickly across a large area.
-
-**Expected** A continuous painted band with no gaps and no blotchy over-painting. Stamps are
-sub-sampled by their on-screen size while dragging.
-**Guide** [Paint](help.html#paint-tools)
-**Automated** `test/painting.test.mjs` (the stroke path is the app's own sampler).
-**Result** ☐ pass ☐ fail — notes:
-
-#### P3 · Brush radius
-
-**Steps**
-1. Move the **Brush radius** slider; watch the ring in the viewport.
-2. Press `[` and `]` several times.
-
-**Expected** The ring grows/shrinks with the slider (0.2–16 units, one step 0.1) and the `[`/`]`
-keys nudge it by 0.4. On load the radius is derived from the model's diagonal — 3.2 units on
-the bundled figure.
-**Guide** [Paint](help.html#paint-radius)
-**Automated** `test/ui-wiring.test.mjs` (the slider and the keys are wired to the same state).
-**Result** ☐ pass ☐ fail — notes:
-
-#### P4 · The brush can reach the far side of a thin part
-
-**Steps**
-1. Zoom onto a thin area (an ear, a fin) and paint with a wide brush from one side.
-2. Orbit and look at the other side.
-
-**Expected** Paint appears on the far side too — a brush stamp is a sphere. This is documented
-behaviour, not a defect: use **Part** or **Region fill** when it matters.
-**Guide** [Paint](help.html#paint-tools)
-**Automated** `test/painting.test.mjs` (`paintSphere` semantics).
-**Result** ☐ pass ☐ fail — notes:
-
-#### P5 · Mirror across X
-
-**Steps**
-1. Turn on **Mirror across X plane**.
-2. Paint one eye with the brush; then fill one cheek; then click one foot with **Part**.
-3. Turn it off and paint again.
-
-**Expected** The mirrored stroke/fill/panel appears about the plane `x =` the number beside it
-(default: the model's centre). All three tools honour it. With it off, only the painted side
-changes.
-**Guide** [Paint](help.html#paint-radius)
-**Automated** `test/parts.test.mjs` and `test/painting.test.mjs` use the same mirrored point
-path; the asymmetry caveat (the fill's mirrored run has no seed normal) is documented.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P6 · Region fill stops at seams
-
-**Steps**
-1. Press `F`, click a large smooth area (a shirt front).
-2. Then click right on a crease and lower the **Seam angle**.
-
-**Expected** The fill covers the connected surface and stops where the surface turns more than
-the seam angle — it does not run over the whole model. Lowering the angle makes the filled area
-smaller; raising it lets the fill spread further.
-**Guide** [Paint](help.html#paint-tools)
-**Automated** `test/parts.test.mjs` (the same crease rule drives segmentation).
-**Result** ☐ pass ☐ fail — notes:
-
-#### P7 · Region fill budget
-
-**Steps**
-1. Set **Max vertices** to its minimum (1000).
-2. Fill a large area.
-
-**Expected** The fill stops at the budget and the status bar says it was truncated rather than
-silently under-filling.
-**Guide** [Paint](help.html#paint-radius)
-**Automated** `test/ui-wiring.test.mjs` (the field is wired); truncation message is UI.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P8 · Part click paints a whole panel
-
-**Steps**
-1. Press `P`, click the figure's head.
-
-**Expected** The whole seam-bounded panel under the cursor is painted with the current feature,
-in one undo step. Nothing else changes. "Under the cursor" is literal: the ray is resolved to the
-triangle the cursor is on, in the model's own face order (the order the panels are cut in), not
-the pick acceleration structure's own ordering — compare the panel named in the status bar with
-the one the seams around the click suggest. On the bundled model at the default 8° seam angle
-the biggest panel is 42.8% of the mesh, so a click that lands on a large panel is still a large
-part of the figure — the panel list under the seam controls (P10) is how you get a detail that
-is behind the surface instead.
-**Guide** [Paint → Seam parts](help.html#paint-parts)
-**Automated** `test/parts.test.mjs` — a clicked panel paints exactly its vertices (59,136 in
-that run) as one undo step, and a real raycast through a real camera, sampled over the whole
-viewport, reports the triangle under the cursor every time (1,560/1,560 hits) while the picker's
-raw BVH index fails that test on all of them. `test/ui-wiring.test.mjs` pins the translation and
-that the mesh order is read before the BVH is built.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P9 · Part modifiers
-
-**Steps**
-1. With **Part**, click one panel, then `Shift`-click another, then `Alt`-click (or
-   `Ctrl`-click) one of them.
-
-**Expected** A plain click *replaces* the current feature's paint with that panel;
-`Shift`-click adds a second panel; `Alt`/`Ctrl`-click removes one. These clicks are not treated
-as "not painting" — Part is the one tool that reacts to a modifier click.
-**Guide** [Paint → Seam parts](help.html#paint-parts)
-**Automated** `test/ui-wiring.test.mjs` — the modifier guard is pinned by name and exempts the
-Part tool, so an Alt-click cannot be swallowed before the tool sees it.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P10 · The panel list
-
-**Steps**
-1. Click a thin detail (an eyebrow), a couple of pixels off.
-2. Read the list that appears under the seam controls.
-3. Click a row in the list.
-4. Press **Hide this list**, then click again elsewhere.
-
-**Expected** The list names the panels with surface within a brush radius of the click, nearest
-first, each with its face count, its percentage of the mesh and its distance. The panel you
-actually hit is excluded. It also finds panels *hidden behind* the surface you hit. Clicking a
-row selects that panel with the current feature, exactly as if you had hit it. The list is
-hidden until a Part click and is dismissible.
-**Guide** [Paint → The panel list](help.html#paint-candidates)
-**Automated** `test/parts.test.mjs` — the query on a cube with known distances (0.62 to the four
-nearer faces, 1.03 to the opposite one; a 0.7 radius returns exactly those four, nearest first),
-and on the real model (the opening panel is 42.8%, the smallest 0.021%, the thin panel a
-near-miss lands on is in the list). `test/ui-wiring.test.mjs` checks the wiring.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P11 · Seam angle and Show seams
-
-**Steps**
-1. Turn on **Show seams** — the first time, expect a short pause.
-2. Move the **Seam angle** slider from 8° to 25°, watching the line under it.
-3. Move it back to 8° (the default — the **Portrait** preset lights up again).
-
-**Expected** Yellow seam lines appear where a click will stop. The hint line reports how many
-parts that angle produces, how many are worth clicking (1,000+ faces) and how many slivers were
-merged. Roughly: 5° → 35 parts (largest 21%), 8° → 26 (43%), 12° → 21 (48%), 25° → 14 (52%),
-35° → 12 — too coarse to click. Segmentation takes about 0.4 s and is cached per model and
-angle, so returning to 8° is instant.
-**Guide** [Paint → Seam parts](help.html#paint-parts)
-**Automated** `test/parts.test.mjs` — every face lands in exactly one part, sizes match, the
-largest comes first, the default 8° gives 26 parts with 10 of them ≥ 5,000 faces, and the
-sliver merge turns 7,550 raw parts into 26.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P12 · Seam angle presets
-
-**Steps**
-1. With the model loaded, press **Face details 5°** under the seam slider.
-2. Watch the slider, the number beside **Seam angle**, the status bar and the button row.
-3. With **Part**, click an eye, then an eyebrow: each should be its own panel.
-4. Press **Portrait 8°**, then **Body parts 12°**, then **Broad shapes 25°**, clicking the same
-detail after each.
-5. Drag the slider to 15° by hand.
-
-**Expected** Each press moves the slider, re-cuts the model and lights up that button only. The
-status bar reports the cut, e.g. `Face details: seams at 5° cut the model into 35 panels, the
-biggest 87,175 faces (21%) — click one with the Part tool.` After **Face details** the same click
-selects a much smaller panel than after **Broad shapes**; at **Body parts** (12°) an eyebrow
-click selects the 48% panel and the status bar says so and names the smaller panel instead.
-Dragging the slider by hand dims all four buttons, and the four angles match the measured table
-in the guide.
-**Guide** [Paint → Seam parts](help.html#paint-parts)
-**Automated** `test/help.test.mjs` checks the preset buttons, the `SEAM_PRESETS` list in
-`js/main.js` and the guide's table all name the same four labels and angles, and that the
-default angle agrees in `js/parts.js`, the slider markup and the guide. `test/ui-wiring.test.mjs`
-checks the buttons call `setSeamAngle`.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P13 · Pick previews before the click
-
-**Steps**
-1. Press `I`. Move the cursor over a painted area, then over bare geometry, then off the model.
-
-**Expected** The ring takes the colour of the feature under the cursor; over bare geometry it is
-grey. The cursor line reads `Pick: Eyes (click to paint with it)` or `Pick: nothing painted`.
-No click has happened yet, and nothing has been painted.
-**Guide** [Paint → Pick](help.html#paint-tools)
-**Automated** `test/ui-wiring.test.mjs` — the hover preview and the click call the same function,
-so the ring cannot promise one feature and the click deliver another.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P14 · Pick click semantics
-
-**Steps**
-1. Paint an eye with feature 3. Switch to feature 1. Press `I`, click the eye.
-2. Press `I` again and `Shift`-click two different painted areas in a row.
-3. Press `I` and click bare, unpainted geometry; then click off the model entirely.
-
-**Expected** The click makes the picked feature current and the status bar names it with its
-vertex count (`Picked "Eyes" (3,892 vertices)…`), so picking the feature you already had is still
-visible. Control **returns to the paint tool you were using**, so your next drag paints. With
-`Shift` you stay on Pick. The empty cases are distinguished: *nothing painted here* (that
-feature is painted elsewhere) versus *nothing painted anywhere nearby*, and a click that misses
-the model says so. Picking is not an edit — it adds nothing to the undo history.
-**Guide** [Paint → Pick](help.html#paint-tools)
-**Automated** `test/painting.test.mjs` — the vote finds the feature the brush just painted
-(3,307 vertices voting), reports nothing off the model and nothing away from the paint, prefers
-the patch painted on top, falls back when it is erased, and agrees with **Clear all**.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P15 · Erase
-
-**Steps**
-1. Paint a long stroke.
-2. Press `E` and drag across its middle.
-3. `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`.
-
-**Expected** Erase paints "unpainted", so only the swept part goes; the rest of the stroke
-survives. Undo restores exactly the erased vertices; redo erases them again.
-**Guide** [Paint → Tools](help.html#paint-tools)
-**Automated** `test/painting.test.mjs` — erasing 4 stamps over a 10,127-vertex stroke leaves
-4,633; undo restores the erased vertices, redo removes them again.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P16 · Undo, redo and the history cap
-
-**Steps**
-1. Perform a stroke, a fill, a Part click, a **Clear feature**, a **Clear all** and an
-   **Invert mask**, undoing each immediately.
-2. Undo a **Clear all** and press **Redo**.
-3. Make more than 40 edits and keep pressing **Undo**.
-
-**Expected** Each action is exactly one step and comes back unchanged. Redo after a clear or an
-invert *reapplies the change* rather than restoring the state before it. History holds 40 steps;
-undoing past the cap simply stops. Painting something new clears the redo stack.
-**Guide** [Paint](help.html#paint-radius)
-**Automated** `test/painting.test.mjs` — undo/redo of clear, clear-feature and invert, plus the
-redo-after-snapshot paths; the cap is exercised.
-**Result** ☐ pass ☐ fail — notes:
-
-#### P17 · Navigate
-
-**Steps**
-1. Press **Navigate: off** so it reads **Navigate: on** and left-drag in the viewport.
-2. Turn it off again and hold `Space` while left-dragging.
-3. Release `Space`.
-
-**Expected** With Navigate on, the left button orbits any tool. With it off, holding `Space`
-orbits without leaving the paint tool, and releasing `Space` returns to painting.
-**Guide** [Paint](help.html#paint-radius)
-**Automated** `test/ui-wiring.test.mjs` (the toggle is wired to the same navigation state).
-**Result** ☐ pass ☐ fail — notes:
-
-#### P18 · Box paint — the rubber band that paints
-
-**Steps**
-1. Reload, load the example model, keep the default feature, press **X** (or the **Box paint**
-   button) and drag a rectangle across the middle of the body.
-2. Read the status bar, then press **Undo** and **Ctrl+Shift+Z**.
-3. Drag a rectangle over the *head* only, from the Front view, and turn the model to the Back to
-   see what was taken.
-4. Tick **Mirror across X plane**, drag a box over one side of the face, and look at the other
-   side.
-5. Hold `Alt` (or `Ctrl`) and drag a box over part of what you just painted.
-6. Start a drag and press `Esc` before releasing. Then drag a rectangle over the empty background.
-7. Orbit so the figure is seen from above, and drag the *same* rectangle as in step 1.
-
-**Expected** Every vertex under the rectangle that faces the camera turns the current feature's
-colour, in one undo step — `Ctrl+Z` takes the whole box back and redo puts it back exactly. The
-status bar names the numbers: `Box paint: 433,903 vertices painted as “Eyes” — 433,903 of the
-930,758 in the rectangle face the camera (496,855 face away and were left alone).` The vertices
-that face away are **not** painted (step 3: the back of the head stays bare when the box covers the
-face), because a screen rectangle covers the far side of a closed part too.
-With mirroring on (step 4) the box is taken again on the other side of the plane, and the status
-bar adds `plus N mirrored across X`; `Alt`/`Ctrl`-drag (step 5) **releases** paint under the
-rectangle instead; `Esc` (step 6) cancels a drag before it is released and a box over the background
-reports `nothing under the rectangle — drag it over the model` rather than looking dead. Step 7 is
-the point of a screen-space selection: the same rectangle over a different camera angle takes
-different vertices, and the status counts change with it.
-**Guide** [Paint → Box paint](help.html#paint-box)
-**Automated** `test/boxselect.test.mjs` — the transform and the facing rule on a vertex cloud whose
-screen positions are computed by three.js itself (12 rectangles, vertex for vertex), the composed
-matrix against three.js' own multiply, the behind-the-camera and mirrored-away cases, **and the
-same again for triangles**: the four-triangle fixture where a box on a triangle's corner misses it
-while a box on its centre takes it, the face wound the other way being reported as facing away, a
-triangle behind the camera, and on the bundled figure through the app's own camera and model group
-144,644 of 422,658 faces for a middle-of-the-body box in 13 ms. On the figure through the app's own
-camera and model group: 433,903 of 930,758 under a
-middle-of-the-body box in 29 ms, every sampled vertex three.js puts inside it taken, every taken
-vertex projecting inside it, and the selection painting the mask as one undo step with undo and
-redo restoring the exact count. `test/ui-wiring.test.mjs` pins the tool, the key, the overlay, the
-drag path, the indices handed to the inverse transform, the modifier exemption and the status
-wording — the browser half (drawing, releasing, hovering) is what this item tests by hand.
-**Result** ☐ pass ☐ fail — notes:
-
----
-
-#### P19 · Cleaning up the model — the models in the file, and the bed
-
-**Steps**
-1. Reload and load an STL that holds more than one model (a figure plus a base, or two figures
-   exported together). If you only have single-model files, load the example model twice into one
-   file with any tool that appends triangles — or load the example and read the "one model" half
-   of this item.
-2. Press **S** (or the **Select models** button) and wait for the weld. Read the list under the
-   panel heading, then click **Count models** and read the status bar.
-3. Click the model you want to keep, then **Select none**. Now click **Select all** and click the
-   model you want to keep a second time.
-4. Press **Remove picked** once and read the status bar; press it again within four seconds.
-5. Look at the grid, the model line and the Mask panel's paint stats.
-6. Press **Restore removed**.
-7. Press **Shift+S** (or the **Select faces** button), hover over the model, then click a face,
-   Shift-click two more and Alt-click one off. Check the white tint under the cursor and the yellow
-   tint of the pick.
-8. Drag a rectangle over the model and release; then `Shift`-drag another one beside it, and
-   `Alt`-drag a box over faces that are picked. Then press **X** (Box paint), and then **B**
-   (Brush), reading the viewport after each.
-9. With faces still picked, press **Build stencil** and read the status bar. Then press **Paint
-   picked faces** and build again.
-10. Turn on **Show seams** with the pick still on faces, and remove a handful of faces from a flat
-   area (leave more than a few hundred faces in the model).
-11. Load a model, paint something, pick a model and remove it, then press **Ctrl+Z** twice.
-
-**Expected** Step 1–2: the panel lists every model in the file, biggest first, each with its face
-count, its share of the file and its own size, and the status bar reports the same numbers — this
-is where a file with a hidden second model is discovered. Step 3: a click picks the model under the
-cursor (a second click unpicks it), **Select all** then picks the whole file and clicking a model
-again takes it back off the pick, which is the point of selecting everything. Only one of the two
-buttons is lit at a time, and pressing **Select faces** lights that one instead and moves the pick
-to single triangles. Step 4: the button
-reads **Click again to remove** for four seconds and the removal goes ahead on the second click —
-the model disappears from the viewport, the status bar reports the faces taken out and
-`The bed is under the surviving model's lowest point (0.00)`, and the survivors are re-measured and
-re-framed. Step 5: the surviving model stands **on** the grid — if it was previously standing on
-top of the model you removed, it now drops onto the plate, and the grid is drawn on its feet rather
-than a fraction of its height below them (the reported `2% of the model's height` gap is gone). The
-painted vertices are still painted. Step 6: the removed model comes back, still unpainted, and the
-bed goes back under the lowest point of everything. Step 7: the face under the cursor is **tinted
-white** before the click and the picked faces are **tinted yellow** — a single picked face is
-visible at a glance, which is what the edges-only version got wrong (it showed three hairlines that
-z-fight with the surface they lie on, so a working pick looked like a dead tool) — Shift adds and
-Alt takes one off, and the status bar counts the pick face by face. On a one-model file nothing is
-tinted while hovering in the models scope, and the panel says why.
-Step 8: dragging draws the rectangle wherever the pointer went (the same overlay the Box paint tool
-draws), and on release the status bar reports how many faces the box covered, how many of those face
-away and were left alone, and how many are picked in all — a drag over the background says
-`nothing under the rectangle` rather than looking dead. A plain drag makes the pick exactly the
-box's faces, `Shift`-drag adds them to what was already picked, `Alt`-drag takes them off, and a
-press that does not move is still the click of step 7 (one face, not a box). Before this, selecting
-by box was a separate *tool* whose button read as a third selection mode while actually painting.
-Then the reported bug: **the tint does not disappear when another tool comes up** — press `X` and
-the pick is still lit yellow, press `B` and it is still lit, because a pick survives switching
-tools. Only the *hover* tint goes, since hovering is the Select tool's.
-Step 9 is the picked-faces-are-not-paint case. **Build stencil** with a pick and nothing painted
-says `Nothing painted yet — the stencil is built from paint, and N picked faces are only selected.
-“Paint picked faces” paints them as “<feature>”, then build.` — a selection is geometry and the
-stencil is built from paint, so the button is not broken and now says so. **Paint picked faces**
-paints every picked triangle with the current feature as one undo step: the paint stats jump by the
-picked faces' own vertices, `Ctrl+Z` takes the whole thing back, and **Build stencil** then produces
-a stencil whose window is the region that was picked.
-Step 10: the removal is exact — the region you
-picked is gone, the rest of the surface is untouched. Step 11: the paint stays where it was painted
-(after the removal the painted vertices are still on the same part of the surface) and **Ctrl+Z**
-still undoes the paint, because the history was renumbered with the geometry.
-**Guide** [Cleaning up the model](help.html#cleanup) (and [Model & view](help.html#view) for the bed
-and centring)
+**Expected** The whole separate model under the cursor is selected (`Selected Model <n> — <faces>
+faces (<faces> in the model)`), and the list under the selection stats names each model with its face
+count and size. A click on a model toggles it; **Count models** reports the shells without changing
+the selection. On a one-model file the tool says so and suggests **Select faces** instead.
+**Guide** [Whole models](help.html#cleanup-models)
 **Automated** `test/select.test.mjs` — the shell rule on a soup whose models are known by
-construction (two boxes are two models, a shared corner is not a shared surface, a degenerate face
-joins nothing, bounds and sizes per model), the filter and the corner map triangle for triangle,
-the paint carried across a removal corner by corner, the undo history renumbered and still undoing
-what it used to, the highlight of one picked face being a filled triangle (the visible half of the
-fix above — edges alone were invisible), the whole highlight path executed for real — drawn,
-replaced with its geometry and material freed, cleared, and refused above the limit (this is the
-path that used to throw on every load, see L8) — a pick too big to draw being refused rather than
-drawn, the corners a pick hands to `mask.paintIndices` being its faces' own three in face order
-(what "Paint picked faces" paints), and on the bundled figure: a copy written 30 units below it lifts the figure off
-the bed by 30 (the reported bug, measured), removing it puts the lowest point back at 0, and the bed
-is drawn on the model's own lowest point instead of 2% of its height below it.
-`test/ui-wiring.test.mjs` pins the tool, its key, the panel, the buttons, the scope menu, the
-modifier exemption and the status wording; `test/help.test.mjs` keeps this item and the guide in
-step with the app. The browser half — clicking, the outlines, the loading messages — is what this
-item tests by hand.
+construction, including two boxes meeting at a single corner.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P8 · Select all, select none and invert
+
+**Steps**
+1. <kbd>Ctrl</kbd>+<kbd>A</kbd>, then <kbd>Esc</kbd>.
+2. Select one eye with <b>Part</b>, then press <kbd>Shift</kbd>+<kbd>I</kbd> (**Invert selection**).
+3. Press it again.
+
+**Expected** **Select all** takes every triangle and says so; <kbd>Esc</kbd> clears the selection and
+nothing else. Invert swaps what is selected for what is not in one undo step, and the stats line
+reports both counts; inverting twice returns to the original selection (and the second invert is a
+separate undo step).
+**Guide** [Select all, select none, invert](help.html#select-more)
+**Automated** `test/selection.test.mjs` — select all, none and invert, exactly mirrored counts.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P9 · Undo and redo across both tools
+
+**Steps**
+1. Select a panel with **Part**, then a rectangle with **Select faces**, then one triangle.
+2. <kbd>Ctrl</kbd>+<kbd>Z</kbd> five times, then <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>
+   five times.
+
+**Expected** Every gesture is one step, whichever tool made it, and undo walks back through them in
+order — one triangle, then the rectangle, then the panel — restoring the exact faces and the tint
+with them; redo walks forward again. A click that selected what was already selected is not a step.
+The Undo and Redo buttons disable at the ends of the history.
+**Guide** [Undo and redo](help.html#select-more)
+**Automated** `test/selection.test.mjs` — the history: the exact faces back, redo after an add and
+after a removal, and a snapshot renumbered across a soup that was cut.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P10 · Navigate — selecting without letting go
+
+**Steps**
+1. Click **Navigate: off** so it reads **Navigate: on**, then left-drag in the viewport.
+2. Hold <kbd>Space</kbd> and left-drag with **Navigate: off**.
+3. Right-drag, middle-drag, wheel.
+
+**Expected** With **Navigate: on**, or while <kbd>Space</kbd> is held, the left button orbits and
+nothing is selected, whichever tool is up; releasing the key puts the tool back. Right-drag orbits,
+middle-drag pans and the wheel zooms at all times. Selecting never moves the model, and the exports
+keep the file's own coordinates.
+**Guide** [Model & view](help.html#view)
+**Automated** `test/ui-wiring.test.mjs` — the navigate toggle is wired to the viewer's pointer mode.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P11 · Part and Select faces share one selection — and the stencil is built from all of it
+
+**Steps**
+1. Load the bundled model and click a panel with <b>Part</b> (a shoe is a good, small one).
+2. Switch to **Select faces** and click one triangle somewhere else on the model, well away from the
+   panel.
+3. Press **Build stencil**.
+4. Now <kbd>Alt</kbd>-click that single triangle off and build again.
+
+**Expected** Switching tools never clears the selection: the panel stays tinted amber while the
+triangle is added, and the status line after the triangle click counts both (`<n> selected in all`).
+The build reports `2 windows` — one for the panel, one for the single face — and `one piece` when the
+band around them closes. After <kbd>Alt</kbd>-clicking the triangle off, the rebuild reports
+`1 window`. A single picked face on its own is a window too: the build says
+`1 selected island is thinner than the 0.35 window inlay, so its window was cut at its own edge`, and
+a ray straight through the built shell over that triangle passes through the hole rather than through
+mask material. This is the report the app was fixed for: picked faces used to be absent from the
+built stencil while Part panels and box drags worked.
+**Guide** [Selection](help.html#selection) · [Stencil](help.html#stencil)
+**Automated** `test/app-path.test.mjs` — a one-face selection, a Part panel plus one picked face, and
+unpicking a face, each checked by looking for the hole in the built shell; `test/stencil.test.mjs`
+pins the same guarantee for a dot smaller than the window inlay.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P12 · Removing faces and models — and putting them back
+
+**Steps**
+1. Select a model in a multi-model file and press **Remove selected** twice (the button reads
+   **Click again to remove**).
+2. Press **Restore removed**.
+3. Select a patch of faces on the figure, remove them, and restore.
+
+**Expected** The first press only arms the button; the second takes the geometry out and the status
+line says where the bed ended up, because the model's own lowest point moved. The selection carries
+through the cut face by face, the undo history with it, and <kbd>Ctrl</kbd>+<kbd>Z</kbd> puts the
+removal back. **Restore removed** puts every removed face back exactly as the file had it, and the
+exports, the panels and the built shell are discarded with the geometry they described.
+**Guide** [Cleaning up the model](help.html#cleanup)
+**Automated** `test/select.test.mjs` — the filtered soup holds exactly the faces it should, the
+corner map points back at the file, and the selection and its history are renumbered.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P13 · The bed — why a model can load in the air
+
+**Steps**
+1. Load the bundled model with **Centre model on the grid** ticked, then untick it.
+2. Note the model's lowest point and the grid.
+
+**Expected** The ground grid is drawn on the model's own lowest point, so the figure stands on it
+either way; centring moves the *view*, not the mesh, so the selection, the mask and every export keep
+the file's own coordinates. The stencil panel's **Sit the exported part on the bed** is what decides
+the Z of the file that is written.
+**Guide** [The bed](help.html#cleanup-bed)
+**Automated** `test/select.test.mjs` — a copy written 30 units below the figure lifts it off the bed
+by exactly that, and removing it puts the lowest point back at 0.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
 
-# D. Mask
+# C. Tint, windows and the stats line
 
-#### M1 · Mask opacity
+#### M1 · Selection tint
 
 **Steps**
-1. Paint something solid-coloured.
-2. Drag **Mask opacity** from 100% down to 0% and back.
+1. Select a panel, then drag **Selection tint** from 100% down to 0 and back.
+2. Untick **Show the selection tint**, then tick it again.
 
-**Expected** The paint fades and lets the model's own shading through as the value drops — the
-layer's colours never change, only how strongly the overlay is blended. At 100% (the default)
-the paint hides the model under it.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs` (the colour buffer itself is unchanged by opacity).
+**Expected** The amber tint over the selected triangles fades with the slider and disappears at 0,
+leaving the selection otherwise intact (the stats, the exports and the build are unaffected). With
+the box unticked the tint is gone entirely and the selection is still there. Everything else on the
+model keeps its own colour; nothing is drawn where nothing is selected.
+**Guide** [Tint & view](help.html#tint)
+**Automated** `test/selection.test.mjs` — the tint holds the corners of the selected faces and
+nothing else, and the colour buffer is what makes the selection visible.
 **Result** ☐ pass ☐ fail — notes:
 
-#### M2 · The view toggles
+#### M2 · Ghost shell and the view toggles
 
 **Steps**
-1. Paint something, then toggle each control below in turn.
-2. After each, check the Mask panel's paint stats line.
+1. Select a panel and tick **Ghost shell**.
+2. Toggle **Show base model**, **Show ground grid** and **Wireframe** one at a time.
 
-**Expected**
-
-| Control | Expected result | Result |
-| --- | --- | --- |
-| **Show mask layer** | The whole paint layer disappears and returns. The stats line does not change. | ☐ pass ☐ fail |
-| **Ghost shell (dim unpainted area)** | The unpainted surface becomes a faint translucent shell, so painted regions stand out in context. Mask and exports unchanged. | ☐ pass ☐ fail |
-| **Show base model** | The original mesh shows/hides. Off is the cleanest way to look at the mask alone (keep the grid on for scale). | ☐ pass ☐ fail |
-| **Show ground grid** | The ground plane appears/disappears; it is sized from the model's bounding box, which makes window sizes easy to judge. | ☐ pass ☐ fail |
-| **Wireframe** | The model draws as triangles — the quickest way to see whether the mesh is fine enough for the mask edge you want. | ☐ pass ☐ fail |
-
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs` — the colour buffer's alpha is what these toggles change,
-and the tests pin painted = 1, hidden/cleared = 0.
+**Expected** **Ghost shell** gives everything that is *not* selected a faint alpha, so the selected
+window reads through the figure; the rest of the model is untouched. The other three toggles show and
+hide the model, the bed grid and the wireframe without changing the selection, the mask or any
+export.
+**Guide** [Tint & view](help.html#tint)
+**Automated** `test/ui-wiring.test.mjs` — every display toggle in the markup is wired to the viewer.
 **Result** ☐ pass ☐ fail — notes:
 
-#### M3 · Hide all paint
+#### M3 · The stats line
 
 **Steps**
-1. With paint on the model, press **Hide all paint**, then press it again.
-2. Clear the mask and press it once more.
+1. Load the model and read `#selectionStats`.
+2. Select a panel, then **Select all**, then <kbd>Esc</kbd>.
+3. Select more than 150,000 faces.
 
-**Expected** The first click hides every feature at once; the second shows them again (it
-checks whether anything is visible). With nothing painted it says so instead of doing nothing.
-A view setting: the mask is untouched.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/ui-wiring.test.mjs` (wiring and the action's existence).
+**Expected** The line reads `Load a model to see how much of it is selected.` before anything is
+loaded, then `0 of 422,658 faces selected (0.0%) · 0 of 1,267,974 corners inside the window`. Every
+edit updates both numbers, and the second is exactly three times the first (every triangle has three
+corners). Above 150,000 faces the line adds `too many to tint in the viewport, so the tint is off` —
+the selection is unchanged and the build still uses all of it.
+**Guide** [Selection](help.html#selection)
+**Automated** `test/selection.test.mjs` — the corner count is three per selected face; the limit
+notice is pinned by `test/ui-wiring.test.mjs`.
 **Result** ☐ pass ☐ fail — notes:
 
-#### M4 · Invert mask
+#### M4 · List windows — removing one by name
 
 **Steps**
-1. Paint one eye with **Part**, note the painted count.
-2. Press **Invert mask** (or `Shift`+`I`).
-3. `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`.
+1. Select two areas that do not touch, e.g. one shoe and one hand.
+2. Press **List windows**.
+3. Press **Remove** on one row, then **List windows** again.
+4. Press **Keep only** on a row.
 
-**Expected** Every painted vertex is released and every unpainted vertex takes the *current*
-feature: the two counts mirror each other exactly (before: N painted of M; after: M−N painted).
-One undo step; redo re-applies the inversion. A multi-feature mask collapses onto the current
-feature — this is a single-selection invert, as the guide says.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs` — invert in both directions with exactly mirrored counts,
-its undo and its redo.
+**Expected** The list names every window — each connected group of selected faces is one opening in
+the built stencil — with its face count, its share of the mesh and its size. **Remove** unselects
+that window alone and rebuilds the tint, leaving the others exactly as they were; **Keep only** keeps
+that window and unselects every other one. Both are one undo step, and both are refused with a
+readable message when the selection is empty or is a single window.
+**Guide** [The window list](help.html#windows-list)
+**Automated** `test/app-path.test.mjs` — dropping the window the list names drops it from the
+rebuild, and one undo puts it back.
 **Result** ☐ pass ☐ fail — notes:
 
-#### M5 · Clear feature
+#### M5 · Drop small windows
 
 **Steps**
-1. Paint two features.
-2. Select one and press **Clear feature**.
-3. Select the other and hover the button before clicking it.
+1. Select a big patch and add a couple of specks elsewhere (single faces are enough).
+2. Set **Drop windows under (% of the model)** to 2 and press **Drop small windows**.
+3. Press it again, and press it with everything selected as one connected region.
 
-**Expected** Only the selected feature's paint goes. Hovering shows a tooltip with how many
-vertices it would clear; with nothing painted for that feature the button is disabled and the
-click reports `Nothing painted for “Eyes” — nothing to clear`. One undo step.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs` (clear-feature restores the exact previous ids).
+**Expected** Every window smaller than the threshold goes in one undo step and the largest is always
+kept: the status line says which windows went and how much of the selection is left. Pressed a second
+time there is nothing to do and the button says so. With one connected selection the panel explains
+that no size threshold can split it, and points at **List windows** instead.
+**Guide** [Windows](help.html#windows)
+**Automated** `test/cleanup.test.mjs` — trimming on a made-up mesh with three islands of known sizes,
+a threshold above every island still keeping the largest, and a blob plus two stray dabs on the real
+figure landing as one undo step.
 **Result** ☐ pass ☐ fail — notes:
 
-#### M6 · Clear all
+#### M6 · The window count is the window list
 
 **Steps**
-1. Paint several features.
-2. Press **Clear all** once and pause; press it again inside the four-second window. Do it with a
-   built stencil in hand as well as without one.
-3. `Ctrl`+`Z`.
+1. Select one area, press **Build stencil** and note the window count in the result panel.
+2. Select a second, separate area and build again.
+3. Select two areas that touch (Shift-click two neighbouring panels) and build.
 
-**Expected** The first click arms the button (**Click again to clear**); the second wipes the
-whole mask and the status bar reports the vertex count (`Mask cleared (4,633 vertices). Ctrl+Z
-brings it back.`). It never uses a browser confirm dialog — those are silently blocked inside
-some embedded browser views — so an armed-then-abandoned click just disarms. Undo restores the
-exact previous mask. With a built stencil in hand the same message adds that the shell is still
-in the viewport and names **Discard stencil** (S12) — clearing the paint does not clear a build.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs` — Clear all is one undoable step and redo re-clears.
-**Result** ☐ pass ☐ fail — notes:
-
-#### M7 · Paint stats
-
-**Steps**
-1. Paint, erase, clear and invert, watching the bottom line of the Mask panel.
-
-**Expected** It reads `N of M vertices painted (x.x% of the mask)`, where M is the model's vertex
-count (three per triangle — 1,267,974 for the bundled model). These are the numbers the mask
-JSON and the stencil build start from, so it must track every edit.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/painting.test.mjs`, `test/app-path.test.mjs` (the same counts are asserted
-in the exported JSON).
-**Result** ☐ pass ☐ fail — notes:
-
-#### M8 · Trim windows out of the mask
-
-**Steps**
-1. Load the example model and paint a generous blob on the chest with the brush (or one panel with
-   **Part**).
-2. Add two stray dabs: drop the brush radius and click twice well away from the blob — once on a
-   limb, once near the head.
-3. Press **List windows** and read the status bar.
-4. Press **Trim windows**, then `Ctrl`+`Z`, then `Ctrl`+`Shift`+`Z`, then **Trim windows** again.
-
-**Expected** The list reports how many painted windows there are (blob + 2 dabs = 3), the size of
-each, and how many a trim would release at the threshold in the panel — 2% of the model's
-diagonal by default, about 2.6 units on the bundled figure, where the dabs are ~1.9 units across
-and the blob ~27. The trim releases exactly the dabs: the blob keeps its own colour and counts, the
-status bar names how many windows went, how many vertices were released, what share of the mask
-that was and how many windows are left, and the paint stats drop by exactly that count. One undo
-step — `Ctrl`+`Z` puts every released vertex back and `Ctrl`+`Shift`+`Z` trims again — and the
-second trim reports that there is nothing to trim. Set the threshold to 99 and trim: it is now
-honoured (it used to be cut to 50 in silence), and with the dabs gone the message names the
-percentage that would release the next window rather than reporting a bare zero. Set 100 and trim
-in a fresh mask with the blob and the dabs: every window but the largest goes and the status bar
-says the largest was spared, so a threshold set too high can shrink a mask to its main region but
-never wipe it out. With a built stencil in hand the message also says the shell is now stale —
-build again to match the trimmed mask.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/cleanup.test.mjs` — islands on a made-up mesh with a known answer and on the
-bundled figure, the released set being exactly the dabs, one undo step with undo and redo, the
-idempotent second trim, the largest-island rule and the 0–100 threshold range.
-**Result** ☐ pass ☐ fail — notes:
-
-#### M9 · Remove one window by name (the case a threshold cannot reach)
-
-**Steps**
-1. Reload the page, load the example model, and press **Part** (`P`). Click a panel on the face or
-   the chest, then `Shift`-click the panel **next to it** — two selections, one window.
-2. Press **List windows**. Read the header and the rows.
-3. Press **Remove** on that window, then `Ctrl`+`Z`.
-4. Press **List windows** again, then **Keep only** on a row, then `Ctrl`+`Z`.
-5. With the list open, paint one more dab on the model, and look at the list.
-6. In a fresh mask (reload), paint a blob and a small dab well apart, open **List windows** and
-   press **Remove** on the **first** row (the big blob).
-
-**Expected** Step 2 lists **one** window: panels that touch weld into a single painted region, so
-the header says one painter window, its size in units and as a share of the model, the features it
-is painted with (both), and it says in those words that no size threshold can split it — Step 4 of
-M8 confirmed that the trim releases nothing here at 2%, 50% or 99%. Each row carries **Remove**
-and **Keep only**; **Keep only** is disabled while there is a single window (there is nothing else
-to release). **Remove** releases exactly that window — the status bar names the vertex count and
-what share of the mask it was, the paint stats drop by that count, and **one** `Ctrl`+`Z` puts all
-of it back. **Keep only** releases every other window and leaves the one named, also one undo
-step. Step 5: the list is hidden the moment the mask changes — the rows name the vertices behind
-them — and **List windows** rebuilds it from the mask in hand. Step 6: the blob goes and the dab
-stays, which **Trim windows** can never do (it always keeps the largest), and the list shrinks to
-the one remaining window with its numbers updated.
-**Guide** [Mask](help.html#mask)
-**Automated** `test/cleanup.test.mjs` — `maskWindows()` on a made-up mesh with known file-vertex
-lists, per-window feature counts, both panels' vertices in one window on the bundled figure, the
-removal of the largest window (which the trim's rule forbids) and Keep-only; `test/ui-wiring.test.mjs`
-pins the wiring, the disabled button and the list being hidden as soon as the mask changes.
+**Expected** The panel's window count matches what **List windows** shows for the same selection, and
+each build's count is one more than the last for a separate area. Two neighbours that touch are one
+window, not two — the selection is per triangle, and connected triangles are connected however they
+were selected.
+**Guide** [Windows](help.html#windows) · [Stencil](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — the window loops of every case, and `test/app-path.test.mjs`
+for the hand-built ones.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
-
-# E. Paint stencil (STL)
+# D. Stencil (STL)
 
 #### S1 · Build the stencil
 
@@ -1116,7 +804,7 @@ copied, and that neither branch writes anything but Z.
 
 ---
 
-# F. Model & view
+# E. Model & view
 
 #### V1 · Up axis
 
@@ -1192,7 +880,7 @@ leaves the model's coordinates untouched); `test/ui-wiring.test.mjs` pins that c
 
 ---
 
-# G. Export / import
+# F. Export / import
 
 #### X1 · Save mask (JSON)
 
@@ -1368,7 +1056,7 @@ checks cannot prove.
 
 ---
 
-# H. Keyboard, mouse and the guide
+# G. Keyboard, mouse and the guide
 
 #### K1 · Every binding
 
@@ -1445,7 +1133,7 @@ option in `index.html` is named in the guide, and the suite list in the guide ma
 
 ---
 
-# I. Non-functional
+# H. Non-functional
 
 #### N1 · Nothing leaves the page
 
@@ -1564,7 +1252,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 79 |
+| Items run | ___ of 64 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { MeshBVH, acceleratedRaycast } from 'three-mesh-bvh';
-import { screenMatrix, verticesInScreenRect, facesInScreenRect } from './boxselect.js';
+import { screenMatrix, facesInScreenRect } from './boxselect.js';
 
 const BACKGROUND = 0x10141a;
 
@@ -106,7 +106,7 @@ export class Viewer {
     this.controls.dampingFactor = 0.08;
     this.controls.screenSpacePanning = true;
     this.controls.zoomSpeed = 0.9;
-    this.setPointerMode('paint');
+    this.setPointerMode('select');
 
     this.scene.add(new THREE.HemisphereLight(0xdce7ff, 0x2b3138, 0.9));
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.25));
@@ -391,9 +391,9 @@ export class Viewer {
 
   setPointerMode(mode) {
     this.pointerMode = mode;
-    if (mode === 'paint') {
-      // Left button paints; right orbit, middle pan, wheel zoom. On touch, one finger
-      // paints and two fingers pan/zoom so the gestures never fight the brush.
+    if (mode === 'select') {
+      // Left button selects; right orbit, middle pan, wheel zoom. On touch, one finger selects
+      // and two fingers pan/zoom so the gestures never fight the selection.
       this.controls.mouseButtons = {
         LEFT: null,
         MIDDLE: THREE.MOUSE.PAN,
@@ -445,53 +445,16 @@ export class Viewer {
   }
 
   /**
-   * Every vertex of the loaded model that a screen rectangle covers.
-   *
-   * The rectangle arrives in canvas pixels — the corners a drag collected, `clientX/Y` minus the
-   * canvas bounding rect — and the answer is vertex indices in the order the mask, the panels and
-   * every export use, so the caller can hand them straight to `mask.paintIndices`.
-   *
-   * The matrix is the whole inverse transform in one: model → world (the up-axis rotation and the
-   * centring offset live on the model group, which is why the mesh itself never moves) → camera →
-   * clip, and `boxselect.js` divides by `w`. Normals and the camera are taken in the mesh's own
-   * coordinates so the facing test needs no normal matrix, and the camera position is transformed
-   * back through `worldToLocal` for the same reason. Only what faces the camera is taken by
-   * default: a rectangle over the face of a closed figure covers the back of the head too.
-   */
-  selectInScreenRect(rect, { mirror = null, facingOnly = true } = {}) {
-    const empty = { vertices: new Int32Array(0), count: 0, covered: 0, hidden: 0, mirrored: 0, behind: 0 };
-    if (!this.baseMesh || !this.baseGeometry) return empty;
-    this.camera.updateMatrixWorld();
-    this.baseMesh.updateWorldMatrix(true, false);
-    const matrix = screenMatrix(
-      this.camera.projectionMatrix.elements,
-      this.camera.matrixWorldInverse.elements,
-      this.baseMesh.matrixWorld.elements,
-    );
-    const geometry = this.baseGeometry;
-    const normals = geometry.attributes.normal ? geometry.attributes.normal.array : null;
-    const cam = this.baseMesh.worldToLocal(this.camera.position.clone());
-    return verticesInScreenRect({
-      positions: geometry.attributes.position.array,
-      normals,
-      matrix,
-      width: this.canvas.clientWidth || 1,
-      height: this.canvas.clientHeight || 1,
-      rect,
-      camera: [cam.x, cam.y, cam.z],
-      mirror,
-      facingOnly,
-    });
-  }
-
-  /**
    * The triangles of the loaded model that a screen rectangle covers.
    *
-   * Same transform and same facing rule as `selectInScreenRect`, asked about triangles: this is
-   * what a rubber band in the Select tool means, as opposed to the rectangle paint tool's "every
-   * vertex under it". The answer is a `0/1` mask over faces in the mask's own face order, so the
-   * caller can pick the faces, or map them to the models they belong to, without translating
-   * indices.
+   * The rectangle arrives in canvas pixels — the corners a drag collected, `clientX/Y` minus the
+   * canvas bounding rect — and this is what a rubber band in the Select tool means. The matrix is
+   * the whole inverse transform in one: model → world (the up-axis rotation and the centring offset
+   * live on the model group, which is why the mesh itself never moves) → camera → clip, and
+   * `boxselect.js` divides by `w`. The camera position is taken in the mesh's own coordinates so
+   * the facing test needs no normal matrix. The answer is a `0/1` mask over faces in the mask's own
+   * face order, so the caller can select the faces, or map them to the models they belong to,
+   * without translating indices.
    */
   facesInScreenRect(rect, { facingOnly = true } = {}) {
     const empty = { faces: new Uint8Array(0), count: 0, covered: 0, hidden: 0, behind: 0 };

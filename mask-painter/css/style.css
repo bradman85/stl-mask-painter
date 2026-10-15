@@ -162,9 +162,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .fill-options { display: none; border-left: 2px solid var(--border); padding-left: 10px; margin: 8px 0; }
 .fill-options.on { display: block; }
 
-/* ---------------------------------------------------------------- palette */
-
-.palette { display: flex; flex-direction: column; gap: 3px; }
 
 .feature {
   display: flex;

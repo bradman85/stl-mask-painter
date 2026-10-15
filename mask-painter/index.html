@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>STL Mask Painter — features on a 3D model</title>
+<title>STL Mask Painter — select parts of a model, build a stencil</title>
 <link rel="stylesheet" href="css/style.css">
 <script type="importmap">
 {
@@ -19,7 +19,7 @@
 <header class="topbar">
   <div class="brand">
     <strong>STL Mask Painter</strong>
-    <span class="dim">load &rarr; mask &rarr; paint features</span>
+    <span class="dim">load &rarr; select &rarr; stencil</span>
   </div>
   <div class="model-info">
     <span id="modelName" class="model-name">no model loaded</span>
@@ -38,28 +38,55 @@
 <main>
   <aside class="panel">
     <section>
-      <h2>Features<a class="help" href="help.html#features" target="_blank" rel="noopener" title="Guide: Features">?</a></h2>
-      <p class="hint">Pick a feature, then paint it onto the model. <kbd>1</kbd>&hellip;<kbd>9</kbd> switch fast.</p>
-      <div id="palette" class="palette"></div>
-      <div class="row add-feature">
-        <input type="color" id="featureColor" value="#7c8cff" title="Colour for the new feature">
-        <input type="text" id="featureName" placeholder="New feature name" maxlength="24">
-        <button class="btn small" id="addFeatureBtn">Add</button>
+      <h2>Selection<a class="help" href="help.html#select" target="_blank" rel="noopener" title="Guide: Selection">?</a></h2>
+      <p class="hint">
+        Select the part of the model the stencil should expose. <b>Build stencil</b> is built from
+        this selection and nothing else — there is nothing to paint.
+      </p>
+      <div class="tool-row">
+        <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and select the whole of it (P) — the quickest way to take a head, a torso or a limb. Shift-click adds another panel, Alt-click takes one off.">Part</button>
+        <button class="tool" data-tool="select" data-scope="models" title="Click the separate model under the cursor — the shells inside one file — and select the whole of it (S). Useful for a file that holds a figure plus a base or a duplicate. Shift-click adds, Alt-click takes one off, Ctrl+A selects the lot.">Select models</button>
+        <button class="tool" data-tool="select" data-scope="faces" title="Click a single triangle to select it, or drag a rectangle and everything inside it is selected when you release (Shift+S). Plain drag makes the selection exactly what the box covers, Shift adds, Alt takes off. This is how a panel selected with Part is refined, triangle by triangle.">Select faces</button>
+      </div>
+      <div id="selectOptions" class="fill-options">
+        <p class="hint">
+          The selection is one thing, shared by every tool: take the head with <b>Part</b>, then take
+          the eyes back off it with <b>Select faces</b> a few triangles at a time, and
+          <b>Build stencil</b> uses what is left. Switching tools never clears it, because a
+          selection is not a tool's private state.
+        </p>
+        <p class="hint">
+          What is selected is tinted amber; the triangle under the cursor is outlined white, so a
+          click is judged before it happens. Click to select and again to unselect,
+          <kbd>Shift</kbd>-click adds, <kbd>Alt</kbd>-click takes one off, <kbd>Ctrl</kbd>+<kbd>A</kbd>
+          takes the lot, <kbd>Esc</kbd> clears it.
+        </p>
+        <div class="row">
+          <button class="btn small" id="selectAllBtn" title="Select every face in the model (Ctrl+A) — then click off the few you want left out">Select all</button>
+          <button class="btn small" id="selectNoneBtn" title="Clear the selection (Esc)">Select none</button>
+          <button class="btn small" id="selectInvertBtn" title="Swap what is selected for what is not — the window becomes everything except the selection (Shift+I)">Invert selection</button>
+        </div>
+        <div class="row">
+          <button class="btn small" id="countModelsBtn" title="Cut the file into its separate models and report them">Count models</button>
+          <button class="btn small danger" id="removeFacesBtn" disabled title="Take the selected faces out of the model (click twice to confirm) — for a file that holds a stray model or a failed boolean. “Restore removed” puts the geometry back">Remove selected</button>
+          <button class="btn small" id="restoreFacesBtn" disabled title="Put every removed face back into the model">Restore removed</button>
+        </div>
+        <p class="stats" id="selectionStats">Load a model to see how much of it is selected.</p>
+        <p class="hint" id="selectHint"></p>
+        <div id="modelList" class="candidates" hidden>
+          <p class="hint" id="modelHint">Models in this file:</p>
+          <div class="candidate-list" id="modelRows"></div>
+        </div>
+      </div>
+      <div class="row">
+        <button class="btn small" id="undoBtn">Undo</button>
+        <button class="btn small" id="redoBtn">Redo</button>
+        <button class="btn small" id="navigateBtn" title="Left-drag orbits instead of selecting (hold Space)">Navigate: off</button>
       </div>
     </section>
 
     <section>
-      <h2>Paint<a class="help" href="help.html#paint" target="_blank" rel="noopener" title="Guide: Paint">?</a></h2>
-      <div class="tool-row">
-        <button class="tool" data-tool="brush" title="Paint with the brush (B)">Brush</button>
-        <button class="tool" data-tool="fill" title="Flood the connected surface region, stopping at seams (F)">Region fill</button>
-        <button class="tool" data-tool="part" title="Click a panel of the model bounded by seams and paint the whole of it (P). Shift-click adds another part, Alt-click removes one.">Part</button>
-        <button class="tool" data-tool="box" title="PAINT, not select: drag a rectangle over the model and every vertex it covers that faces you is painted with the current feature (X). Alt-drag or Ctrl-drag releases paint instead, and mirroring applies as it does to the brush. To pick the faces inside a rectangle, use Select faces (Shift+S) and drag there — painting and picking are different things.">Box paint</button>
-        <button class="tool" data-tool="select" data-scope="models" title="Pick whole models — the separate shells inside one file — and remove them (S). A click picks the model under the cursor, Alt-click takes one off, Ctrl+A picks the lot. This paints nothing.">Select models</button>
-        <button class="tool" data-tool="select" data-scope="faces" title="Pick single faces (triangles) and turn them into windows or take them out (Shift+S). The face under the cursor is tinted white, the picked ones yellow; Shift-click adds, Alt-click takes one off, Ctrl+A picks the lot. Drag a rectangle and everything inside it is picked when you release — Shift drags an addition, Alt a removal. This paints nothing until you press “Paint picked faces”.">Select faces</button>
-        <button class="tool" data-tool="erase" title="Erase paint (E)">Erase</button>
-        <button class="tool" data-tool="picker" title="Eyedropper: make the feature painted under the cursor the current one (I). This picks paint, not faces — for faces use “Select faces”.">Pick</button>
-      </div>
+      <h2>Seams &amp; panels<a class="help" href="help.html#parts" target="_blank" rel="noopener" title="Guide: Seams and panels">?</a></h2>
       <div id="seamOptions" class="fill-options">
         <label class="slider">
           <span>Seam angle <b id="seamAngleVal">8&deg;</b></span>
@@ -73,117 +100,51 @@
         </div>
         <p class="hint" id="partInfo">Move the slider to cut the model into parts.</p>
         <label class="check"><input type="checkbox" id="showSeams"><span>Show seams</span></label>
-        <p class="hint">The Part tool paints the whole panel under the cursor — head, torso, a limb — so the mask window is exactly that panel.</p>
+        <p class="hint">The Part tool selects the whole panel under the cursor — head, torso, a limb — so the window is exactly that panel. A thinner seam angle cuts the model into more, smaller panels; a click near a thin panel offers the neighbours in the list below.</p>
         <div id="partCandidates" class="candidates" hidden>
           <p class="hint" id="candidateHint">Panels near the cursor:</p>
           <div class="candidate-list" id="candidateList"></div>
         </div>
       </div>
-      <label class="slider">
-        <span>Brush radius <b id="brushRadiusVal">3.2</b></span>
-        <input type="range" id="brushRadius" min="0.2" max="16" step="0.1" value="3.2">
+    </section>
+
+    <section>
+      <h2>Windows<a class="help" href="help.html#windows" target="_blank" rel="noopener" title="Guide: Windows">?</a></h2>
+      <p class="hint">
+        Every separate group of selected faces is one <b>window</b> in the built stencil — one hole.
+        Two groups that do not touch become two windows, and if they are far apart the print splits
+        into two pieces. These two buttons find and drop the ones you did not mean.
+      </p>
+      <label class="row">
+        <span class="dim">Drop windows under (% of the model)</span>
+        <input type="number" id="trimPercent" step="0.5" min="0" max="100" value="2"
+               title="A window whose bounding box is smaller than this share of the model's diagonal counts as a speck. 0–100% of the model's diagonal; the largest window is always kept">
       </label>
-      <label class="check">
-        <input type="checkbox" id="mirrorX">
-        <span>Mirror across X plane at <input type="number" id="mirrorPlaneX" step="0.5" value="0"></span>
-      </label>
-      <div id="fillOptions" class="fill-options">
-        <p class="hint">Flood fill stops where the surface turns more than the <b>seam angle</b> below.</p>
-        <label class="row">
-          <span class="dim">Max vertices</span>
-          <input type="number" id="fillLimit" value="200000" min="1000" step="1000">
-        </label>
-      </div>
-      <div id="boxOptions" class="fill-options">
-        <p class="hint">
-          <b>This paints.</b> Drag a rectangle over the model: every vertex under it that faces you
-          is painted with the current feature, as one undo step. <kbd>Alt</kbd>-drag (or
-          <kbd>Ctrl</kbd>-drag) releases paint instead, <kbd>Esc</kbd> cancels the drag, and with
-          <b>Mirror across X</b> on the rectangle is taken on the other side of the plane too. To
-          <i>pick</i> the faces inside a rectangle instead, use <b>Select faces</b>
-          (<kbd>Shift</kbd>+<kbd>S</kbd>) and drag there.
-        </p>
-      </div>
-      <div id="selectOptions" class="fill-options">
-        <p class="hint">
-          Pick faces and take them out of the model. A file often holds more than one model — a figure
-          plus a base, a duplicate, a stray blob — and the bed sits under the lowest point of any of
-          them, so an unwanted one leaves the part you want hanging in the air. <b>Select models</b>
-          (<kbd>S</kbd>) picks a whole model with a click; <b>Select faces</b> (<kbd>Shift</kbd>+<kbd>S</kbd>)
-          picks the single triangle under the cursor. What is picked is tinted yellow and the face
-          under the cursor white, so a click is judged before it happens. Click to pick and again to
-          unpick, <kbd>Shift</kbd>-click to add, <kbd>Alt</kbd>-click to take one off, or
-          <kbd>Ctrl</kbd>+<kbd>A</kbd> for the lot and click off the few you want to keep.
-        </p>
-        <p class="hint">
-          <b>Drag</b> and the rectangle is a selection: everything inside it is picked when you let
-          go — <kbd>Shift</kbd> adds to the pick, <kbd>Alt</kbd> takes the box's faces off it, and a
-          plain drag makes the pick exactly what the box covers. The pick stays lit whatever tool
-          is in hand, because it is still there: <b>Remove picked</b> cuts those faces out of the
-          model, and <b>Paint picked faces</b> paints them with the current feature as one undo
-          step, which is how a selection becomes the window of a stencil. Otherwise this tool
-          paints nothing.
-        </p>
-        <div class="row">
-          <button class="btn small" id="selectAllBtn" title="Pick every face in the model (Ctrl+A) — then click off the few you want to keep">Select all</button>
-          <button class="btn small" id="selectNoneBtn" title="Unpick everything (Esc)">Select none</button>
-          <button class="btn small" id="selectInvertBtn" title="Swap what is picked for what is not">Invert pick</button>
-        </div>
-        <div class="row">
-          <button class="btn small" id="countModelsBtn" title="Cut the file into its separate models and report them">Count models</button>
-          <button class="btn small" id="paintPickedBtn" disabled title="Paint the picked faces with the current feature, as one undo step — this is how a selection becomes the window a stencil is built from">Paint picked faces</button>
-          <button class="btn small danger" id="removeFacesBtn" disabled title="Take the picked faces out of the model (click twice to confirm). The paint stays where it was, and “Restore removed” puts the geometry back">Remove picked</button>
-          <button class="btn small" id="restoreFacesBtn" disabled title="Put every removed face back into the model">Restore removed</button>
-        </div>
-        <p class="stats" id="cleanupStats">Load a model to see the models inside the file.</p>
-        <p class="hint" id="selectHint"></p>
-        <div id="modelList" class="candidates" hidden>
-          <p class="hint" id="modelHint">Models in this file:</p>
-          <div class="candidate-list" id="modelRows"></div>
-        </div>
-      </div>
       <div class="row">
-        <button class="btn small" id="undoBtn">Undo</button>
-        <button class="btn small" id="redoBtn">Redo</button>
-        <button class="btn small" id="navigateBtn" title="Left-drag orbits instead of painting (hold Space)">Navigate: off</button>
+        <button class="btn small" id="windowsBtn" title="List every window — each connected group of selected faces is one opening in the built stencil — with a Remove button on every row, so a window can be taken out by name instead of by size">List windows</button>
+        <button class="btn small" id="trimBtn" title="Unselect every window smaller than the threshold above — the specks that become extra windows and loose pieces in the exported stencil. One undo step; the largest window is always kept, and a selection that is one connected window has nothing a size threshold can drop">Drop small windows</button>
+      </div>
+      <div id="windowList" class="candidates" hidden>
+        <p class="hint" id="windowHint">Windows in the selection:</p>
+        <div class="candidate-list" id="windowRows"></div>
       </div>
     </section>
 
     <section>
-      <h2>Mask<a class="help" href="help.html#mask" target="_blank" rel="noopener" title="Guide: Mask">?</a></h2>
+      <h2>Tint &amp; view<a class="help" href="help.html#tint" target="_blank" rel="noopener" title="Guide: Tint and view">?</a></h2>
       <label class="slider">
-        <span>Mask opacity <b id="overlayOpacityVal">100%</b></span>
+        <span>Selection tint <b id="overlayOpacityVal">100%</b></span>
         <input type="range" id="overlayOpacity" min="0" max="1" step="0.02" value="1">
       </label>
-      <label class="check"><input type="checkbox" id="showOverlay" checked><span>Show mask layer</span></label>
-      <label class="check"><input type="checkbox" id="ghostShell"><span>Ghost shell (dim unpainted area)</span></label>
+      <label class="check"><input type="checkbox" id="showOverlay" checked><span>Show the selection tint</span></label>
+      <label class="check"><input type="checkbox" id="ghostShell"><span>Ghost shell (dim everything not selected)</span></label>
       <label class="check"><input type="checkbox" id="showBase" checked><span>Show base model</span></label>
       <label class="check"><input type="checkbox" id="showGrid" checked><span>Show ground grid</span></label>
       <label class="check"><input type="checkbox" id="wireframe"><span>Wireframe</span></label>
-      <div class="row">
-        <button class="btn small" id="hideAllBtn">Hide all paint</button>
-        <button class="btn small" id="invertBtn" title="Paint every unpainted vertex with the current feature and release the painted ones (Shift+I) — the window becomes everything except what you had selected">Invert mask</button>
-        <button class="btn small" id="clearFeatureBtn">Clear feature</button>
-        <button class="btn small danger" id="clearAllBtn">Clear all</button>
-      </div>
-      <label class="row">
-        <span class="dim">Trim windows under (% of the model)</span>
-        <input type="number" id="trimPercent" step="0.5" min="0" max="100" value="2"
-               title="A painted window whose bounding box is smaller than this share of the model's diagonal counts as a speck. 0–100% of the model's diagonal; the largest window is always kept">
-      </label>
-      <div class="row">
-        <button class="btn small" id="windowsBtn" title="List every painted window — each connected painted area is one opening in the built stencil — with a Remove button on every row, so a window can be taken out by name instead of by size">List windows</button>
-        <button class="btn small" id="trimBtn" title="Release every painted window smaller than the threshold above — the specks that become extra windows and loose pieces in the exported stencil. One undo step; the largest window is always kept, and a mask that is one connected window has nothing a size threshold can release">Trim windows</button>
-      </div>
-      <div id="windowList" class="candidates" hidden>
-        <p class="hint" id="windowHint">Painted windows:</p>
-        <div class="candidate-list" id="windowRows"></div>
-      </div>
-      <p class="stats" id="paintStats">No model loaded.</p>
     </section>
 
     <section>
-      <h2>Model &amp; view<a class="help" href="help.html#view" target="_blank" rel="noopener" title="Guide: Model and view">?</a></h2>
+      <h2>Model<a class="help" href="help.html#view" target="_blank" rel="noopener" title="Guide: Model and view">?</a></h2>
       <label class="row">
         <span class="dim">Up axis</span>
         <select id="upAxis">
@@ -204,18 +165,18 @@
         <button class="btn small" data-view="top">Top</button>
         <button class="btn small" data-view="home">Home</button>
       </div>
-      <p class="hint">Right-drag orbit &middot; middle-drag pan &middot; wheel zoom &middot; hold <kbd>Space</kbd> to orbit with the left button.</p>
+      <p class="hint">Right-drag orbit &middot; middle-drag pan &middot; wheel zoom &middot; hold <kbd>Space</kbd> to orbit with the left button. Selecting never moves the model; the mask, the panels and every export keep the file's own coordinates.</p>
     </section>
 
     <section>
-      <h2>Paint stencil (STL)<a class="help" href="help.html#stencil" target="_blank" rel="noopener" title="Guide: Paint stencil (STL)">?</a></h2>
+      <h2>Stencil (STL)<a class="help" href="help.html#stencil" target="_blank" rel="noopener" title="Guide: Stencil (STL)">?</a></h2>
       <p class="hint">
-        The painted area becomes a <b>window</b> in a one-piece shell that sits on the model.
-        Hold the printed mask on the figure and only the painted area is exposed.
+        The selected area becomes a <b>window</b> in a one-piece shell that sits on the model. Hold
+        the printed mask on the figure and only the selected area is exposed.
       </p>
       <div class="row">
         <button class="btn small" id="stencilBuildBtn">Build stencil</button>
-        <button class="btn small" id="stencilClearBtn" disabled title="Throw the built shell away and clear its preview (the painted mask is not touched)">Discard stencil</button>
+        <button class="btn small" id="stencilClearBtn" disabled title="Throw the built shell away and clear its preview (the selection is not touched)">Discard stencil</button>
         <label class="check"><input type="checkbox" id="stencilPreview" checked><span>Preview</span></label>
       </div>
       <label class="row">
@@ -234,13 +195,13 @@
         <span class="dim">Window inlay (mm)</span>
         <input type="number" id="stencilOverhang" step="0.05" min="0">
       </label>
-      <label class="check"><input type="checkbox" id="growIfSplit" checked><span>Widen the reach until the mask is one piece</span></label>
+      <label class="check"><input type="checkbox" id="growIfSplit" checked><span>Widen the reach until the window is one piece</span></label>
       <p class="hint">
         Reach is where the mask material starts. With widening on it grows by itself until the
-        mask is a single piece — good for a window you painted by hand, but it can spread over
-        the whole figure. Turn it off to keep a band around the window (builds much faster).
-        Standoff is the gap the mask leaves over the model so it can be slid into place; the
-        build reports the gap it actually achieved. Numbers are in model units (mm for a
+        mask is a single piece — good for a window that came out in several groups, but it can
+        spread over the whole figure. Turn it off to keep a band around the window (builds much
+        faster). Standoff is the gap the mask leaves over the model so it can be slid into place;
+        the build reports the gap it actually achieved. Numbers are in model units (mm for a
         millimetre model).
       </p>
       <label class="check">
@@ -256,17 +217,19 @@
     <section>
       <h2>Export / import<a class="help" href="help.html#export" target="_blank" rel="noopener" title="Guide: Export / import">?</a></h2>
       <div class="row">
-        <button class="btn small" id="exportMaskBtn" title="Save the windows you have marked up (the painted vertices), the palette and the build settings, so you can open the mask again later and keep adding to it">Save mask (JSON)</button>
-        <button class="btn small" id="exportPlyBtn">Painted shell PLY</button>
+        <button class="btn small" id="exportMaskBtn" title="Save the selection (the corners inside the window) and the build settings, so you can open it again later on the same model and carry on selecting">Save selection (JSON)</button>
+        <button class="btn small" id="exportPlyBtn" title="Write the selected shell as a PLY: only the triangles inside the window, so the file is the selection rather than the whole model">Selected shell PLY</button>
       </div>
       <label class="btn small block">
-        Open mask (JSON)&hellip;
+        Open selection (JSON)&hellip;
         <input type="file" id="importInput" accept=".json,application/json" hidden>
       </label>
       <p class="hint" id="exportHint">
-        <b>Save mask (JSON)</b> is the session file: the windows you marked up, plus the palette
-        and the build settings. Load the same model later, <b>Open mask (JSON)&hellip;</b>, and
-        carry on adding windows — the PLY is only the painted shell, in per-vertex colours.
+        <b>Save selection (JSON)</b> is the session file: the window you have selected, plus the
+        build settings. Load the same model later, <b>Open selection (JSON)&hellip;</b>, and carry
+        on adding to it — the PLY is only the selected shell. A mask saved by an older version of
+        this app still opens: it carried several paint colours, and all of them come back as the
+        one selection.
       </p>
     </section>
   </aside>
@@ -277,9 +240,8 @@
     <div class="box-select" id="boxSelect" hidden></div>
 
     <div class="hud hud-top">
-      <span class="chip" id="hudFeature"><i class="swatch"></i><span>—</span></span>
-      <span class="chip" id="hudTool">Brush</span>
-      <span class="chip" id="hudRadius">r 3.2</span>
+      <span class="chip" id="hudTool">Select faces</span>
+      <span class="chip" id="hudSelection">nothing selected</span>
     </div>
 
     <div class="loading" id="loading" hidden>

@@ -5,13 +5,17 @@
 //
 // The trim is checked twice: on a synthetic mesh with a known answer (three islands of different
 // sizes, so "which ones go" is arithmetic rather than judgement), and on the bundled figure — a
-// blob where the mask belongs plus two stray dabs — where it has to release exactly the dabs,
-// keep the blob's vertices bit for bit, and land in the undo history as one step.
+// blob where the mask belongs plus a stray dab — where it has to release exactly the dab, keep the
+// blob's corners bit for bit, and land in the undo history as one step.
 //
-// The window list is checked on the two cases a size threshold cannot reach at all: a mask that
-// is one connected region — two panels that touch, which is exactly what Shift-clicking the
-// neighbouring panel produces, and what made "Trim islands" look like a dead button — and the
-// largest window itself, which the trim is forbidden from releasing and the list has to.
+// The window list is checked on the two cases a size threshold cannot reach at all: a selection
+// that is one connected region — two panels that touch, which is exactly what Shift-clicking the
+// neighbouring panel with the Part tool produces, and what made "Trim islands" look like a dead
+// button — and the largest window itself, which the trim is forbidden from releasing and the list
+// has to.
+//
+// The selection is written the way the app writes it throughout: a set of faces, through
+// `paintedFromFaces` into the mask layer the analysis reads. Nothing here paints.
 //
 // The centring transform is checked as arithmetic on real boxes: the model group moves, and the
 // geometry it holds does not, because the mask is per vertex, the panels are per face and every
@@ -21,8 +25,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../vendor/three.module.js';
-import { MaskLayer } from '../js/mask.js';
-import { createFeatureList } from '../js/features.js';
+import { SelectionTint } from '../js/mask.js';
+import {
+  createSelection,
+  countSelected,
+  applyFaces,
+  paintedFromFaces,
+  facesFromVertices,
+  facesFromPainted,
+  SelectionHistory,
+} from '../js/selection.js';
 import { buildTopology } from '../js/stencil.js';
 import { paintedIslands, planIslandTrim, maskWindows } from '../js/cleanup.js';
 import { buildParts, partSoupVertices, DEFAULT_SEAM_ANGLE } from '../js/parts.js';
@@ -158,21 +170,17 @@ function syntheticSoup() {
       windows[0].centre.every((n, k) => Math.abs(n - [2, 0, 2][k]) < 1e-6),
     `centre ${windows[0].centre.join(', ')}`,
   );
-  check(
-    'a window knows which feature painted it',
-    windows[0].features.length === 1 && windows[0].features[0].id === 1 && windows[0].features[0].vertices === 6,
-    windows[0].features.map((f) => `${f.id}:${f.vertices}`).join(' '),
-  );
+  // A window is a window: the analysis is about which corners are selected, not about why. A mask
+  // that carries two different ids in one connected region is still one window — which is the
+  // shape the old palette could produce and the analysis has to keep reading.
   const mixed = Int16Array.from(all);
   mixed[0] = 2;
   mixed[1] = 2;
+  const mixedWindows = maskWindows(topo, mixed);
   check(
-    'a window painted with two features reports both, biggest group first',
-    (() => {
-      const w = maskWindows(topo, mixed)[0];
-      return w.features.length === 2 && w.features[0].id === 1 && w.features[0].vertices === 4 && w.features[1].id === 2 && w.features[1].vertices === 2;
-    })(),
-    maskWindows(topo, mixed)[0].features.map((f) => `${f.id}:${f.vertices}`).join(' '),
+    'two ids in one connected region are one window: the analysis is about the selection',
+    mixedWindows.length === 3 && mixedWindows[0].vertices === 6,
+    `${mixedWindows.length} window(s), largest ${fmt(mixedWindows[0].vertices)} corners`,
   );
   check(
     'the list and the trim describe the same islands',
@@ -217,117 +225,135 @@ function frontMost(centreY, spreadY) {
   return best;
 }
 
+// ------------------------------------------------------------- the trim on the bundled figure
+//
+// Selected the way the app selects: two regions of the surface taken as sets of triangles — the
+// blob the window is about, and one stray dab far from it — written into the selection and shown
+// through the mask layer. The expectation for the dab is independent of the mask (a sphere test on
+// the model's own coordinates), so "the plan releases the dab" is a comparison rather than a
+// restatement of the code under test.
 {
-  const mask = new MaskLayer(geometry, createFeatureList());
-  const blob = frontMost(centre.y + size.y * 0.05, size.y * 0.12);
-  const dabA = frontMost(centre.y - size.y * 0.36, size.y * 0.03);
-  const dabB = frontMost(centre.y + size.y * 0.42, size.y * 0.03);
+  const faces = vertexCount / 3;
+  const tint = new SelectionTint(geometry);
+  const selection = createSelection(faces);
+  const history = new SelectionHistory();
+  const show = () => tint.setSelection(paintedFromFaces(selection));
+
+  const blobAt = frontMost(centre.y + size.y * 0.05, size.y * 0.12);
+  const dabAt = frontMost(centre.y - size.y * 0.36, size.y * 0.03);
   const where = (p) => (p ? p.map((n) => n.toFixed(1)).join(', ') : 'none');
   check(
-    'three stamps land on the model',
-    !!(blob && dabA && dabB),
-    `blob at ${where(blob)}, dabs at ${where(dabA)} and ${where(dabB)}`,
+    'the blob and the dab land on the model',
+    !!(blobAt && dabAt),
+    `blob at ${where(blobAt)}, dab at ${where(dabAt)}`,
   );
 
   const blobRadius = topo.diagonal * 0.075;
   const dabRadius = topo.diagonal * 0.006; // about 0.8 units on this model
-  mask.beginStroke();
-  mask.paintSphere(blob, blobRadius, 1);
-  mask.endStroke();
-  mask.beginStroke();
-  mask.paintSphere(dabA, dabRadius, 2);
-  mask.paintSphere(dabB, dabRadius, 2);
-  mask.endStroke();
-  const painted = mask.stats().painted;
-  check('the mask has a blob and two dabs', painted > 0, `${fmt(painted)} vertices painted`);
+  const blobFlags = paintSpheres(positions, [[...blobAt, blobRadius]]);
+  const dabFlags = paintSpheres(positions, [[...dabAt, dabRadius]]);
+  // The two steps the app takes: the faces a region covers, then the mask those faces mean.
+  applyFaces(selection, facesFromPainted(blobFlags.painted, faces));
+  applyFaces(selection, facesFromPainted(dabFlags.painted, faces), { add: true });
+  show();
+  const painted = tint.stats().painted;
   check(
-    'both dabs are painted as their own feature',
-    (mask.stats().counts.get(2) || 0) > 0,
-    `${fmt(mask.stats().counts.get(2) || 0)} vertices with the dab feature`,
+    'the selection reaches the mask as corners, and the dab is part of it',
+    painted > 0 && dabFlags.count > 0 && painted === countSelected(selection) * 3,
+    `${fmt(painted)} corners for ${fmt(countSelected(selection))} faces, dab ${fmt(dabFlags.count)} vertices`,
   );
 
-  // Independent expectation of the dab regions, from the sphere test rather than from the mask.
-  const dabs = paintSpheres(positions, [
-    [...dabA, dabRadius],
-    [...dabB, dabRadius],
-  ]);
-  const before = Int16Array.from(mask.ids);
+  const beforeIds = Int16Array.from(tint.ids);
   const t0 = performance.now();
   const plan = planIslandTrim({
     topology: topo,
-    ids: mask.ids,
-    minDiagonal: topo.diagonal * 0.02, // the panel's default: 2% of the model's size
+    ids: tint.ids,
+    // 5% of the model's size: the dab is a couple of triangles wide, and a selection made of
+    // whole triangles is a little larger than the sphere it was built around.
+    minDiagonal: topo.diagonal * 0.05,
   });
   const planMs = performance.now() - t0;
   console.log(
-    `      ${fmt(plan.islands)} islands on the bundled figure, ${fmt(painted)} vertices painted, ` +
+    `      ${fmt(plan.islands)} islands on the bundled figure, ${fmt(painted)} corners selected, ` +
       `threshold ${plan.threshold.toFixed(2)} units, plan in ${planMs.toFixed(0)} ms`,
   );
 
   check(
-    'the blob and the two dabs come back as three islands',
-    plan.islands === 3,
+    'the blob and the dab come back as two islands',
+    plan.islands === 2,
     `${plan.islands} islands: ${plan.details.map((d) => `${fmt(d.vertices)}v/${d.diagonal.toFixed(2)}d`).join(' ')}`,
   );
+  check('the plan releases the dab', plan.doomedIslands === 1, `${plan.doomedIslands} island(s)`);
+
+  // Independent expectation: every corner the plan releases is on the dab — or within one mesh
+  // edge of it, which is how far a triangle selected because *one* of its corners is on the dab
+  // reaches past it. Nothing from the blob may appear.
+  const reach = dabRadius + topo.meanEdgeLength;
+  const near = (point, c) =>
+    Math.hypot(positions[c * 3] - point[0], positions[c * 3 + 1] - point[1], positions[c * 3 + 2] - point[2]) <= reach;
+  let stray = 0;
+  for (const c of plan.released) if (!near(dabAt, c)) stray += 1;
   check(
-    'the plan releases exactly the two dabs',
-    plan.doomedIslands === 2 && plan.released.length === dabs.count,
-    `${plan.doomedIslands} island(s), released ${fmt(plan.released.length)} vs ${fmt(dabs.count)} dab vertices`,
+    'and nothing else — not one corner of the blob',
+    stray === 0 && plan.doomedVertices < painted,
+    `${stray} released corners outside the dab, ${fmt(painted - plan.doomedVertices)} of ${fmt(painted)} kept`,
   );
-  let mismatched = 0;
-  for (const i of plan.released) if (!dabs.painted[i]) mismatched += 1;
-  check('and nothing else', mismatched === 0 && plan.doomedVertices === dabs.count, `${mismatched} released outside the dabs`);
   check(
-    'the mask proper is untouched by the plan',
-    before.every((v, i) => v === mask.ids[i]) && plan.doomedVertices < painted,
-    `${fmt(painted - plan.doomedVertices)} of ${fmt(painted)} vertices kept`,
+    'the plan is a plan: the selection and the mask are untouched',
+    beforeIds.every((v, i) => v === tint.ids[i]) && countSelected(selection) > 0,
+    `${fmt(countSelected(selection))} faces still selected`,
   );
   check('a plan is fast enough to sit behind a button', planMs < 1500, `${planMs.toFixed(0)} ms`);
 
-  // --- the edit the app makes: one stroke, one undo step, exact
-  const historyBefore = mask.history.length;
-  mask.beginStroke();
-  const changed = mask.paintIndices(plan.released, 0);
-  const recorded = mask.endStroke();
-  mask.flush();
+  // --- the edit the app makes: one history entry, exact
+  const wanted = new Uint8Array(faces);
+  for (const c of plan.released) wanted[Math.floor(c / 3)] = 1;
+  history.remember(selection);
+  const changed = applyFaces(selection, wanted, { remove: true });
+  show();
   check(
     'the trim lands as one undo step that releases exactly the plan',
-    recorded && mask.history.length === historyBefore + 1 && changed === plan.released.length,
-    `${changed} vertices, history ${historyBefore} -> ${mask.history.length}`,
+    history.undoStack.length === 1 && changed > 0 && tint.stats().painted === painted - changed * 3,
+    `${fmt(changed)} faces unselected, mask ${fmt(painted)} -> ${fmt(tint.stats().painted)} corners`,
   );
   check(
-    'the blob keeps its own feature count after the trim',
-    (mask.stats().counts.get(1) || 0) === (Int16Array.from(before).reduce((n, v) => n + (v === 1 ? 1 : 0), 0)),
-    `${fmt(mask.stats().counts.get(1) || 0)} vertices still painted with the blob feature`,
+    'the blob keeps every corner it had after the trim',
+    (() => {
+      let kept = 0;
+      for (let c = 0; c < tint.ids.length; c += 1) if (beforeIds[c] && tint.ids[c]) kept += 1;
+      let lost = 0;
+      for (let c = 0; c < tint.ids.length; c += 1) if (beforeIds[c] && !tint.ids[c] && !plan.released.includes(c)) lost += 1;
+      return lost === 0 && kept === tint.stats().painted;
+    })(),
+    `${fmt(tint.stats().painted)} corners left, all of them already selected`,
   );
-  check(
-    'the mask is smaller by the dabs and nothing else',
-    mask.stats().painted === painted - plan.doomedVertices,
-    `${fmt(mask.stats().painted)} vs ${fmt(painted - plan.doomedVertices)}`,
-  );
-  const after = planIslandTrim({ topology: topo, ids: mask.ids, minDiagonal: plan.threshold });
-  check('trimming again finds nothing to trim', after.doomedIslands === 0, `${after.islands} island(s)`);
+  const again = planIslandTrim({ topology: topo, ids: tint.ids, minDiagonal: plan.threshold });
+  check('trimming again finds nothing to trim', again.doomedIslands === 0, `${again.islands} island(s)`);
 
-  mask.undo();
+  history.undo(selection);
+  show();
   let diff = 0;
-  for (let i = 0; i < before.length; i += 1) if (before[i] !== mask.ids[i]) diff += 1;
-  check('undo puts every dab vertex back, exactly', diff === 0, `${fmt(diff)} vertices differ`);
-  mask.redo();
-  check('and redo trims again', mask.stats().painted === painted - plan.doomedVertices, `${fmt(mask.stats().painted)} painted`);
-  mask.undo();
+  for (let i = 0; i < beforeIds.length; i += 1) if (beforeIds[i] !== tint.ids[i]) diff += 1;
+  check('undo puts every dab corner back, exactly', diff === 0 && tint.stats().painted === painted, `${fmt(diff)} corners differ`);
+  history.redo(selection);
+  show();
+  check('and redo trims again', tint.stats().painted === painted - changed * 3, `${fmt(tint.stats().painted)} corners`);
+  history.undo(selection);
+  show();
 }
 
 // ------------------------------------------------- the window list on the bundled figure
 //
-// Two shapes of mask, both of which a size threshold fails on — the report that started this:
+// Two shapes of selection, both of which a size threshold fails on — the report that started this:
 //
 //   a) two panels that touch (a Shift-click on the panel next to the one selected) weld into a
-//      single painted region, so "Trim islands", at 2%, 50% or 99%, releases nothing at all and
-//      the button reads as dead. It is not: there is one window, and the only way to be rid of
-//      part of it is to name it.
-//   b) the largest window, which the trim is deliberately never allowed to release — "the mask
-//      is right except for the big lump" is exactly the case it refuses.
+//      single window, so "Trim islands", at 2%, 50% or 99%, releases nothing at all and the button
+//      reads as dead. It is not: there is one window, and the only way to be rid of part of it is
+//      to name it.
+//   b) the largest window, which the trim is deliberately never allowed to release — "the mask is
+//      right except for the big lump" is exactly the case it refuses.
 {
+  const faces = vertexCount / 3;
   const parts = buildParts(topo, { seamAngleDeg: DEFAULT_SEAM_ANGLE });
   // Panels that touch: two panels are neighbours when their faces share a welded vertex. (In an
   // STL soup adjacent triangles share no vertex index, which is why this has to go through the
@@ -355,25 +381,41 @@ function frontMost(centreY, spreadY) {
   check('the figure has a mid-size panel with a neighbour to Shift-click', !!pick, pick ? `${fmt(pick[0])} faces` : 'none found');
   const panel = pick[1];
   const neighbour = [...touch.get(panel)].sort((a, b) => parts.partSizes[b] - parts.partSizes[a])[0];
-  const paintPanel = (m, id, which) => {
-    m.beginStroke();
-    m.paintIndices(partSoupVertices(parts, which, []), id);
-    m.endStroke();
+
+  const tint = new SelectionTint(geometry);
+  const selection = createSelection(faces);
+  const history = new SelectionHistory();
+  const show = () => tint.setSelection(paintedFromFaces(selection));
+  /** What the Part tool does to the selection: a panel, as the faces its own corners belong to. */
+  const addPanel = (which) => {
+    const wanted = facesFromVertices(partSoupVertices(parts, which, []), faces);
+    const changed = applyFaces(selection, wanted, { add: true });
+    show();
+    return changed;
+  };
+  const windowFaceCount = (w) => new Set(w.fileVertices.map((c) => Math.floor(c / 3))).size;
+  /** What a window row's Remove does: release the faces that window covers. */
+  const releaseWindow = (w) => {
+    const wanted = new Uint8Array(faces);
+    for (const c of w.fileVertices) wanted[Math.floor(c / 3)] = 1;
+    history.remember(selection);
+    const changed = applyFaces(selection, wanted, { remove: true });
+    show();
+    return changed;
   };
 
   // --- a) two panels that touch are one window
-  const touching = new MaskLayer(geometry, createFeatureList());
-  paintPanel(touching, 1, panel);
-  paintPanel(touching, 2, neighbour);
-  const paintedTouching = touching.stats().painted;
-  const touchingWindows = maskWindows(topo, touching.ids);
+  addPanel(panel);
+  addPanel(neighbour);
+  const paintedTouching = tint.stats().painted;
+  const touchingWindows = maskWindows(topo, tint.ids);
   console.log(
     `      panels ${panel + 1} (${fmt(parts.partSizes[panel])} faces) + ${neighbour + 1} ` +
-      `(${fmt(parts.partSizes[neighbour])}): ${fmt(paintedTouching)} vertices, ` +
+      `(${fmt(parts.partSizes[neighbour])}): ${fmt(paintedTouching)} corners, ` +
       `${touchingWindows.length} window(s) ${touchingWindows[0].diagonal.toFixed(1)} units across`,
   );
   check(
-    'two panels that touch are one painted window, not two',
+    'two panels that touch are one window, not two',
     touchingWindows.length === 1,
     `${touchingWindows.length} window(s)`,
   );
@@ -381,94 +423,95 @@ function frontMost(centreY, spreadY) {
     'so no threshold releases anything here — 2%, 50% and 99% included',
     [0, 2, 50, 99, 100].every(
       (pct) =>
-        planIslandTrim({ topology: topo, ids: touching.ids, minDiagonal: (pct / 100) * topo.diagonal }).doomedIslands === 0,
+        planIslandTrim({ topology: topo, ids: tint.ids, minDiagonal: (pct / 100) * topo.diagonal }).doomedIslands === 0,
     ),
     `island diagonals: ${touchingWindows.map((w) => w.diagonal.toFixed(1)).join(', ')}`,
   );
   check(
-    'and the window names both panels and both features, so it can be acted on',
-    touchingWindows[0].features.length === 2 &&
-      touchingWindows[0].fileVertices.length === paintedTouching &&
+    'and the window carries both panels, so it can be acted on',
+    touchingWindows[0].fileVertices.length === paintedTouching &&
+      windowFaceCount(touchingWindows[0]) === countSelected(selection) &&
       [...touch.get(panel)].includes(neighbour),
-    touchingWindows[0].features.map((f) => `${f.id}:${fmt(f.vertices)}`).join(' + '),
+    `${fmt(windowFaceCount(touchingWindows[0]))} faces in one window`,
   );
-  // Remove: the vertices the row carries, released in one undo step, exactly.
-  const touchingBefore = Int16Array.from(touching.ids);
-  touching.beginStroke();
-  const removedTouching = touching.paintIndices(touchingWindows[0].fileVertices, 0);
-  const recordedTouching = touching.endStroke();
-  touching.flush();
+
+  // Remove: the faces the row carries, released in one undo step, exactly.
+  const touchingBefore = Uint8Array.from(selection.faces);
+  const removedTouching = releaseWindow(touchingWindows[0]);
   check(
     'Remove releases exactly that window — the one the trim could never touch',
-    recordedTouching && removedTouching === paintedTouching && touching.stats().painted === 0,
-    `${fmt(removedTouching)} of ${fmt(paintedTouching)} vertices, ${touching.history.length} undo step(s)`,
+    removedTouching === touchingBefore.reduce((n, v) => n + v, 0) && tint.stats().painted === 0 &&
+      history.undoStack.length === 1,
+    `${fmt(removedTouching)} faces unselected, ${fmt(tint.stats().painted)} corners left`,
   );
-  touching.undo();
+  history.undo(selection);
+  show();
   let touchingDiff = 0;
-  for (let i = 0; i < touchingBefore.length; i += 1) if (touchingBefore[i] !== touching.ids[i]) touchingDiff += 1;
-  check('and one undo puts every vertex back', touching.stats().painted === paintedTouching && touchingDiff === 0, `${touchingDiff} differ`);
+  for (let t = 0; t < touchingBefore.length; t += 1) if (touchingBefore[t] !== selection.faces[t]) touchingDiff += 1;
+  check('and one undo puts every face back', tint.stats().painted === paintedTouching && touchingDiff === 0, `${touchingDiff} differ`);
 
-  // --- b) blob + two dabs: the window list reaches the largest window too
-  const mask = new MaskLayer(geometry, createFeatureList());
-  const blob = frontMost(centre.y + size.y * 0.05, size.y * 0.12);
-  const dabA = frontMost(centre.y - size.y * 0.36, size.y * 0.03);
-  mask.beginStroke();
-  mask.paintSphere(blob, topo.diagonal * 0.075, 1);
-  mask.endStroke();
-  mask.beginStroke();
-  mask.paintSphere(dabA, topo.diagonal * 0.006, 2);
-  mask.endStroke();
-  const painted = mask.stats().painted;
-  const windows = maskWindows(topo, mask.ids);
+  // --- b) blob + one dab: the window list reaches the largest window too
+  applyFaces(selection, new Uint8Array(faces)); // a plain gesture replaces: start from nothing
+  const blobAt = frontMost(centre.y + size.y * 0.05, size.y * 0.12);
+  const dabAt = frontMost(centre.y - size.y * 0.36, size.y * 0.03);
+  const blobFlags = paintSpheres(positions, [[...blobAt, topo.diagonal * 0.075]]);
+  const dabFlags = paintSpheres(positions, [[...dabAt, topo.diagonal * 0.006]]);
+  applyFaces(selection, facesFromPainted(blobFlags.painted, faces));
+  applyFaces(selection, facesFromPainted(dabFlags.painted, faces), { add: true });
+  show();
+  const painted = tint.stats().painted;
+  const windows = maskWindows(topo, tint.ids);
   check(
-    'the list comes back largest first, with the dabs after the blob',
-    windows.length === 2 && windows[0].features[0].id === 1 && windows[1].features[0].id === 2,
-    windows.map((w) => `${fmt(w.vertices)}v/${w.diagonal.toFixed(2)}d/${w.features[0].id}`).join(' '),
+    'the list comes back largest first, with the dab after the blob',
+    windows.length === 2 && windows[0].vertices > windows[1].vertices && windows[0].diagonal > windows[1].diagonal,
+    windows.map((w) => `${fmt(w.vertices)}v/${w.diagonal.toFixed(2)}d`).join(' '),
   );
   check(
-    'every file vertex of the mask is in exactly one window',
+    'every selected corner of the mask is in exactly one window',
     windows.reduce((n, w) => n + w.vertices, 0) === painted &&
       new Set(windows.flatMap((w) => w.fileVertices)).size === painted,
-    `${fmt(painted)} painted, ${fmt(windows.reduce((n, w) => n + w.vertices, 0))} across ${windows.length} window(s)`,
+    `${fmt(painted)} selected, ${fmt(windows.reduce((n, w) => n + w.vertices, 0))} across ${windows.length} window(s)`,
   );
-  // The largest window goes, and the dabs stay: the trim's rule forbids exactly this.
-  const keptDab = Int16Array.from(mask.ids);
-  mask.beginStroke();
-  const removedBlob = mask.paintIndices(windows[0].fileVertices, 0);
-  mask.endStroke();
-  mask.flush();
-  const left = maskWindows(topo, mask.ids);
+  // The largest window goes, and the dab stays: the trim's rule forbids exactly this.
+  const keptDabIds = Int16Array.from(tint.ids);
+  const removedBlob = releaseWindow(windows[0]);
+  const left = maskWindows(topo, tint.ids);
   check(
     'Remove takes out the largest window and keeps the rest',
-    removedBlob === windows[0].vertices && left.length === 1 && left[0].features[0].id === 2 &&
+    removedBlob === windowFaceCount(windows[0]) && left.length === 1 &&
       left[0].diagonal.toFixed(3) === windows[1].diagonal.toFixed(3),
-    `removed ${fmt(removedBlob)} vertices, ${left.length} window(s) left`,
+    `released ${fmt(removedBlob)} faces, ${left.length} window(s) left`,
   );
-  const widest = planIslandTrim({ topology: topo, ids: keptDab, minDiagonal: topo.diagonal });
+  const widest = planIslandTrim({ topology: topo, ids: keptDabIds, minDiagonal: topo.diagonal });
   check(
     'a threshold at every setting could not have done that — it spares the largest by rule',
     widest.sparedLargest && widest.doomedIslands === 1 &&
       widest.released.length === windows[1].vertices &&
       !widest.released.includes(windows[0].fileVertices[0]),
-    `${fmt(widest.doomedVertices)} vertices released, largest spared`,
+    `${fmt(widest.doomedVertices)} corners released, largest spared`,
   );
   // Keep only: every other window released, leaving exactly this one.
-  const keepOnly = Int16Array.from(keptDab);
-  mask.undo();
-  mask.beginStroke();
-  const others = maskWindows(topo, mask.ids).filter((w) => w.features[0].id !== 2);
-  const removedOthers = mask.paintIndices(others.flatMap((w) => w.fileVertices), 0);
-  mask.endStroke();
-  mask.flush();
-  const kept = maskWindows(topo, mask.ids);
+  history.undo(selection);
+  show();
+  const all = maskWindows(topo, tint.ids);
+  const keepIndex = all.length - 1;
+  const wantedOthers = new Uint8Array(faces);
+  for (const w of all.filter((w) => w !== all[keepIndex])) {
+    for (const c of w.fileVertices) wantedOthers[Math.floor(c / 3)] = 1;
+  }
+  history.remember(selection);
+  const removedOthers = applyFaces(selection, wantedOthers, { remove: true });
+  show();
+  const kept = maskWindows(topo, tint.ids);
   check(
     'Keep only leaves exactly the window it names',
-    kept.length === 1 && kept[0].features[0].id === 2 && removedOthers === painted - kept[0].vertices,
-    `${fmt(removedOthers)} released, ${fmt(kept[0].vertices)} kept (mask had ${fmt(painted)})`,
+    kept.length === 1 && removedOthers > 0 && tint.stats().painted === kept[0].vertices &&
+      kept[0].diagonal.toFixed(3) === all[keepIndex].diagonal.toFixed(3),
+    `${fmt(removedOthers)} faces released, ${fmt(kept[0].vertices)} corners kept (mask had ${fmt(tint.stats().painted)})`,
   );
   check(
     'and the mask it leaves is the dab, not the blob',
-    kept[0].diagonal.toFixed(3) === maskWindows(topo, keepOnly)[1].diagonal.toFixed(3),
+    kept[0].diagonal.toFixed(3) === windows[1].diagonal.toFixed(3),
     `${kept[0].diagonal.toFixed(2)} units across`,
   );
 }

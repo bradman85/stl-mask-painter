@@ -53,7 +53,7 @@ check(
 );
 check(
   'the empty states the app opens with are still in the markup',
-  />no model loaded</.test(html) && /No model loaded\./.test(html),
+  />no model loaded</.test(html) && /load &rarr; select &rarr; stencil/.test(html),
 );
 
 const stencilIds = ['stencilBuildBtn', 'stencilClearBtn', 'stencilExportBtn', 'stencilPreview', 'stencilReach', 'stencilWall', 'stencilStandoff', 'stencilOverhang', 'stencilStats'];
@@ -76,12 +76,12 @@ check(
     /stencilClearBtn'\)\.disabled = false/.test(js),
 );
 check(
-  'clearing the mask names the stencil it leaves behind',
-  /Mask cleared[\s\S]{0,200}?Discard stencil/.test(js),
+  'discarding a stencil says the selection is untouched, so the shell is not mistaken for it',
+  /Stencil discarded[\s\S]{0,240}?The selection is untouched/.test(js),
 );
 check(
   'a stale build points at both ways out',
-  /repainted since this was built[\s\S]{0,120}?Discard stencil/.test(js),
+  /the selection has changed since this was built[\s\S]{0,160}?Discard stencil/.test(js),
 );
 
 const exported = ['buildTopology', 'buildStencil', 'validateSolid', 'stencilDefaultsForDiagonal'];
@@ -97,41 +97,84 @@ check(
 
 // ------------------------------------------------------------------ tool wiring
 //
-// The Pick tool lives in the DOM layer, so the parts of it that can go wrong silently are
-// checked here by source: that the vote it shows while hovering is the same call the click
-// makes, that the click hands control back to the previous paint tool, and that the modifier
-// guard cannot swallow Alt-click before the Part tool sees it (it did, once).
+// There are two tools and both of them select, so what can go wrong silently is now the join
+// between them rather than the paint: a tool that clears what the other selected (there is one
+// selection, and it belongs to neither), a modifier filtered out before the tool that means
+// something by it sees it, and a hover highlight describing a scope the tool is no longer in.
 const maskSrc = fs.readFileSync(path.resolve(here, '../js/mask.js'), 'utf8');
+const selectionSrc = fs.readFileSync(path.resolve(here, '../js/selection.js'), 'utf8');
 
-check('the picker vote lives in the mask, where it is tested', /featureUnderPoint\(p, radius\)/.test(maskSrc));
-check('main.js uses the mask vote instead of reimplementing it',
-  /mask\.featureUnderPoint\(/.test(js) && !/const weights = new Map\(\)/.test(js));
-check('the hover preview and the click use the same function',
-  (js.match(/featureUnderHit\(hit\)/g) || []).length >= 2,
-  `${(js.match(/featureUnderHit\(hit\)/g) || []).length} call sites`);
-check('the picker has a click handler of its own', /function pickAt\(hit/.test(js));
-check('the pick handler is what a picker click runs', /state\.tool === 'picker'\) \{\s*\n\s*pickAt\(hit/.test(js));
-check('Shift-click keeps the picker active instead of switching back', /pickAt\(hit, \{ stay: e\.shiftKey \}\)/.test(js));
-check('a pick hands back to the remembered paint tool', /state\.lastPaintTool/.test(js) && /setTool\(back\)/.test(js));
-check('the paint tool is remembered whenever a non-picker tool is chosen',
-  /if \(tool !== 'picker'\) state\.lastPaintTool = tool;/.test(js));
-check('every tool has a display name', /const TOOL_NAMES = \{[^}]*brush[^}]*picker[^}]*\}/.test(js));
-check('the cursor preview is cleared when the tool changes', /hoverPick = null;/.test(js));
-check('the ring previews the hovered feature colour', /hoverPick && hoverPick\.id \? featureById\(hoverPick\.id\)\?\.color/.test(js));
-check('an empty hover is distinguishable from "no paint at all"', /hoverPick\.painted|painted\b/.test(js));
-// The bug this pins: Alt/Ctrl-click used to be filtered out before the Part tool ran, so the
-// documented "Alt-click removes a panel" never worked.
-check('modifier clicks are filtered by a named guard', /function modifierClickIgnored\(e\)/.test(js));
 check(
-  'the guard exempts the tools that mean something by a modifier: Part, Box paint and Select',
-  /function modifierClickIgnored\(e\) \{\s*\n\s*(?:\/\/[^\n]*\n\s*)*return \(\s*\n?\s*\(e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey\) &&[\s\S]{0,200}?state\.tool !== 'part' &&[\s\S]{0,80}?state\.tool !== 'box' &&[\s\S]{0,80}?state\.tool !== 'select'/.test(
-    js,
-  ),
+  'the tool row is the two selection tools, and nothing that paints',
+  (html.match(/class="tool"/g) || []).length === 3 &&
+    /data-tool="part"/.test(html) && (html.match(/data-tool="select"/g) || []).length === 2 &&
+    !/data-tool="brush"|data-tool="box"|data-tool="fill"|data-tool="picker"|data-tool="erase"/.test(html),
+  (html.match(/class="tool"[^>]*/g) || []).map((t) => (t.match(/data-tool="[^"]+"/) || [''])[0]).join(' '),
 );
-check('pointerdown uses the guard rather than testing modifiers inline',
-  /if \(e\.button !== 0 \|\| state\.navigate \|\| modifierClickIgnored\(e\)\) return;/.test(js));
-check('the Part tool still reads its own modifiers', /add: e\.shiftKey/.test(js) && /remove: e\.altKey/.test(js));
-check('the picker reports a click that misses the model', /Nothing under the cursor/.test(js));
+check(
+  'every tool has a display name, and neither is a painting tool',
+  /const TOOL_NAMES = \{ part: 'Part', select: 'Select' \};/.test(js),
+  (js.match(/const TOOL_NAMES = [^;]*;/) || [''])[0],
+);
+// The arrangement the whole redesign rests on: switching tool clears nothing, because a selection
+// is not a tool's private state. Pick a head with Part and refine the eyes with Select faces.
+{
+  const setToolFn = js.slice(js.indexOf('function setTool('), js.indexOf('function applyDisplayState('));
+  check(
+    'switching tool clears nothing: the selection belongs to no tool',
+    setToolFn.length > 0 && /state\.tool = tool === 'part' \? 'part' : 'select';/.test(setToolFn) &&
+      !/selectNoFaces\(\)|mask\.clear\(\)|createSelection\(/.test(setToolFn),
+    `${setToolFn.split('\n').length} lines, none of them clearing the selection`,
+  );
+  check(
+    'and the panel says the selection is still there, which is how a reader finds out',
+    /const picked = mask \? selectedFaces\(\) : 0;/.test(js) && /face\$\{picked === 1 \? '' : 's'\} selected/.test(js),
+  );
+}
+// The bug this pins: Alt/Ctrl-click used to be filtered out before the Part tool ran, so the
+// documented "Alt-click removes a panel" never worked. There is no longer a guard that can eat a
+// modifier: pointerdown filters on the button and on navigating, and hands everything else to the
+// tool in hand, which reads its own modifiers.
+check(
+  'pointerdown filters on the button and on navigating, not on modifiers',
+  /function onPointerDown\(e\) \{\s*\n\s*if \(!mask\) return;\s*\n\s*if \(e\.button !== 0 \|\| state\.navigate\) return;/.test(js) &&
+    !/modifierClickIgnored/.test(js),
+);
+check(
+  'and each tool reads its own modifiers, so Shift and Alt mean the same thing in both',
+  /selectPartAt\(hit\.faceIndex, \{\s*\n\s*add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js) &&
+    /add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js),
+);
+check(
+  'the hover face is what both tools aim at, so it is drawn for either',
+  /function onPointerMove\(e\)[\s\S]{0,1200}?updateHoverFace\(hit \? hit\.faceIndex : null\)/.test(js) &&
+    /function updateHoverFace\(faceIndex\)/.test(js),
+);
+check(
+  'and the scope clears it, because the scope is what a hover means',
+  /function setSelectScope\(scope\)[\s\S]{0,400}?clearHoverFace\(\);/.test(js),
+);
+check(
+  'a click that misses the model clears the selection and says so',
+  /selectNoFaces\(\);\s*\n\s*setStatus\('Nothing under the cursor/.test(js),
+);
+check(
+  'and a click off a model in the models scope explains instead of appearing to do nothing',
+  /Click on the model to select it\./.test(js),
+);
+check(
+  'no paint machinery is left in the mask layer',
+  /export class SelectionTint/.test(maskSrc) &&
+    !/featureUnderPoint|paintSphere|paintIndices|beginStroke|endStroke/.test(maskSrc) &&
+    !/feature|palette|brush/i.test(maskSrc.replace(/\/\*[\s\S]*?\*\//g, '')),
+);
+check(
+  'and the mask is written from the selection and nowhere else',
+  /tintScratch = paintedFromFaces\(cleanup\.selection, tintScratch\);/.test(js) &&
+    /const corners = mask\.setSelection\(tintScratch\);/.test(js) &&
+    (js.match(/\.setSelection\(/g) || []).length === 1,
+  `${(js.match(/\.setSelection\(/g) || []).length} call site(s)`,
+);
 
 // ------------------------------------------------- panels near the cursor, and invert
 check('main.js imports the proximity query', /import \{[^}]*partsNearPoint[^}]*\} from '\.\/parts\.js'/.test(js));
@@ -199,16 +242,36 @@ check(
   soupRead > 0 && soupRead < viewerSrc.indexOf('new MeshBVH(geometry)'),
   soupRead > 0 ? `at ${soupRead}, BVH at ${viewerSrc.indexOf('new MeshBVH(geometry)')}` : 'assignment missing',
 );
-check('main.js feeds the reported face to the panel lookup', /paintPartAt\(hit\.faceIndex/.test(js));
+check('main.js feeds the reported face to the panel lookup', /selectPartAt\(hit\.faceIndex/.test(js));
 
-check('the invert button exists', declared.has('invertBtn'));
-check('the invert button is wired', /el\('invertBtn'\)\.addEventListener\('click', invertPaint\)/.test(js));
-check('the invert uses the mask method', /mask\.invert\(id\)/.test(js));
-check('Shift+I inverts, plain I picks', /if \(e\.shiftKey\) invertPaint\(\);/.test(js));
-check('the mask implements invert', /invert\(id, \{ record = true \} = \{\}\)/.test(maskSrc));
-check('undo records the state a snapshot replaces, so redo works',
-  /entry\.next = this\.ids\.slice\(\)/.test(maskSrc) && /this\.ids\.set\(entry\.next \|\| entry\.ids\)/.test(maskSrc));
-check('the parts module exposes it', /export function partsNearPoint/.test(
+// Invert, select all and select none are one function each in the selection core, reached from a
+// button and a key, rather than a third way of editing the mask.
+check(
+  'select all, select none and invert are all wired to the selection core',
+  declared.has('selectAllBtn') && declared.has('selectNoneBtn') && declared.has('selectInvertBtn') &&
+    /el\('selectAllBtn'\)\.addEventListener\('click', selectAllFaces\)/.test(js) &&
+    /el\('selectNoneBtn'\)\.addEventListener\('click', selectNoFaces\)/.test(js) &&
+    /el\('selectInvertBtn'\)\.addEventListener\('click', invertPickedFaces\)/.test(js),
+);
+check(
+  'each of the three is the core function and not a second implementation',
+  /const n = setAll\(cleanup\.selection, true\);/.test(js) && /export function setAll\(sel, on\)/.test(selectionSrc) &&
+    /setAll\(cleanup\.selection, false\);/.test(js) &&
+    /const n = invertSelection\(cleanup\.selection\);/.test(js) && /export function invertSelection\(sel\)/.test(selectionSrc),
+);
+check('Shift+I inverts the selection', /if \(e\.shiftKey\) invertPickedFaces\(\);/.test(js));
+// Undo has to walk the selection, not the tint: the tint is derived, so a history of tints could
+// be undone into a picture the selection no longer describes.
+check(
+  'undo and redo walk the selection through one history',
+  /history\.remember\(cleanup\.selection\)/.test(js) &&
+    /history\.undo\(cleanup\.selection\)/.test(js) &&
+    /history\.redo\(cleanup\.selection\)/.test(js) &&
+    /export class SelectionHistory/.test(selectionSrc) &&
+    !/mask\.undo\(\)|mask\.redo\(\)/.test(js),
+);
+check('and a gesture that changes nothing is not an undo step', /countChanges\(cleanup\.selection, wanted, opts\)/.test(js));
+check('the parts module exposes the proximity query', /export function partsNearPoint/.test(
   fs.readFileSync(path.resolve(here, '../js/parts.js'), 'utf8'),
 ));
 
@@ -254,18 +317,19 @@ check(
   (js.match(/await analyseWindows\(/g) || []).length === 2 && /minDiagonal: \(percent \/ 100\) \* topology\.diagonal/.test(js),
 );
 check(
-  'a button that cannot help says which shape of mask it cannot help with',
+  'a button that cannot help says which shape of selection it cannot help with',
   /Nothing to trim: the whole mask is one painted window/.test(js) &&
-    /“List windows” removes it, or the erase brush takes/.test(js),
+    /“List windows” removes it, or Select faces takes/.test(js) && !/erase brush/.test(js),
 );
 check(
   'and a threshold that is merely too low names the percentage that would work',
   /A threshold over[\s\S]{0,120}?would release it/.test(js) && /wouldNeed = \(smallest\.diagonal \/ topo\.diagonal\) \* 100/.test(js),
 );
-const rowFn = js.slice(js.indexOf('function renderWindowList('), js.indexOf('function featureListText('));
+const rowFn = js.slice(js.indexOf('function renderWindowList('), js.indexOf('function windowFaces('));
 check(
-  'every window gets a row naming its size and the features it is painted with',
-  rowFn.length > 0 && /w\.diagonal\.toFixed\(2\)/.test(rowFn) && /featureListText\(w\.features\)/.test(rowFn),
+  'every window gets a row naming its size, in units and in faces',
+  rowFn.length > 0 && /w\.diagonal\.toFixed\(2\)/.test(rowFn) && /fmt\(windowFaces\(w\)\)/.test(rowFn) &&
+    /fmt\(w\.vertices\)/.test(rowFn) && !/features/.test(rowFn),
 );
 check(
   'the row buttons are the two the guide names',
@@ -275,13 +339,14 @@ check('Remove releases exactly the window its row names', /releaseWindows\(\[w\]
 check('Keep only releases every other window', /windows\.filter\(\(other\) => other !== w\)/.test(rowFn));
 check('a button with nothing to do is disabled rather than misleading', /only\.disabled = windows\.length === 1/.test(rowFn));
 check(
-  'a release is exactly the vertices the window carries',
-  /for \(const w of targets\) released\.push\(\.\.\.w\.fileVertices\)/.test(js) &&
+  'a release is exactly the faces the window carries',
+  /for \(const w of targets\) corners\.push\(\.\.\.w\.fileVertices\)/.test(js) &&
+    /for \(const c of corners\) \{\s*\n\s*const t = Math\.floor\(c \/ 3\);/.test(js) &&
     /fileVertices: fileVertices\[k\]/.test(cleanupSrc),
 );
 check(
-  'releasing a window is one undo step, like every other mask edit',
-  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(released, 0\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+  'releasing a window is one selection edit, like every other',
+  /const changed = applyPickToSelection\(wanted, \{ remove: true \}\);\s*\n\s*afterSelection\(changed\);/.test(js),
 );
 check('the list rebuilds itself from what is left', /await listWindows\(\{ quiet: true \}\)/.test(js));
 check(
@@ -289,8 +354,9 @@ check(
   /if \(windowBox && !windowBox\.hidden\) windowBox\.hidden = true/.test(js),
 );
 check(
-  'the trim lands as one undo step that releases exactly the planned vertices',
-  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(plan\.released, 0\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+  'the trim lands as one selection edit that releases exactly the planned faces',
+  /for \(const c of plan\.released\) \{\s*\n\s*const t = Math\.floor\(c \/ 3\);/.test(js) &&
+    /const changed = applyPickToSelection\(wanted, \{ remove: true \}\);/.test(js),
 );
 check(
   'the largest island is always kept, so a mask of specks is never wiped out',
@@ -302,7 +368,7 @@ check(
   'a spec is measured by its size, not its vertex count',
   /diagonal: Math\.hypot\(sx, sy, sz\)/.test(cleanupSrc) && /island\.diagonal < threshold/.test(cleanupSrc),
 );
-check('a trim points at the build it leaves behind', /build again to match the trimmed mask/.test(js));
+check('a trim points at the build it leaves behind', /build again to match the selection/.test(js));
 check(
   'the vertices a trim and a removal release are file vertices, joined to the islands through the weld',
   /doomedWelds\[weldOf\[i\]\]/.test(cleanupSrc) && /label\[weldOf\[i\]\]/.test(cleanupSrc),
@@ -423,95 +489,102 @@ check(
   /id="stencilOnBed" checked title="[^"]*every piece/.test(html),
 );
 
-// ------------------------------------------------------- the box select tool
+// ------------------------------------------------ the rectangle is a gesture of Select
 //
-// Drag a rectangle and paint what it covers. The half that cannot be checked statically is the
+// Drag a rectangle and select what it covers. The half that cannot be checked statically is the
 // projection itself (`test/boxselect.test.mjs` measures that against three.js' own `project()`),
-// so what is pinned here is every join that could silently come apart: the tool in the toolbar,
-// the key, the overlay element and the drag path, the inverse transform being handed the right
-// three matrices, and the selection landing on the mask as one undo step.
+// so what is pinned here is every join that could silently come apart: the rectangle in the tool
+// that owns it, the overlay element, the inverse transform being handed the right three matrices,
+// the rectangle being applied in the scope in hand, and the whole drag landing as one selection
+// edit rather than one per face.
 const boxSrc = fs.readFileSync(path.resolve(here, '../js/boxselect.js'), 'utf8');
 const boxViewerSrc = fs.readFileSync(path.resolve(here, '../js/viewer.js'), 'utf8');
 const cssSrc = fs.readFileSync(path.resolve(here, '../css/style.css'), 'utf8');
-check('the paint panel carries the box tool', /<button class="tool" data-tool="box"/.test(html));
-check(
-  'main.js names it Box PAINT, so the HUD says a rectangle paints rather than selects',
-  /box: 'Box paint'/.test(js) && /<button class="tool" data-tool="box"[^>]*>Box paint<\/button>/.test(html) &&
-    /This paints\./.test(html),
-);
-check('and X selects it', /case 'x': setTool\('box'\); break;/.test(js));
 check('the rectangle being dragged is drawn', declared.has('boxSelect') && /\.box-select\b/.test(cssSrc) && /\.box-select\[hidden\]/.test(cssSrc));
-check('its options panel exists and is shown for that tool', declared.has('boxOptions') && /el\('boxOptions'\)\.classList\.toggle\('on', tool === 'box'\)/.test(js));
 check(
-  'the drag starts without needing the model under the cursor, and before any paint path',
-  /if \(state\.tool === 'box'\) \{\s*\n\s*startBoxSelect\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
-    /function startBoxSelect\(e\)[\s\S]{0,900}?boxDrag = \{ pointerId: e\.pointerId, from: p, to: p, erase: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey \};/.test(js),
+  'there is no box tool any more: a rectangle is how the Select tool is dragged',
+  !/data-tool="box"/.test(html) && !/startBoxSelect|boxDrag|finishBoxSelect/.test(js) &&
+    /function startSelectDrag\(e\)/.test(js) && /function finishSelectDrag\(\)/.test(js),
+);
+check(
+  'a press in the Select tool selects nothing yet: it starts a gesture decided on release',
+  /if \(state\.tool === 'part'\) \{[\s\S]{0,300}?startSelectDrag\(e\);[\s\S]{0,80}?\}/.test(js) &&
+    !/if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(boxDrag\)/.test(js),
+);
+check(
+  'a press that does not move is the click it always was, and a moved one is a box',
+  /const DRAG_SLOP = 3;/.test(js) &&
+    /if \(width < DRAG_SLOP && height < DRAG_SLOP\) return;/.test(js) &&
+    /void selectClickAt\(drag\.toClient, drag\);/.test(js),
 );
 check(
   'dragging updates the rectangle, and releasing applies it',
-  /if \(boxDrag\) \{\s*\n\s*moveBoxSelect\(e\);/.test(js) && /if \(boxDrag\) \{\s*\n\s*finishBoxSelect\(\);\s*\n\s*return;/.test(js),
-);
-check('Esc throws a pending rectangle away', /case 'escape':[\s\S]{0,80}?if \(boxDrag\) cancelBoxSelect\(\);/.test(js));
-check(
-  'the Alt/Ctrl drag is the eraser here, so it is not swallowed as "not painting"',
-  /state\.tool !== 'part' &&\s*\n?\s*state\.tool !== 'box'/.test(js) &&
-    /const id = drag\.erase \? 0 : paintId\(\);/.test(js),
+  /if \(selectDrag\) \{\s*\n\s*moveSelectDrag\(e\);/.test(js) &&
+    /canvas\.addEventListener\('pointerup', endStroke\)/.test(js) &&
+    /function endStroke\(\) \{\s*\n\s*if \(selectDrag\) finishSelectDrag\(\);/.test(js) &&
+    /showBoxRect\(selectDrag\.from, p\);/.test(js),
 );
 check(
-  'and the Select tool reads its modifiers too, rather than being filtered out as "not painting"',
-  /state\.tool !== 'select'/.test(js) &&
-    /add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js),
+  'Esc throws a pending rectangle away, and so does switching tool',
+  /case 'escape':\s*\n\s*if \(selectDrag\) cancelSelectDrag\(\);/.test(js) &&
+    /if \(state\.tool !== 'select' && selectDrag\) cancelSelectDrag\(\);/.test(js),
 );
 check(
   'the selection itself is the inverse transform, taken in canvas pixels',
   /const p = canvasPoint\(e\);/.test(js) && /function canvasPoint\(e\)[\s\S]{0,220}?canvas\.getBoundingClientRect\(\)/.test(js) &&
-    /viewer\.selectInScreenRect\(normaliseRect\(drag\.from, drag\.to\)/.test(js),
-);
-check(
-  'mirroring is handed to the selection, so the box is taken on the other side too',
-  /mirror: state\.mirrorX \? \{ planeX: state\.mirrorPlaneX \} : null/.test(js),
+    /viewer\.facesInScreenRect\(normaliseRect\(drag\.from, drag\.to\)\)/.test(js),
 );
 check(
   'the viewer composes projection × view × model and hands it to the selection maths',
-  /selectInScreenRect\(rect, \{ mirror = null, facingOnly = true \} = \{\}\)/.test(boxViewerSrc) &&
+  /facesInScreenRect\(rect, \{ facingOnly = true \} = \{\}\)/.test(boxViewerSrc) &&
     /screenMatrix\(\s*\n\s*this\.camera\.projectionMatrix\.elements,\s*\n\s*this\.camera\.matrixWorldInverse\.elements,\s*\n\s*this\.baseMesh\.matrixWorld\.elements,/.test(boxViewerSrc) &&
-    /import \{ screenMatrix, verticesInScreenRect, facesInScreenRect \} from '\.\/boxselect\.js'/.test(boxViewerSrc),
+    /import \{ screenMatrix, facesInScreenRect \} from '\.\/boxselect\.js'/.test(boxViewerSrc),
 );
-// Selecting triangles with a box is a different rule from painting the vertices under one: the
-// centre of the triangle decides, and its own normal (from its corners, not from a shading normal
-// shared between faces) says which way it points.
+// A rectangle picks triangles, not vertices: the centre of the triangle decides, and its own
+// normal (from its corners, not from a shading normal shared between faces) says which way it
+// points — so a box over the face of a closed figure does not also take the back of the head.
 check(
-  "the Select tool's rectangle is measured on face centres, by the triangle's own normal",
+  "the rectangle is measured on face centres, by the triangle's own normal",
   /export function facesInScreenRect\(\{/.test(boxSrc) &&
     /const x = \(ax \+ bx \+ cx\) \/ 3;/.test(boxSrc) &&
     /const nx = uy \* vz - uz \* vy;/.test(boxSrc) &&
     /return \{ faces, count, covered, hidden, behind \};/.test(boxSrc) &&
-    /^  facesInScreenRect\(rect, \{ facingOnly = true \} = \{\}\) \{$/m.test(boxViewerSrc) &&
-    /camera: \[cam\.x, cam\.y, cam\.z\],\s*\n\s*facingOnly,/.test(boxViewerSrc) &&
+    /camera: \[cam\.x, cam\.y, cam\.z\],\s*\n\s*facingOnly,/.test(boxViewerSrc),
+);
+check(
+  "the camera and the normals are taken in the mesh's own coordinates, which is what the mask counts in",
+  /worldToLocal\(this\.camera\.position\.clone\(\)\)/.test(boxViewerSrc) &&
     /positions: this\.baseGeometry\.attributes\.position\.array,/.test(boxViewerSrc),
 );
+// The rectangle in the models scope: every model one of the covered faces belongs to.
 check(
-  'the camera and the normals are taken in the mesh\'s own coordinates, which is what the mask counts in',
-  /worldToLocal\(this\.camera\.position\.clone\(\)\)/.test(boxViewerSrc) &&
-    /positions: geometry\.attributes\.position\.array/.test(boxViewerSrc),
+  'the rectangle selects what the scope selects: faces, or the model every covered face is in',
+  /const changed = applyPickToSelection\(sel\.faces, drag\);/.test(js) &&
+    /if \(cleanup\.scope === 'models'\) \{\s*\n\s*void pickModelsInRect\(sel, drag\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
+    /if \(sel\.faces\[t\]\) touched\.add\(shells\.faceShell\[t\]\);/.test(js),
 );
 check(
-  'a whole drag lands on the mask as one undo step',
-  /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(sel\.vertices, id\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js),
+  'a whole drag lands on the selection as one edit, and a drag that changes nothing as none',
+  /const wanted = new Uint8Array\(cleanup\.selection\.faces\.length\);/.test(js) &&
+    /if \(!countChanges\(cleanup\.selection, wanted, opts\)\) return 0;/.test(js) &&
+    /history\.remember\(cleanup\.selection\);\s*\n\s*return applyFaces\(cleanup\.selection, wanted, opts\);/.test(js),
 );
 check(
   'the status line admits what the box could not take',
-  /face the camera/.test(js) && /face away and were left alone/.test(js) && /mirrored across X/.test(js) &&
-    /nothing under the rectangle — drag it over the model/.test(js),
+  /face away and were left alone/.test(js) && /nothing under the rectangle — drag it over the model/.test(js) &&
+    /taken off the pick/.test(js) && /the pick is now exactly those/.test(js),
 );
 check(
   'boxselect.js keeps the rules a screen-space box needs, and exports them',
-  /export function verticesInScreenRect/.test(boxSrc) &&
-    /export function normaliseRect/.test(boxSrc) &&
+  /export function normaliseRect/.test(boxSrc) &&
     /export function screenMatrix/.test(boxSrc) &&
-    /if \(!\(cw > MIN_CLIP_W\)\)/.test(boxSrc) &&
-    /if \(cz < -cw \|\| cz > cw\) continue;/.test(boxSrc) &&
-    /facesCamera\(normals, i, x, y, z, camera\[0\], camera\[1\], camera\[2\]\)/.test(boxSrc),
+    /export function facesInScreenRect/.test(boxSrc) &&
+    !/export function verticesInScreenRect/.test(boxSrc) &&
+    /export function rectSize/.test(boxSrc) &&
+    /if \(!\(cw > MIN_CLIP_W\)\) \{\s*\n\s*behind \+= 1;/.test(boxSrc) &&
+    /if \(clipZ < -cw \|\| clipZ > cw\) continue;/.test(boxSrc) &&
+    /return \{ faces, count, covered, hidden, behind \};/.test(boxSrc) &&
+    !/facesCamera/.test(boxSrc),
 );
 
 // --------------------------------------------------- cleaning up the model
@@ -522,7 +595,7 @@ check(
 // the two-click removal, the geometry going back through the loader's own path so the bed is
 // re-measured, and the paint and the history being carried across.
 const selectSrc = fs.readFileSync(path.resolve(here, '../js/select.js'), 'utf8');
-check('the paint panel carries the Select tool', /<button class="tool" data-tool="select"/.test(html));
+check('the Selection panel carries the Select tool', /<button class="tool" data-tool="select"/.test(html));
 check('main.js names it, so the HUD can say what is active', /select: 'Select'/.test(js));
 check(
   'and S selects it — whole models, or single faces with Shift',
@@ -530,7 +603,9 @@ check(
 );
 check(
   'its options panel exists and is shown for that tool',
-  declared.has('selectOptions') && /el\('selectOptions'\)\.classList\.toggle\('on', tool === 'select'\)/.test(js),
+  declared.has('selectOptions') && /el\('selectOptions'\)\.classList\.toggle\('on', state\.tool === 'select'\)/.test(js) &&
+    /el\('seamOptions'\)\.classList\.toggle\('on', state\.tool === 'part'\)/.test(js) &&
+    !/boxOptions/.test(js),
 );
 // The scope used to be a menu inside the panel, and a picker nobody finds is a picker nobody
 // uses: the two halves of the tool are buttons in the tool row, one per scope.
@@ -550,22 +625,21 @@ check(
   /function syncToolButtons\(\)[\s\S]{0,400}?const scope = b\.dataset\.scope;[\s\S]{0,200}?b\.dataset\.tool === state\.tool && \(!scope \|\| scope === cleanup\.scope\)/.test(js),
 );
 check(
-  'the eyedropper says it picks paint, so it is not mistaken for the face picker',
-  /Eyedropper: make the feature painted under the cursor/.test(html),
+  'no brush, fill, eyedropper or palette is left in the panel',
+  !/brush/i.test(html) && !/Eyedropper|Fill region|Colour|Color picker/.test(html) && !/id="featureList"|id="palette"/.test(html),
 );
 check(
-  'select all, select none and invert are all wired',
+  'select all, select none and invert are the three buttons of the panel',
   declared.has('selectAllBtn') && declared.has('selectNoneBtn') && declared.has('selectInvertBtn') &&
     /el\('selectAllBtn'\)\.addEventListener\('click', selectAllFaces\)/.test(js) &&
     /el\('selectNoneBtn'\)\.addEventListener\('click', selectNoFaces\)/.test(js) &&
-    /el\('selectInvertBtn'\)\.addEventListener\('click', invertPickedFaces\)/.test(js) &&
-    /function selectAllFaces\(\)[\s\S]{0,200}?cleanup\.selected\.fill\(1\)/.test(js),
+    /el\('selectInvertBtn'\)\.addEventListener\('click', invertPickedFaces\)/.test(js),
 );
 check('and Ctrl+A is the same thing, for the few-out-of-many case', /if \(meta && e\.key\.toLowerCase\(\) === 'a'\)/.test(js) && /selectAllFaces\(\);\s*\n\s*return;/.test(js));
 check(
-  'a press in the Select tool paints nothing: it starts a gesture that is decided on release',
-  /if \(state\.tool === 'select'\) \{\s*\n\s*startSelectDrag\(e\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
-    /function startSelectDrag\(e\)/.test(js),
+  'a press selects nothing on the way down: the gesture is decided on release',
+  /function onPointerDown\(e\)[\s\S]{0,600}?startSelectDrag\(e\);\s*\n\}/.test(js) &&
+    /function finishSelectDrag\(\)/.test(js),
 );
 check(
   'a press that does not move is the click it always was, and a moved one is a box',
@@ -582,10 +656,9 @@ check(
 );
 check(
   'a drag in the Select tool draws the same rectangle and picks what is inside it on release',
-  /if \(selectDrag\) \{\s*\n\s*moveSelectDrag\(e\);/.test(js) &&
-    /if \(selectDrag\) \{\s*\n\s*finishSelectDrag\(\);\s*\n\s*return;/.test(js) &&
-    /showBoxRect\(selectDrag\.from, p\);/.test(js) &&
-    /viewer\.facesInScreenRect\(normaliseRect\(drag\.from, drag\.to\)\)/.test(js),
+  /const sel = viewer\.facesInScreenRect\(normaliseRect\(drag\.from, drag\.to\)\);/.test(js) &&
+    /afterSelection\(changed\);/.test(js) &&
+    /showBoxRect\(selectDrag\.from, p\);/.test(js),
 );
 check(
   'the rectangle selects what the scope selects: faces, or the model every covered face is in',
@@ -593,44 +666,48 @@ check(
     /if \(cleanup\.scope === 'models'\) \{\s*\n\s*void pickModelsInRect\(sel, drag\);\s*\n\s*return;\s*\n\s*\}/.test(js) &&
     /if \(sel\.faces\[t\]\) touched\.add\(shells\.faceShell\[t\]\);/.test(js),
 );
+// One rule, in the selection core, shared by a click, a rectangle and a panel: plain replaces,
+// Shift adds, Alt removes. The app must not reimplement it a third time.
 check(
   'a plain drag is the pick outright, Shift drags an addition and Alt drags a removal',
-  /const want = remove \? \(wanted\[t\] \? 0 : cleanup\.selected\[t\]\) : add \? \(wanted\[t\] \? 1 : cleanup\.selected\[t\]\) : wanted\[t\] \? 1 : 0;/.test(js) &&
-    /add: e\.shiftKey,/.test(js),
+  /export function applyFaces\(sel, wanted, \{ add = false, remove = false \} = \{\}\)/.test(selectionSrc) &&
+    /const want = remove\s*\n\s*\? t < n && wanted\[t\]\s*\n\s*\? 0\s*\n\s*: sel\.faces\[t\]/.test(selectionSrc) &&
+    !/cleanup\.selected\[t\] = (wanted\[t\] \? 1 : 0)/.test(js) &&
+    /add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js) &&
+    /remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js),
 );
 check(
   'a rectangle still being dragged is thrown away by Esc and by switching tool',
-  /if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(boxDrag\) cancelBoxSelect\(\);/.test(js) &&
-    /if \(tool !== 'select' && selectDrag\) cancelSelectDrag\(\);/.test(js) &&
+  /case 'escape':[\s\S]{0,120}?if \(selectDrag\) cancelSelectDrag\(\);/.test(js) &&
+    /if \(state\.tool !== 'select' && selectDrag\) cancelSelectDrag\(\);/.test(js) &&
     /function cancelSelectDrag\(\)/.test(js),
 );
-// The reported bug: a pick that was still there stopped being drawn as soon as another tool came
-// up, so a working selection looked like it had been thrown away.
+// The reported bug behind this line: a selection that was still there used to stop being drawn as
+// soon as another tool came up, so a working selection looked thrown away. The tint is drawn from
+// the selection, not from the tool, and there is no longer a path that could say otherwise.
 check(
-  'the pick is drawn even when another tool is in hand, because the pick is still there',
-  /function updatePickHighlight\(\) \{\s*\n\s*const faces = mask && pickedFaces\(\) \? cleanup\.selected : null;/.test(js) &&
-    !/state\.tool === 'select' \? cleanup\.selected/.test(js),
+  'the selection is drawn whatever tool is in hand, because it is still the selection',
+  /function syncTint\(\) \{[\s\S]{0,300}?tintScratch = paintedFromFaces\(cleanup\.selection, tintScratch\);/.test(js) &&
+    !/state\.tool === 'select' \? cleanup\.selection/.test(js) &&
+    /function afterSelection\(changed\) \{[\s\S]{0,120}?syncTint\(\);/.test(js),
 );
-// The other reported dead end: a pick is not paint, so "Build stencil" refused in a way that read
-// as the button doing nothing.
+// The other reported dead end: a pick was not paint, so "Build stencil" refused and read as the
+// button doing nothing. There is nothing to convert any more — a pick *is* the selection the
+// build uses — so the check is that the old two-step is gone and the refusal names both tools.
 check(
-  'the pick can be painted in one click, as a single undo step',
-  declared.has('paintPickedBtn') &&
-    /el\('paintPickedBtn'\)\.addEventListener\('click', paintPickedFaces\)/.test(js) &&
-    /const corners = pickedCorners\(cleanup\.selected\);\s*\n\s*const id = state\.currentFeatureId;/.test(js) &&
-    /mask\.beginStroke\(\);\s*\n\s*const changed = mask\.paintIndices\(corners, id\);\s*\n\s*const recorded = mask\.endStroke\(\);/.test(js) &&
-    /import \{[\s\S]{0,220}?pickedCorners,[\s\S]{0,60}?\} from '\.\/select\.js'/.test(js) &&
-    /paintBtn\.disabled = pickedFaces\(\) === 0;/.test(js),
+  'there is no "turn the pick into paint" step left anywhere',
+  !declared.has('paintPickedBtn') && !/paintPickedFaces|Paint picked faces/.test(js) &&
+    /function selectedMask\(\) \{[\s\S]{0,200}?paintedFromFaces\(cleanup\.selection\)/.test(js),
 );
 check(
-  'and "Build stencil" says a pick is a selection, not paint, instead of appearing to do nothing',
-  /the stencil is built from paint, and \$\{fmt\(picked\)\} picked/.test(js) &&
-    /“Paint picked faces” paints them as/.test(js),
+  'and "Build stencil" says how to select, instead of appearing to do nothing',
+  /Nothing selected yet — the stencil is built from the selection: click a panel with Part/.test(js) &&
+    /or pick triangles with Select faces/.test(js),
 );
 check('the model list is built from the shells of the file', declared.has('modelRows') && declared.has('modelList') && /function renderShellList\(\)/.test(js) && /shellsOf\(topology\)/.test(js));
 check(
   'Esc unpicks everything, and a model list exists to click instead of the viewport',
-  /case 'escape':\s*\n\s*if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(boxDrag\) cancelBoxSelect\(\);\s*\n\s*else if \(state\.tool === 'select' && pickedFaces\(\)\) selectNoFaces\(\);/.test(js),
+  /case 'escape':\s*\n\s*if \(selectDrag\) cancelSelectDrag\(\);\s*\n\s*else if \(state\.tool === 'select' && selectedFaces\(\)\) selectNoFaces\(\);/.test(js),
 );
 check(
   'removing is a two-click confirmation, so it cannot happen by accident',
@@ -643,14 +720,17 @@ check(
 );
 check(
   'the geometry is rebuilt from the file’s own soup, and goes back through the loader’s path',
-  /filterSoup\(\{ positions: soup\.positions, normals: soup\.normals, ids: oldIds \}, keep\)/.test(js) &&
+  /filterSoup\(\{ positions: soup\.positions, normals: soup\.normals \}, keep\)/.test(js) &&
+    !/filterSoup\([\s\S]{0,120}?ids: oldIds/.test(js) &&
     /viewer\.setGeometry\(geometry, \{\s*\n\s*upAxis: state\.upAxis,\s*\n\s*overlayGeometry,\s*\n\s*centre: el\('centreOnGrid'\)\.checked,/.test(js),
 );
 check(
-  'the paint is carried corner by corner, and the undo history with it',
-  /mask\.ids\.set\(cut\.ids\)/.test(js) &&
-    /mask\.history = remapHistory\(oldHistory, cut\.cornerMap, mask\.vertexCount\)/.test(js) &&
-    /mask\.redoStack = remapHistory\(oldRedo, cut\.cornerMap, mask\.vertexCount\)/.test(js),
+  'the selection is carried through the cut, face by face, and the undo history with it',
+  /cleanup\.selection = remapSelection\(cleanup\.selection, cut\.faceMap, cut\.faces\)/.test(js) &&
+    /history\.remap\(cut\.faceMap, cut\.faces\)/.test(js) &&
+    /export function remapSelection\(sel, faceMap, newCount\)/.test(selectionSrc) &&
+    /remap\(faceMap, faceCount\)/.test(selectionSrc) &&
+    !/remapHistory/.test(js),
 );
 check(
   'the stencil and the panels are discarded with the geometry they describe',
@@ -671,31 +751,33 @@ check(
 // surface they trace z-fight with the triangle they belong to, so a single picked face showed
 // nothing at all and the tool looked dead. A pick has to be a filled, offset tint.
 //
-// The second bug pinned here is why the drawing now lives in its own module: the first version kept
+// The second bug pinned here is why the drawing lives in its own module: the first version kept
 // the colours in a destructured third argument and was *also* called to clear the highlight, with
 // two arguments. That threw on every model load — the loading overlay stuck on "Preparing mask
 // layer…" and nothing ever loaded — and no source pattern above could see it, because nothing ran
-// the code. `js/highlight.js` takes the group to draw into as an argument, which is what lets
-// `test/select.test.mjs` draw, replace and clear a highlight for real; these are the joins to it.
+// the code. `js/highlight.js` takes the group to draw into as an argument, and `test/select.test.mjs`
+// draws, replaces and clears a highlight for real; these are the joins to it.
 const highlightSrc = fs.readFileSync(path.resolve(here, '../js/highlight.js'), 'utf8');
 check(
   'main.js imports the highlight helpers, so they are in scope where it calls them',
   /^import \{ drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT \} from '\.\/highlight\.js';$/m.test(js),
 );
 check(
-  'the pick is drawn as a filled tint as well as edges, not as hairlines on the surface',
-  /function updatePickHighlight\(\)/.test(js) &&
-    /cleanup\.outline = faces\s*\n\s*\? drawHighlight\(viewer\.modelGroup, mask\.position\.array, cleanup\.outline, faces, \{\s*\n\s*color: 0xffd24d,\s*\n\s*fillOpacity: 0\.5,/.test(js) &&
-    /: clearHighlight\(viewer\.modelGroup, cleanup\.outline\);/.test(js) &&
+  'the hovered face is drawn as a filled, offset tint, not as hairlines on the surface',
+  /function updateHoverFace\(faceIndex\)/.test(js) &&
+    /cleanup\.hover = drawHighlight\(viewer\.modelGroup, mask\.position\.array, cleanup\.hover, under, \{\s*\n\s*color: 0xffffff,/.test(js) &&
     /new THREE\.Mesh\(\s*\n\s*data\.fill,\s*\n\s*new THREE\.MeshBasicMaterial\(\{/.test(highlightSrc) &&
     /const offset = \{ polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 \};/.test(highlightSrc) &&
     /side: THREE\.DoubleSide,\s*\n\s*\.\.\.offset,/.test(highlightSrc) &&
     /new THREE\.LineSegments\(\s*\n\s*data\.edges,/.test(highlightSrc),
 );
+// The selection itself is drawn by the tint the mask layer writes into the overlay geometry, which
+// is a different thing from the hover outline: one is the selection, the other follows the cursor.
 check(
-  'and the hovered face is tinted white the same way',
-  /function updateHoverFace\(faceIndex\)/.test(js) &&
-    /cleanup\.hover = drawHighlight\(viewer\.modelGroup, mask\.position\.array, cleanup\.hover, under, \{\s*\n\s*color: 0xffffff,\s*\n\s*fillOpacity: 0\.35,/.test(js),
+  'the selection is tinted by the mask layer, and the hover by the highlight module',
+  /overlayGeometry\.setAttribute\('color', new THREE\.BufferAttribute\(mask\.colors, 4\)\);/.test(js) &&
+    /_writeVertex\(i\)/.test(maskSrc) && /export function hexToRgb/.test(selectionSrc) &&
+    /color: 0xffffff/.test(js) && /cleanup\.hover = clearHighlight\(viewer\.modelGroup, cleanup\.hover\);/.test(js),
 );
 // The shipped crash, as a rule rather than a memory: drawing has defaults for every option and
 // clearing is a function of its own, so no path can destructure an options object it was not given.
@@ -706,33 +788,43 @@ check(
 check(
   'clearing the highlight is its own function, so it cannot be a draw call missing its options',
   /export function clearHighlight\(parent, group\)/.test(highlightSrc) &&
-    /cleanup\.outline = clearHighlight\(viewer\.modelGroup, cleanup\.outline\);/.test(js) &&
     /cleanup\.hover = clearHighlight\(viewer\.modelGroup, cleanup\.hover\);/.test(js) &&
+    /function clearHoverFace\(\)/.test(js) &&
     !/drawHighlight\([^)]*null\)/.test(js),
 );
+// The load path is where the crash left the app stuck, and it is also where a stale selection would
+// come from if one were kept: a fresh model gets a fresh tint and an empty selection, and nothing
+// survives from the model before it.
 check(
-  'the pick is released on the load path, which is where the crash left the app stuck',
-  /resetPickedFaces\(\);\s*\n\s*\n\s*const triangles/.test(js) &&
-    /function resetPickedFaces\(\)\s*\{[\s\S]{0,220}?clearPickHighlight\(\);\s*\n\s*clearHoverFace\(\);/.test(js) &&
-    /mask = new MaskLayer\(overlayGeometry, state\.features\);\s*\n\s*overlayGeometry\.setAttribute\('color', new THREE\.BufferAttribute\(mask\.colors, 4\)\);\s*\n\s*resetPickedFaces\(\);/.test(js),
+  'a new model gets a new tint and an empty selection, so nothing survives the load',
+  /mask = new SelectionTint\(overlayGeometry\);\s*\n\s*overlayGeometry\.setAttribute\('color', new THREE\.BufferAttribute\(mask\.colors, 4\)\);/.test(js) &&
+    /function resetSelection\(\) \{\s*\n\s*cleanup\.selection = createSelection\(faceCountInHand\(\)\);/.test(js) &&
+    !/resetPickedFaces|updatePickHighlight/.test(js),
 );
 check(
-  'a pick too big to draw says so in the panel instead of silently not drawing',
+  'and the panel is told, rather than left showing the last model’s numbers',
+  /function resetSelection\(\) \{[\s\S]{0,500}?updateStats\(\);[\s\S]{0,80}?updateHud\(\);/.test(js),
+);
+check(
+  'a selection too big to tint says so in the panel instead of silently drawing nothing',
   /export const HIGHLIGHT_FACE_LIMIT = 150000;/.test(highlightSrc) &&
-    /HIGHLIGHT_FACE_LIMIT/.test(js) && /too many to tint in the viewport/.test(js) &&
+    /import \{ drawHighlight, clearHighlight, HIGHLIGHT_FACE_LIMIT \} from '\.\/highlight\.js';/.test(js) &&
+    /picked > HIGHLIGHT_FACE_LIMIT \? ' · too many to tint in the viewport, so the tint is off' : ''/.test(js) &&
     /export function highlightArrays\(positions, faceMask, \{ limit = 150000 \} = \{\}\)/.test(selectSrc),
 );
 check(
   'a one-model file does not tint the whole model on hover — there is nothing to choose there',
   /const whole =\s*\n\s*cleanup\.scope === 'models' && shells && shells\.shellCount > 1 \? shells\.faceShell\[faceIndex\] : undefined;/.test(js) &&
-    /This file holds one model, so a click here picks the whole file/.test(js),
+    /This file holds one model, so a click here selects the whole file/.test(js),
 );
 check(
   'select.js keeps the rules the cleanup needs, and exports them',
   /export function shellsOf/.test(selectSrc) && /export function filterSoup/.test(selectSrc) &&
-    /export function remapHistory/.test(selectSrc) && /export function inverseCornerMap/.test(selectSrc) &&
-    /const key = a < b \? a \* ID_SHIFT \+ b : b \* ID_SHIFT \+ a;/.test(selectSrc),
+    /export function shellSize/.test(selectSrc) && /export function countFaces/.test(selectSrc) &&
+    /const key = a < b \? a \* ID_SHIFT \+ b : b \* ID_SHIFT \+ a;/.test(selectSrc) &&
+    !/remapHistory|inverseCornerMap|pickedCorners/.test(selectSrc),
 );
+
 check(
   'the viewer draws the bed on the model’s own lowest point, not a fraction of its height below it',
   /export function gridPlacement\(box\)/.test(boxViewerSrc) &&
@@ -743,7 +835,7 @@ check(
 
 // ------------------------------------------------- the session file
 // Saving the windows and loading them back to add more is the mask JSON; what it has to carry to
-// be a session (rather than just a vertex list) is the palette and the build settings.
+// be a session (rather than just a vertex list) is the selection and the build settings.
 check('the mask JSON carries the build settings', /stencil: stencilSettings\(\)/.test(js) && /function stencilSettings\(\)/.test(js));
 check('the guide documents that field', /"stencil"/.test(fs.readFileSync(path.resolve(here, '../help.html'), 'utf8')));
 check(
@@ -755,15 +847,21 @@ check(
   /stencil: parseStencilSettings\(data\.stencil\)/.test(fs.readFileSync(path.resolve(here, '../js/io.js'), 'utf8')),
 );
 check(
-  'a loaded mask is compared against the build in hand, not left saying old numbers',
-  /mask\.loadPairs\(pairs\);[\s\S]{0,500}?updateStencilStats\(\);/.test(js),
+  'a loaded selection becomes the selection, and is compared against the build in hand',
+  /mask\.loadPairs\(pairs\);[\s\S]{0,400}?history\.remember\(cleanup\.selection\);/.test(js) &&
+    /cleanup\.selection\.faces\.set\(facesFromPainted\(painted, cleanup\.selection\.faces\.length\)\)/.test(js) &&
+    /mask\.loadPairs\(pairs\);[\s\S]{0,900}?updateStencilStats\(\);/.test(js),
 );
 check(
   'the buttons read as save and open, and both say how to carry on',
-  /Save mask \(JSON\)/.test(html) &&
-    /Open mask \(JSON\)/.test(html) &&
-    /Open mask \(JSON\)” brings it back to carry on/.test(js) &&
-    /Shift-click more panels with the Part tool/.test(js),
+  /Save selection \(JSON\)/.test(html) &&
+    /Open selection \(JSON\)/.test(html) &&
+    /“Open selection \(JSON\)” brings it back to carry on/.test(js) &&
+    /Click a panel with Part to add to it, then “Build stencil”/.test(js),
+);
+check(
+  'and the panel says a mask saved by the painting version opens as one selection',
+  /all of them come back as the[\s\S]{0,40}?one selection/.test(html),
 );
 
 console.log(`\n${missing.length + missingExports.length + (failures ? 1 : 0) === 0 ? 'all wiring checks passed' : `${failures} failure(s)`}`);

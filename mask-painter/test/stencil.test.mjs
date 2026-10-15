@@ -320,10 +320,15 @@ function runCase(name, { painted, params = {}, expect = {} }) {
           `inside the paint (the lip deliberately overlaps the edge by ${fmt(s.windowOverhang, 2)})`,
       );
     }
+    // A selection with nothing deeper than the lip has no deep vertex to probe: on a dot a couple
+    // of faces across, the lip deliberately overhangs the whole window, so "air over every probe"
+    // is not the promise there — the window opening is.
     check(
       `${name}: window is open over the paint (probes are air)`,
-      sampledDeep > 0 && blocked === 0,
-      `${blocked}/${sampledDeep} probes above painted vertices hit material`,
+      blocked === 0 && (sampledDeep > 0 || deep.length === 0),
+      deep.length === 0
+        ? 'nothing in the paint is deeper than the lip, so there is no deep probe to take'
+        : `${blocked}/${sampledDeep} probes above painted vertices hit material`,
     );
 
     const probeC = s.standoff + Math.abs(p.thicknessMax ?? p.wall) * 0.5;
@@ -480,11 +485,37 @@ runCase('both eyes, widening off', {
 console.log('case: a dot smaller than the overhang');
 const dot = gd(eyeRS, 0.6);
 describe('dot smaller than overhang', dot);
-runCase('dot smaller than overhang', {
+// This case used to pin the app's worst behaviour: a dot with a 3.0 window inlay came back with
+// `windowOpen: false`, a shell with no opening over the selected dot at all — so a handful of faces
+// picked with Select faces silently never reached the stencil, while a Part panel or a box drag
+// (thousands of faces, plenty deep for the inlay to bite into) worked. The guarantee now is that
+// every selected island opens: an island with no room for the inlay is cut at its own edge, the
+// build says so, and the shell is still a printable solid.
+const resDot = runCase('dot smaller than overhang', {
   painted: dot.paintedW,
   params: { overhang: 3 },
-  expect: { windowOpen: false },
+  expect: { minWindowLoops: 1 },
 });
+check(
+  'dot smaller than overhang: the window opens instead of coming back closed',
+  resDot.ok === true && resDot.stats.windowOpen === true &&
+    !resDot.warnings.some((w) => /window did not open/i.test(w)),
+  resDot.ok ? `window ${resDot.stats.windowOpen ? 'open' : 'CLOSED'}, ${resDot.stats.windowLoops} loop(s)` : 'did not build',
+);
+check(
+  'dot smaller than overhang: says the cut is at the island edge, and how far past it',
+  resDot.ok === true &&
+    resDot.stats.thinIslands === 1 &&
+    resDot.stats.thinIslandRim > 0 &&
+    resDot.stats.thinIslandRim <= topo.meanEdgeLength * 1.001 &&
+    resDot.warnings.some((w) => /thinner than the 3 window inlay/.test(w)),
+  resDot.ok ? `${resDot.stats.thinIslands} island(s), rim ${fmt(resDot.stats.thinIslandRim, 3)} vs edge ${fmt(topo.meanEdgeLength, 3)}` : 'did not build',
+);
+check(
+  'dot smaller than overhang: the window is still where the dot is (the paint is not covered)',
+  resDot.ok === true && resDot.stats.paintedVertices > 0,
+  resDot.ok ? `${resDot.stats.paintedVertices} painted vertices under the window` : 'did not build',
+);
 
 describe(`head cap above y=${fmt(capY, 1)}`, cap);
 runCase('head cap', { painted: cap.paintedW, params: { coverRadius: 12 }, expect: { minWindowLoops: 1 } });

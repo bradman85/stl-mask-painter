@@ -1,5 +1,5 @@
-// Drives the export path the way the app does it: the real MaskLayer paints the real model,
-// the painted ids become the stencil window, the panel's own default numbers are used, and
+// Drives the export path the way the app does it: the real selection is made on the real model,
+// it becomes the stencil window, the panel's own default numbers are used, and
 // the result is written with the real STL writer and read back.
 //
 //   node test/app-path.test.mjs
@@ -11,8 +11,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../vendor/three.module.js';
-import { MaskLayer } from '../js/mask.js';
-import { createFeatureList } from '../js/features.js';
+import { SelectionTint } from '../js/mask.js';
+import {
+  createSelection,
+  applyFaces,
+  countSelected,
+  paintedFromFaces,
+  facesFromVertices,
+  facesFromPainted,
+  SelectionHistory,
+} from '../js/selection.js';
 import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal, geodesicField } from '../js/stencil.js';
 import { buildBinarySTL, buildMaskJSON, parseMaskJSON, setOnBed, lowestZ } from '../js/io.js';
 import { maskWindows } from '../js/cleanup.js';
@@ -108,14 +116,58 @@ function frontOf(zLo, zHi) {
   return best;
 }
 
-// ---------------------------------------------------------------- the app's mask layer
+// ------------------------------------------------------------ the app's selection
+//
+// The app selects *faces*; there is no brush any more. This is the same path the two tools take:
+// a selection over the file's faces, and `paintedFromFaces` — the one bridge to the vertex-shaped
+// data the stencil engine eats. A stamp is modelled here as "every face with a corner within r of
+// a point", which is what a click on a panel amounts to, and the assertions are about the same
+// things the old ones were: two separate windows, a stencil that stays watertight, and a file that
+// comes back the way it went out.
 
 const geometry = new THREE.BufferGeometry();
 geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-const maskLayer = new MaskLayer(geometry, createFeatureList());
-check('MaskLayer wraps the loaded geometry', maskLayer.vertexCount === positions.length / 3);
+const faceCount = positions.length / 9;
+const tint = new SelectionTint(geometry);
+const selection = createSelection(faceCount);
+const history = new SelectionHistory();
+let tintScratch = null;
 
-// Paint two eye discs, the way a user would with the brush: feature 1 on the left eye.
+function syncTint() {
+  tintScratch = paintedFromFaces(selection, tintScratch);
+  return tint.setSelection(tintScratch);
+}
+
+/** Every face with a corner within `radius` of `p` — what a click on a part selects. */
+function facesNear(p, radius) {
+  const wanted = new Uint8Array(faceCount);
+  const r2 = radius * radius;
+  for (let t = 0; t < faceCount; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const i = t * 3 + k;
+      const dx = positions[i * 3] - p[0];
+      const dy = positions[i * 3 + 1] - p[1];
+      const dz = positions[i * 3 + 2] - p[2];
+      if (dx * dx + dy * dy + dz * dz <= r2) {
+        wanted[t] = 1;
+        break;
+      }
+    }
+  }
+  return wanted;
+}
+
+/** Adds those faces to the selection, as one undo step. Returns how many joined. */
+function selectNear(p, radius) {
+  history.remember(selection);
+  const changed = applyFaces(selection, facesNear(p, radius), { add: true });
+  syncTint();
+  return changed;
+}
+
+check('SelectionTint wraps the loaded geometry', tint.vertexCount === positions.length / 3);
+check('the selection starts empty', countSelected(selection) === 0 && tint.stats().painted === 0);
+
 const bbox = geometry.boundingBox || (geometry.computeBoundingBox(), geometry.boundingBox);
 const centre = bbox.getCenter(new THREE.Vector3());
 const size = bbox.getSize(new THREE.Vector3());
@@ -124,7 +176,7 @@ const brush = Math.max(0.5, diagonal / 45);
 
 let eyeLeft = null;
 let eyeRight = null;
-for (let i = 0; i < maskLayer.vertexCount; i += 1) {
+for (let i = 0; i < tint.vertexCount; i += 1) {
   const x = positions[i * 3];
   const y = positions[i * 3 + 1];
   const z = positions[i * 3 + 2];
@@ -133,17 +185,24 @@ for (let i = 0; i < maskLayer.vertexCount; i += 1) {
   if (x < centre.x && (!eyeLeft || z > eyeLeft.z)) eyeLeft = p;
   if (x > centre.x && (!eyeRight || z > eyeRight.z)) eyeRight = p;
 }
-const paintedLeft = maskLayer.paintSphere(eyeLeft.toArray(), brush, 1);
-const paintedRight = maskLayer.paintSphere(eyeRight.toArray(), brush, 2);
-check('painting two features marks vertices', paintedLeft > 0 && paintedRight > 0, `${fmt(paintedLeft)} + ${fmt(paintedRight)} vertices`);
+const selectedLeft = selectNear(eyeLeft.toArray(), brush);
+const selectedRight = selectNear(eyeRight.toArray(), brush);
+check(
+  'selecting two eye panels marks faces and tinted corners',
+  selectedLeft > 0 && selectedRight > 0 && tint.stats().painted > 0,
+  `${fmt(selectedLeft)} + ${fmt(selectedRight)} faces, ${fmt(tint.stats().painted)} corners`,
+);
 
-const stats = maskLayer.stats();
-check('mask stats agree with the paint', stats.painted === paintedLeft + paintedRight, `${fmt(stats.painted)} painted`);
+const stats = tint.stats();
+check(
+  'the tint counts exactly the corners of the selected faces',
+  stats.painted === countSelected(selection) * 3,
+  `${fmt(stats.painted)} painted corners for ${fmt(countSelected(selection))} faces`,
+);
 
 // ---------------------------------------------------------------- the app's build path
 
-const painted = new Uint8Array(maskLayer.vertexCount);
-for (let i = 0; i < painted.length; i += 1) if (maskLayer.ids[i] !== 0) painted[i] = 1;
+const painted = tintScratch;
 
 // Exactly the derivation the panel does (stencilParamsFromInputs / stencilDefaultsForModel).
 const defaults = stencilDefaultsForDiagonal(diagonal);
@@ -153,7 +212,7 @@ params.edgeFade = Math.max(params.edgeFade, params.wall * 2);
 params.maxCoverRadius = Math.max(defaults.maxCoverRadius || defaults.coverRadius * 3, params.coverRadius * 2);
 
 const tTopo = Date.now();
-const topology = buildTopology(positions, maskLayer.vertexCount);
+const topology = buildTopology(positions, tint.vertexCount);
 const topoMs = Date.now() - tTopo;
 const tBuild = Date.now();
 const res = buildStencil({ topology, painted, params });
@@ -387,11 +446,11 @@ check(
     // has to reach the plate in the file, not just the lowest one.
     const head = frontOf(centre.z + size.z * 0.28, centre.z + size.z * 0.36);
     const foot = frontOf(bbox.min.z, bbox.min.z + size.z * 0.08);
-    const twoLayer = new MaskLayer(geometry, createFeatureList());
-    twoLayer.paintSphere([positions[head * 3], positions[head * 3 + 1], positions[head * 3 + 2]], brush, 1);
-    twoLayer.paintSphere([positions[foot * 3], positions[foot * 3 + 1], positions[foot * 3 + 2]], brush, 2);
-    const paintedTwo = new Uint8Array(twoLayer.vertexCount);
-    for (let i = 0; i < paintedTwo.length; i += 1) if (twoLayer.ids[i] !== 0) paintedTwo[i] = 1;
+    const twoSelection = createSelection(faceCount);
+    for (const at of [head, foot]) {
+      applyFaces(twoSelection, facesNear([positions[at * 3], positions[at * 3 + 1], positions[at * 3 + 2]], brush), { add: true });
+    }
+    const paintedTwo = paintedFromFaces(twoSelection);
     const resTwo = buildStencil({
       topology,
       painted: paintedTwo,
@@ -569,65 +628,78 @@ check(
     (ringSkipped ? ` (${ringSkipped} skipped: no model face within 0.05)` : ''),
 );
 
-// ---------------------------------------------------------------- mask JSON round trip
-// The app's export → import path (js/io.js + MaskLayer) on the mask this suite painted:
-// what is written has to be exactly what comes back, or a saved session is a lie.
-const features = createFeatureList();
-const paintedBefore = maskLayer.paintedPairs();
+// ---------------------------------------------------------------- selection JSON round trip
+// The app's export → import path (js/io.js + SelectionTint) on the selection this suite made:
+// what is written has to come back as the same window, or a saved session is a lie.
+const features = [{ id: 1, name: 'Selection', color: '#ffc94d' }];
+const paintedBefore = tint.paintedPairs();
 const maskJson = JSON.stringify(
-  buildMaskJSON({ mask: maskLayer, features, modelName: 'Sprunki Mercuy.stl', pairs: paintedBefore }),
+  buildMaskJSON({ mask: tint, features, modelName: 'Sprunki Mercuy.stl', pairs: paintedBefore }),
 );
 const maskParsed = parseMaskJSON(maskJson);
-check('mask JSON: format and version are the documented ones', maskParsed.data.format === 'stl-mask' && maskParsed.data.version === 1);
-check('mask JSON: vertexCount is the model\'s vertex count', maskParsed.data.vertexCount === maskLayer.vertexCount, `${fmt(maskParsed.data.vertexCount, 0)}`);
+check('selection JSON: format and version are the documented ones', maskParsed.data.format === 'stl-mask' && maskParsed.data.version === 1);
+check('selection JSON: vertexCount is the model\'s vertex count', maskParsed.data.vertexCount === tint.vertexCount, `${fmt(maskParsed.data.vertexCount, 0)}`);
 check(
-  'mask JSON: one pair per painted vertex, nothing per unpainted vertex',
+  'selection JSON: one pair per corner inside the window, nothing per corner outside it',
   maskParsed.data.paintedVertices === paintedBefore.length / 2 && maskParsed.pairs.length === paintedBefore.length,
-  `${fmt(paintedBefore.length / 2, 0)} vertices, ${(maskJson.length / 1048576).toFixed(1)} MB`,
+  `${fmt(paintedBefore.length / 2, 0)} corners, ${(maskJson.length / 1048576).toFixed(1)} MB`,
 );
 check(
-  'mask JSON: the palette survives the trip',
-  maskParsed.features.length === features.length && maskParsed.features[0].color === features[0].color && maskParsed.features[0].name === features[0].name,
+  'selection JSON: the one id the format carries survives the trip',
+  maskParsed.features.length === 1 && maskParsed.features[0].color === features[0].color && maskParsed.features[0].name === features[0].name,
 );
-const importedMask = new MaskLayer(geometry, createFeatureList());
-importedMask.loadPairs(maskParsed.pairs);
-const paintedAfter = importedMask.paintedPairs();
+const importedTint = new SelectionTint(geometry);
+importedTint.loadPairs(maskParsed.pairs);
+const paintedAfter = importedTint.paintedPairs();
 check(
-  'mask JSON: import reproduces every vertex and id',
+  'selection JSON: import reproduces every corner',
   paintedAfter.length === paintedBefore.length && paintedAfter.every((v, i) => v === paintedBefore[i]),
-  `${fmt(paintedAfter.length / 2, 0)} vertices back`,
+  `${fmt(paintedAfter.length / 2, 0)} corners back`,
 );
+// The import turns corners back into faces — a triangle counts when any of its corners was inside
+// the saved window — and that is what the tint is then rebuilt from, so the reopened selection is
+// the saved one or a rim thicker, never thinner.
+const reopenedFaces = createSelection(faceCount);
+{
+  const paintedFlags = new Uint8Array(tint.vertexCount);
+  for (let i = 0; i < tint.vertexCount; i += 1) paintedFlags[i] = importedTint.ids[i] ? 1 : 0;
+  reopenedFaces.faces.set(facesFromPainted(paintedFlags, faceCount));
+  const widened = paintedFromFaces(reopenedFaces);
+  let lost = 0;
+  for (let i = 0; i < paintedFlags.length; i += 1) if (paintedFlags[i] && !widened[i]) lost += 1;
+  check(
+    'a reopened selection keeps every saved corner, and adds only the rims of its triangles',
+    lost === 0 && countSelected(reopenedFaces) >= countSelected(selection) - selectedRight,
+    `${fmt(lost)} saved corners lost, ${fmt(countSelected(reopenedFaces))} faces in the reopened selection`,
+  );
+}
 // The guide documents the vertexCount mismatch as a warning rather than a refusal: the
 // importer has to expose both numbers for the UI to compare.
 const sample36 = { format: 'stl-mask', version: 1, vertexCount: 36, features: [], painted: [0, 1, 1, 1] };
 check(
-  'mask JSON: a file for another model is importable but flagged by its vertexCount',
-  parseMaskJSON(JSON.stringify(sample36)).data.vertexCount !== maskLayer.vertexCount,
-  `${sample36.vertexCount} vs ${fmt(maskLayer.vertexCount, 0)}`,
+  'selection JSON: a file for another model is importable but flagged by its vertexCount',
+  parseMaskJSON(JSON.stringify(sample36)).data.vertexCount !== tint.vertexCount,
+  `${sample36.vertexCount} vs ${fmt(tint.vertexCount, 0)}`,
 );
 
 // ------------------------------------------------- the save has to match the screen
 //
-// The report this answers: paint a window, build the stencil, export it, Shift-click more panels,
+// The report this answers: select a window, build the stencil, export it, select more panels,
 // export again — and the second file held only the first round's windows under a fresh timestamp,
-// because the export wrote the build it had in hand rather than the mask on screen. The engine was
-// never the problem, so this pins the two halves the fix rests on: that the shell in hand really is
-// a different, older part after more paint, and that a saved mask can be loaded back and built on.
-const paintedMaskOf = (layer) => {
-  const m = new Uint8Array(layer.vertexCount);
+// because the export wrote the build it had in hand rather than the selection on screen. The engine
+// was never the problem, so this pins the two halves the fix rests on: that the shell in hand really
+// is a different, older part after more selection, and that a saved selection can be loaded back
+// and built on.
+const paintedMaskOf = () => {
+  const m = paintedFromFaces(selection);
   let count = 0;
-  for (let i = 0; i < m.length; i += 1) {
-    if (layer.ids[i] !== 0) {
-      m[i] = 1;
-      count += 1;
-    }
-  }
+  for (let i = 0; i < m.length; i += 1) if (m[i]) count += 1;
   return { painted: m, count };
 };
-/** Frontmost surface point in a y band, so a stamp certainly lands on the model. */
+/** Frontmost surface point in a y band, so a click certainly lands on the model. */
 function frontMostIn(yLo, yHi) {
   let best = null;
-  for (let i = 0; i < maskLayer.vertexCount; i += 1) {
+  for (let i = 0; i < tint.vertexCount; i += 1) {
     const y = positions[i * 3 + 1];
     if (y < yLo || y > yHi) continue;
     const z = positions[i * 3 + 2];
@@ -640,14 +712,14 @@ const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffe
 {
   const round1 = res; // what the panel had in hand: the two eye windows
   const chest = frontMostIn(centre.y - size.y * 0.12, centre.y + size.y * 0.02);
-  const added = maskLayer.paintSphere(chest, brush, 3);
+  const added = selectNear(chest, brush);
   check(
-    'a second round of painting adds another window to the mask',
+    'a second selection adds another window to the selection',
     added > 0,
-    `${fmt(added)} vertices at ${chest.map((n) => n.toFixed(1)).join(', ')}`,
+    `${fmt(added)} faces at ${chest.map((n) => n.toFixed(1)).join(', ')}`,
   );
 
-  const round2 = buildStencil({ topology, painted: paintedMaskOf(maskLayer).painted, params });
+  const round2 = buildStencil({ topology, painted: paintedMaskOf().painted, params });
   check(
     'the new window is its own window in a rebuild, and the parts differ',
     round2.stats.windowLoops > round1.stats.windowLoops &&
@@ -655,45 +727,46 @@ const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffe
     `${round1.stats.windowLoops} -> ${round2.stats.windowLoops} windows, ` +
       `${stlBytes(round1).length} -> ${stlBytes(round2).length} bytes`,
   );
-  // The unit the app compares when it decides a build is stale: painted vertices of the mask
-  // (what `stencil.paintedCount` is set to) against the mask as it stands now.
+  // The unit the app compares when it decides a build is stale: the corners inside the window
+  // (what `stencil.paintedCount` is set to) against the selection as it stands now.
   const round1Painted = paintedBefore.length / 2;
   check(
-    'the shell in hand was built from the smaller mask',
-    round1Painted < paintedMaskOf(maskLayer).count,
-    `built from ${fmt(round1Painted)} painted vertices; the mask now has ` +
-      `${fmt(paintedMaskOf(maskLayer).count)} — the numbers the stale test compares`,
+    'the shell in hand was built from the smaller selection',
+    round1Painted < paintedMaskOf().count,
+    `built from ${fmt(round1Painted)} corners; the selection now has ` +
+      `${fmt(paintedMaskOf().count)} — the numbers the stale test compares`,
   );
 
-  // The other direction, which is what "remove excess from the stencil" means: take a window out
-  // of the mask the way the window list's Remove row does — dump exactly the file vertices that
-  // window carries, in one undoable stroke — and rebuild. The window has to leave the shell.
-  const windows = maskWindows(topology, maskLayer.ids);
+  // The other direction, which is what dropping a window means: unselect exactly the faces the
+  // window list names — the same corner-to-face mapping the Remove row uses — and rebuild. The
+  // window has to leave the shell.
+  const windows = maskWindows(topology, tint.ids);
   const biggest = windows[0];
-  const beforeRemoval = paintedMaskOf(maskLayer).count;
-  maskLayer.beginStroke();
-  const released = maskLayer.paintIndices(biggest.fileVertices, 0);
-  const recordedRemoval = maskLayer.endStroke();
-  maskLayer.flush();
-  const round3 = buildStencil({ topology, painted: paintedMaskOf(maskLayer).painted, params });
+  const beforeRemoval = paintedMaskOf().count;
+  const doomed = new Uint8Array(faceCount);
+  for (const c of biggest.fileVertices) doomed[Math.floor(c / 3)] = 1;
+  history.remember(selection);
+  const changedFaces = applyFaces(selection, doomed, { remove: true });
+  syncTint();
+  const round3 = buildStencil({ topology, painted: paintedMaskOf().painted, params });
   check(
-    'the window list reaches the built shell: removing a window drops its window from the rebuild',
-    recordedRemoval &&
-      released === biggest.vertices &&
-      beforeRemoval - released === paintedMaskOf(maskLayer).count &&
+    'the window list reaches the built shell: dropping a window drops it from the rebuild',
+    changedFaces > 0 &&
+      paintedMaskOf().count < beforeRemoval &&
       round3.stats.windowLoops === round2.stats.windowLoops - 1,
-    `${fmt(windows.length)} window(s) listed, largest ${fmt(biggest.vertices)} vertices released; ` +
+    `${fmt(windows.length)} window(s) listed, ${fmt(changedFaces)} faces unselected; ` +
       `${round2.stats.windowLoops} -> ${round3.stats.windowLoops} window(s) in the shell`,
   );
-  maskLayer.undo();
+  history.undo(selection);
+  syncTint();
   check(
     'and one undo puts the window back where it was',
-    paintedMaskOf(maskLayer).count === beforeRemoval,
-    `${fmt(paintedMaskOf(maskLayer).count)} painted again`,
+    paintedMaskOf().count === beforeRemoval,
+    `${fmt(paintedMaskOf().count)} corners inside the window again`,
   );
 
   // Saving the place and carrying on: the session file, reopened, keeps growing. This is the
-  // "save the windows I have marked up and load them back to add more" flow.
+  // "save the windows I have selected and load them back to add more" flow.
   const savedStencil = {
     coverRadius: params.coverRadius,
     wall: params.wall,
@@ -703,10 +776,10 @@ const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffe
   };
   const session = JSON.stringify(
     buildMaskJSON({
-      mask: maskLayer,
+      mask: tint,
       features,
       modelName: 'Sprunki Mercuy.stl',
-      pairs: maskLayer.paintedPairs(),
+      pairs: tint.paintedPairs(),
       stencil: savedStencil,
     }),
   );
@@ -723,24 +796,252 @@ const stlBytes = (r) => Buffer.from(buildBinarySTL(r.positions, r.indices).buffe
     parseMaskJSON(JSON.stringify(sample36)).stencil === null,
   );
 
-  const resumed = new MaskLayer(geometry, createFeatureList());
-  resumed.setFeatures(reopened.features);
-  resumed.loadPairs(reopened.pairs);
-  let diff = 0;
-  for (let i = 0; i < maskLayer.ids.length; i += 1) if (maskLayer.ids[i] !== resumed.ids[i]) diff += 1;
-  check('a reloaded mask is the mask that was saved, window for window', diff === 0, `${fmt(diff)} vertices differ`);
+  // A reopened file, the way the app imports one: corners in, faces out, then built on.
+  const resumedTint = new SelectionTint(geometry);
+  resumedTint.loadPairs(reopened.pairs);
+  const resumed = createSelection(faceCount);
+  const resumedPainted = new Uint8Array(tint.vertexCount);
+  for (let i = 0; i < tint.vertexCount; i += 1) resumedPainted[i] = resumedTint.ids[i] ? 1 : 0;
+  resumed.faces.set(facesFromPainted(resumedPainted, faceCount));
+  const resumedMask = paintedFromFaces(resumed);
+  let missing = 0;
+  for (let i = 0; i < resumedPainted.length; i += 1) if (resumedPainted[i] && !resumedMask[i]) missing += 1;
+  check(
+    'a reloaded selection covers every corner that was saved',
+    missing === 0 && countSelected(resumed) > 0,
+    `${fmt(missing)} corners missing, ${fmt(countSelected(resumed))} faces selected`,
+  );
 
   const mouth = frontMostIn(centre.y + size.y * 0.06, centre.y + size.y * 0.15);
-  const grew = resumed.paintSphere(mouth, brush, 2);
-  const resumedBuild = buildStencil({ topology, painted: paintedMaskOf(resumed).painted, params });
+  const extra = new Uint8Array(faceCount);
+  {
+    const wanted = facesNear(mouth, brush);
+    let n = 0;
+    for (let t = 0; t < faceCount; t += 1) {
+      if (wanted[t] && !resumed.faces[t]) {
+        extra[t] = 1;
+        n += 1;
+      }
+    }
+    check('the reopened selection can still be added to', n > 0, `${fmt(n)} faces added at the mouth`);
+  }
+  applyFaces(resumed, extra, { add: true });
+  const grew = countSelected(resumed);
+  const resumedBuild = buildStencil({ topology, painted: paintedFromFaces(resumed), params });
   check(
     'windows added after a reload reach the build',
-    grew > 0 &&
-      resumedBuild.stats.paintedVertices > round2.stats.paintedVertices &&
+    resumedBuild.stats.paintedVertices > round2.stats.paintedVertices &&
       resumedBuild.stats.windowLoops >= round2.stats.windowLoops &&
       Buffer.compare(stlBytes(resumedBuild), stlBytes(round2)) !== 0,
-    `${fmt(round2.stats.paintedVertices)} -> ${fmt(resumedBuild.stats.paintedVertices)} painted vertices, ` +
+    `${fmt(grew)} faces in the reopened selection, ` +
+      `${fmt(round2.stats.paintedVertices)} -> ${fmt(resumedBuild.stats.paintedVertices)} corners, ` +
       `${round2.stats.windowLoops} -> ${resumedBuild.stats.windowLoops} windows`,
+  );
+}
+
+// ------------------------------------------------- a picked face has to reach the shell
+//
+// The report this answers: pick a few triangles with Select faces, build, and the shell comes back
+// untouched — the picked faces are in the selection (the tint shows them) but not in the stencil,
+// while Part panels and box drags work. Two mechanisms in the engine dropped a small window, both
+// measured on the bundled figure: a painted island thinner than the window inlay has no inside to
+// bite into (a one-triangle pick is three welded vertices, all of them boundary, so the depth field
+// is 0 across it), and the inside smoothing that shapes a good rim lifts a small island's values
+// back above the cut level (a 52-face patch is 0.53 deep, well past the 0.35 inlay, and still came
+// out with `windowLoops: 0`). Either way the build reported success and the picked faces were
+// simply absent from it. The guarantee now is that *every* selected island opens a window.
+//
+// Checked by looking for the hole rather than by trusting a count: a ray from the face, both ways
+// along its normal, finds the inner sheet — the standoff above the surface, a fraction of a unit —
+// over a covered spot and nothing at all over a window, where it simply leaves through the hole.
+// The reach is a fraction of a unit and not a whole band, because everything past the standoff
+// belongs to the shell *beside* the spot: measured here, a one-face window had the neighbouring
+// inner sheet 0.7 units away sideways, so a ray three units long read the window as covered.
+const faceCentroid = (t) => [
+  (positions[t * 9] + positions[t * 9 + 3] + positions[t * 9 + 6]) / 3,
+  (positions[t * 9 + 1] + positions[t * 9 + 4] + positions[t * 9 + 7]) / 3,
+  (positions[t * 9 + 2] + positions[t * 9 + 5] + positions[t * 9 + 8]) / 3,
+];
+const faceNormal = (t) => {
+  const ax = positions[t * 9];
+  const ay = positions[t * 9 + 1];
+  const az = positions[t * 9 + 2];
+  const ux = positions[t * 9 + 3] - ax;
+  const uy = positions[t * 9 + 4] - ay;
+  const uz = positions[t * 9 + 5] - az;
+  const vx = positions[t * 9 + 6] - ax;
+  const vy = positions[t * 9 + 7] - ay;
+  const vz = positions[t * 9 + 8] - az;
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return [nx / len, ny / len, nz / len];
+};
+/** Crossings of a triangle soup along one ray, within `reach`; Möller–Trumbore, no backface cull. */
+function rayHits(pos, idx, origin, dir, reach) {
+  let hits = 0;
+  for (let t = 0; t < idx.length / 3; t += 1) {
+    const a = idx[t * 3] * 3;
+    const b = idx[t * 3 + 1] * 3;
+    const c = idx[t * 3 + 2] * 3;
+    const e1x = pos[b] - pos[a];
+    const e1y = pos[b + 1] - pos[a + 1];
+    const e1z = pos[b + 2] - pos[a + 2];
+    const e2x = pos[c] - pos[a];
+    const e2y = pos[c + 1] - pos[a + 1];
+    const e2z = pos[c + 2] - pos[a + 2];
+    const px = dir[1] * e2z - dir[2] * e2y;
+    const py = dir[2] * e2x - dir[0] * e2z;
+    const pz = dir[0] * e2y - dir[1] * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) continue;
+    const inv = 1 / det;
+    const tx = origin[0] - pos[a];
+    const ty = origin[1] - pos[a + 1];
+    const tz = origin[2] - pos[a + 2];
+    const u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < 0 || u > 1) continue;
+    const qx = ty * e1z - tz * e1y;
+    const qy = tz * e1x - tx * e1z;
+    const qz = tx * e1y - ty * e1x;
+    const v = (dir[0] * qx + dir[1] * qy + dir[2] * qz) * inv;
+    if (v < 0 || u + v > 1) continue;
+    const dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    if (dist > 1e-6 && dist <= reach) hits += 1;
+  }
+  return hits;
+}
+/**
+ * Sheets of the shell right over this face: nothing when the window is there, else the inner sheet.
+ *
+ * The ray starts on the mesh and follows the *welded* normal at that vertex rather than the
+ * triangle's own: a one-triangle window is only about a third of a unit across, and a triangle
+ * normal tilted a few degrees off the surface slopes the ray out through the side of the hole
+ * within a single unit of travel — which read a small window as covered until the probe was
+ * anchored to the surface normal.
+ */
+function sheetsOver(r, face, reach = 0.6) {
+  const v = topology.weldOf[face * 3];
+  const at = [topology.positions[v * 3], topology.positions[v * 3 + 1], topology.positions[v * 3 + 2]];
+  const n = [topology.normals[v * 3], topology.normals[v * 3 + 1], topology.normals[v * 3 + 2]];
+  const len = Math.hypot(n[0], n[1], n[2]) || 1;
+  const dir = [n[0] / len, n[1] / len, n[2] / len];
+  const back = [-dir[0], -dir[1], -dir[2]];
+  return rayHits(r.positions, r.indices, at, dir, reach) + rayHits(r.positions, r.indices, at, back, reach);
+}
+
+{
+  // One face, picked on the front of the head: the smallest selection the tool can make.
+  const picked = frontMostIn(centre.y + size.y * 0.18, centre.y + size.y * 0.34);
+  // And a second, separate pick a couple of units away, still inside the mask band.
+  const pickedPoint = new THREE.Vector3(picked[0], picked[1], picked[2]);
+  let second = -1;
+  for (let t = 0; t < faceCount; t += 1) {
+    const c = faceCentroid(t);
+    const d = Math.hypot(c[0] - picked[0], c[1] - picked[1], c[2] - picked[2]);
+    if (d > 2 && d < 3) { second = t; break; }
+  }
+  const single = createSelection(faceCount);
+  // Which face the click lands on: the one whose centroid is the front-most point in the band.
+  let faceA = -1;
+  let bestD = Infinity;
+  for (let t = 0; t < faceCount; t += 1) {
+    const c = faceCentroid(t);
+    const d = Math.hypot(c[0] - pickedPoint.x, c[1] - pickedPoint.y, c[2] - pickedPoint.z);
+    if (d < bestD) { bestD = d; faceA = t; }
+  }
+  // No widening: the two windows have to stay two, and each piece has to stay within one reach.
+  const smallParams = { ...params, growIfSplit: false, coverRadius: Math.min(params.coverRadius, 12) };
+
+  // A face well outside both picks but inside the mask band, so "covered" has a meaning.
+  let coverageFace = -1;
+  for (let t = 0; t < faceCount; t += 1) {
+    const c = faceCentroid(t);
+    const d = Math.hypot(c[0] - picked[0], c[1] - picked[1], c[2] - picked[2]);
+    if (d > 5 && d < 8) { coverageFace = t; break; }
+  }
+
+  single.faces[faceA] = 1;
+  const one = buildStencil({ topology, painted: paintedFromFaces(single), params: smallParams });
+  if (!one.ok) {
+    console.log(`FAIL  a single picked face builds a shell  — ${one.warnings.join(' ')}`);
+    console.log(`\n${failures + 1} failure(s)`);
+    process.exit(1);
+  }
+  const solid = validateSolid(one);
+  check(
+    'a single picked face builds a shell with a window of its own',
+    one.stats.windowLoops === 1 && one.stats.windowOpen === true,
+    `loops ${one.stats.windowLoops}, open ${one.stats.windowOpen}, ${fmt(one.stats.paintedVertices, 0)} welded vertices painted`,
+  );
+  check(
+    'and the window is over the face that was picked, with the model still covered beside it',
+    sheetsOver(one, faceA) === 0 && sheetsOver(one, coverageFace) >= 1,
+    `${sheetsOver(one, faceA)} sheet(s) over the picked face, ${sheetsOver(one, coverageFace)} over one ` +
+      `${Math.hypot(...faceCentroid(coverageFace).map((n, i) => n - picked[i])).toFixed(1)} away`,
+  );
+  check(
+    'and a one-face window still prints: watertight, outward, on its own',
+    solid.watertight === true && solid.outward === true && one.stats.components === 1,
+    `edges ${JSON.stringify(solid.edgeHistogram)}, ${one.stats.components} piece(s)`,
+  );
+  check(
+    'the build says the window was cut at the island edge, because it is thinner than the inlay',
+    one.stats.thinIslands === 1 && one.warnings.some((w) => w.includes('thinner than the')) &&
+      one.stats.thinIslandRim > 0 && one.stats.thinIslandRim < params.wall,
+    `${one.stats.thinIslands} thin island(s), rim ${one.stats.thinIslandRim.toFixed(3)}`,
+  );
+
+  // Two separate picks are two windows, and unpicking one closes it — Alt-clicking a face back off
+  // a panel has to reach the shell the same way.
+  single.faces[second] = 1;
+  const both = buildStencil({ topology, painted: paintedFromFaces(single), params: smallParams });
+  single.faces[second] = 0;
+  const alone = buildStencil({ topology, painted: paintedFromFaces(single), params: smallParams });
+  check(
+    'two separate picks are two windows, and unpicking one takes its window back out',
+    both.stats.windowLoops === 2 && alone.stats.windowLoops === 1 &&
+      sheetsOver(both, second) === 0 && sheetsOver(alone, second) >= 1 && sheetsOver(alone, faceA) === 0,
+    `${both.stats.windowLoops} windows with both picked, ${alone.stats.windowLoops} after unpicking; ` +
+      `the unpicked face is covered by ${sheetsOver(alone, second)} sheet(s) again`,
+  );
+
+  // The workflow in the report: a Part panel, then a face picked somewhere else on the model. Both
+  // write the same selection, so the shell has to carry a window for each — that is "Build stencil
+  // recognises both" made checkable. The picked face is deliberately outside the panel's own patch
+  // (a click covers a brush-sized area, so a pick 2.6 away would simply be inside the panel window).
+  let farPick = -1;
+  for (let t = 0; t < faceCount; t += 1) {
+    const c = faceCentroid(t);
+    const d = Math.hypot(c[0] - picked[0], c[1] - picked[1], c[2] - picked[2]);
+    if (d > 8 && d < 12) { farPick = t; break; }
+  }
+  const mixed = createSelection(faceCount);
+  applyFaces(mixed, facesNear(pickedPoint.toArray(), brush), { add: true });
+  const panelFaces = countSelected(mixed);
+  const panelOnly = buildStencil({ topology, painted: paintedFromFaces(mixed), params: smallParams });
+  mixed.faces[farPick] = 1;
+  const mixedBuild = buildStencil({ topology, painted: paintedFromFaces(mixed), params: smallParams });
+  check(
+    'a picked face adds its own window to a Part panel, in one shell',
+    panelFaces > 100 && mixedBuild.ok === true &&
+      mixedBuild.stats.windowLoops === panelOnly.stats.windowLoops + 1 &&
+      mixedBuild.stats.thinIslands === 1,
+    `${fmt(panelFaces)} faces from the panel click -> ${panelOnly.stats.windowLoops} window(s); ` +
+      `+ 1 picked face (${fmt(farPick)}, outside the panel) -> ${mixedBuild.ok ? mixedBuild.stats.windowLoops : '-'} window(s), ` +
+      `${mixedBuild.ok ? mixedBuild.stats.components : '-'} piece(s)`,
+  );
+  // The panel's own window is where the panel was clicked, the shell covers what neither gesture
+  // touched, and the added window did not break the solid. The picked face's window itself is not
+  // probed from above: a one-triangle window is narrower than the mask's own 0.35 inlay lip, so
+  // the lip overhangs it and a ray straight up hits that, not the hole.
+  check(
+    'and the panel window is still where it was clicked, on a shell that stays watertight',
+    sheetsOver(mixedBuild, faceA) === 0 && sheetsOver(mixedBuild, coverageFace) >= 1 &&
+      validateSolid(mixedBuild).watertight === true,
+    `panel face ${sheetsOver(mixedBuild, faceA)} sheet(s), ${sheetsOver(mixedBuild, coverageFace)} over ` +
+      `${Math.hypot(...faceCentroid(coverageFace).map((n, i) => n - picked[i])).toFixed(1)} away`,
   );
 }
 

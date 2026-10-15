@@ -95,33 +95,42 @@ for (const raw of buttons) {
   check(`guide documents button "${raw}"`, mentions(name));
 }
 
-// The paint tools are the ones a reader most needs named, and single common
+// The three selection tools are the ones a reader most needs named, and single common
 // words would pass a loose substring test — so require them inside the tools
 // section specifically.
 const toolsSection = (() => {
-  const from = helpHtml.indexOf('id="paint-tools"');
+  const from = helpHtml.indexOf('id="selection"');
   if (from < 0) return '';
   const next = helpHtml.indexOf('<h3', from + 10);
   return norm(helpHtml.slice(from, next < 0 ? from + 4000 : next));
 })();
-check('guide has a paint-tools section', toolsSection.length > 0);
-for (const tool of ['Brush', 'Erase', 'Region fill', 'Part', 'Box paint', 'Pick', 'Add']) {
+check('guide has a selection-tools section', toolsSection.length > 0);
+for (const tool of ['Part', 'Select models', 'Select faces']) {
   check(`tools section names "${tool}"`, toolsSection.includes(tool.toLowerCase()));
 }
-// A name in the prose is not a tool row: every tool is a row of this table with its shortcut, and
-// the box select has to be one of them or the guide describes a panel with six buttons and five
-// tools.
+// A name in the prose is not a tool: each of the three is a row of the tools table with the key that
+// switches to it, and the shortcut table carries those keys too. The app has exactly these three —
+// the brush, the region fill, the eraser, the eyedropper and the box-paint tool are all gone, and a
+// row for one of them would be a tool the panel does not have.
+const toolsRows = [...helpHtml.matchAll(/<td class="k">([^<]+)<\/td><td>[^<]*<\/td><td>([\s\S]*?)<\/td>/g)].map(
+  (m) => [decode(m[1]).trim(), strip(m[2])],
+);
 for (const [tool, key] of [
-  ['Brush', 'B'],
-  ['Region fill', 'F'],
   ['Part', 'P'],
-  ['Box paint', 'X'],
-  ['Erase', 'E'],
-  ['Pick', 'I'],
+  ['Select models', 'S'],
+  ['Select faces', 'S'],
 ]) {
-  const row = new RegExp(`<td class="k">${tool}[^<]*<small><kbd>${key}</kbd></small></td>`);
+  const row = toolsRows.find(([name]) => name === tool);
+  check(`the tools table has a ${tool} row`, row !== undefined, tool);
+  check(`and it carries ${key}`, !row || row[1].includes(key), row ? row[1] : 'no row');
+}
+check(
+  'and no painting tool is offered any more',
+  !/\bBrush\b|Region fill|\bErase\b|Eyedropper|Box paint/.test(helpText),
+  'the tool row is Part / Select models / Select faces',
+);
+for (const key of ['P', 'S', 'B']) {
   const shortcutRow = new RegExp(`<td class="k"><kbd>${key}</kbd></td><td>[^<]*</td>`);
-  check(`the tools table has a ${tool} row with ${key}`, row.test(helpHtml), tool);
   check(`the shortcut table carries ${key}`, shortcutRow.test(helpHtml), key);
 }
 
@@ -138,22 +147,29 @@ for (const [what, id] of required) {
 }
 check('guide mentions the Mask JSON button', helpText.includes('mask json'));
 // The rows of the window list are built in main.js, so index.html cannot declare them and the
-// generic control walk above cannot see them. The Mask section is where a reader finds out what
-// the two buttons on a row do, so both names have to be there, in that section.
-const maskSection = (() => {
-  const from = helpHtml.indexOf('id="mask"');
+// generic control walk above cannot see them. The Windows section is where a reader finds out what
+// the three buttons do — the two on a row as well as the one that opens the list — so all three
+// names have to be there, in that section.
+const windowsSection = (() => {
+  const from = helpHtml.indexOf('id="windows"');
   if (from < 0) return '';
-  const next = helpHtml.indexOf('id="stencil"', from);
+  const next = helpHtml.indexOf('id="tint"', from);
   return helpHtml.slice(from, next < 0 ? from + 12000 : next);
 })();
-check('the Mask section documents the window list button', /List windows/.test(maskSection), 'List windows');
+check('the Windows section documents the window list button', /List windows/.test(windowsSection), 'List windows');
 check(
   'and both buttons on a window row, by the names the rows use',
-  /<b>Remove<\/b>/.test(maskSection) && /<b>Keep only<\/b>/.test(maskSection),
+  /<b>Remove<\/b>/.test(windowsSection) && /<b>Keep only<\/b>/.test(windowsSection),
   '<b>Remove</b> / <b>Keep only</b>',
 );
-check('guide mentions the Painted shell PLY button', helpText.includes('painted shell ply'));
-check('guide mentions the Import mask JSON button', helpText.includes('import mask json'));
+// The guide is about a selection-only app: a reader must not be told to paint anything.
+check(
+  'the guide no longer offers a palette, a brush or a paint colour to set',
+  !/\bpalette of named colours\b|brush radius|paint colour|current feature\b/.test(helpText),
+  'no brush/palette controls left in the text',
+);
+check('guide mentions the Selected shell PLY button', helpText.includes('selected shell ply'));
+check('guide mentions the Open selection (JSON) button', helpText.includes('open selection (json)'));
 // The copy buttons in the guide are how a reader gets a real file into the
 // editor; if they vanish the sections above become decorative.
 // The sample is only useful if the reader can get it out of the page, so the

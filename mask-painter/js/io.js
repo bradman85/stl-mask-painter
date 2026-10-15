@@ -1,4 +1,4 @@
-import { MAX_FEATURE_ID, UNPAINTED_ID } from './features.js';
+import { MAX_FEATURE_ID, UNPAINTED_ID } from './selection.js';
 
 export const MASK_FORMAT = 'stl-mask';
 export const MASK_VERSION = 1;

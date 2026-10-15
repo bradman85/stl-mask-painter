@@ -1,22 +1,23 @@
 /**
- * boxselect.js — which vertices a rectangle dragged on screen covers.
+ * boxselect.js — which triangles a rectangle dragged on screen covers.
  *
  * A point's place on screen is its inverse transform: the mesh's own coordinates go through
  * the model, view and projection matrices (`M · p`, column-major), and dividing by the clip-space
  * `w` gives the pixel the vertex is drawn at. A rectangle dragged over the viewport is therefore
- * a test in that space — a vertex is under the rectangle when its own pixel is inside it — and
- * the mirror case is the same test on the *reflected* vertex, which is what "paint the other side
- * too" means once the screen is between the user and the mesh.
+ * a test in that space.
  *
  * Two things the screen can hide and this file refuses to guess about:
  *
  *   • **Facing.** A box over the face of a closed figure also covers the back of the head, whose
- *     vertices project into the same pixels. Those are culled with the vertex normal and the
- *     camera position (the same test the GPU uses to discard back faces), so a box paints what
- *     you can see of it and reports how many it left alone.
- *   • **Behind the camera.** A vertex behind the camera divides by a negative `w` and lands
+ *     triangles project into the same pixels. Those are culled with the triangle's own normal and
+ *     the camera position (the same test the GPU uses to discard back faces), so a box selects
+ *     what you can see of it and reports how many it left alone.
+ *   • **Behind the camera.** A point behind the camera divides by a negative `w` and lands
  *     somewhere on screen that has nothing to do with where it is, so those are dropped too,
  *     along with anything outside the near and far planes.
+ *
+ * The vertex version of this test — a rectangle that painted every vertex under it — used to live
+ * here too, for the tool that painted the mask. The app selects faces now and has no use for it.
  *
  * Dependency-free on purpose: the same code runs in the page and under Node, where the geometry
  * is checked against a real camera (see `test/boxselect.test.mjs`).
@@ -88,120 +89,10 @@ function multiply4(a, b, out) {
 // A vertex closer than this to the camera plane has no meaningful pixel: `w` approaches zero and
 // the division explodes. It is behind or on the lens, either way not on screen.
 const MIN_CLIP_W = 1e-6;
-
-/**
- * The vertices of a mesh whose screen pixel falls inside a rectangle.
- *
- * @param {object} o
- * @param {Float32Array|number[]} o.positions flat xyz of the mesh, in its own coordinates
- * @param {Float32Array|number[]|null} o.normals flat xyz normals in the same coordinates. Used for
- *   the facing test; without them a box takes every vertex under it, front and back.
- * @param {ArrayLike<number>} o.matrix the mesh-to-clip matrix (projection × view × model),
- *   column-major, as `THREE.Matrix4.elements` is laid out
- * @param {number} o.width canvas width in the same pixels the rectangle is measured in
- * @param {number} o.height canvas height
- * @param {{x0:number,y0:number,x1:number,y1:number}} o.rect the rectangle, y down from the top
- * @param {ArrayLike<number>|null} o.camera the camera position in the mesh's own coordinates
- * @param {{planeX:number}|null} o.mirror reflect the rectangle in the plane x = planeX, i.e. take
- *   the mirror image of everything the box covers, the way the mirrored brush does
- * @param {boolean} o.facingOnly drop vertices that face away from the camera (default true)
- * @returns {{ vertices: Int32Array, count: number, covered: number, hidden: number,
- *   mirrored: number, behind: number }} `vertices` is in mesh order; `covered` is how many
- *   vertices were under the rectangle at all, `hidden` how many of those were dropped for facing
- *   away, `mirrored` how many were added by the reflected box and `behind` how many were behind
- *   the camera or outside the near/far planes.
- */
-export function verticesInScreenRect({
-  positions,
-  normals = null,
-  matrix,
-  width,
-  height,
-  rect,
-  camera = null,
-  mirror = null,
-  facingOnly = true,
-}) {
-  const vertexCount = Math.floor(positions.length / 3);
-  const r = normaliseRect(rect);
-  const m = matrix;
-  const canFace = !!(normals && camera);
-  const picks = new Uint8Array(vertexCount);
-  let covered = 0;
-  let hidden = 0;
-  let behind = 0;
-
-  // Inlined rather than a per-vertex closure: a full-size model is over a million vertices and
-  // this runs on every release of the mouse.
-  for (let i = 0; i < vertexCount; i += 1) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
-    const cw = m[3] * x + m[7] * y + m[11] * z + m[15];
-    if (!(cw > MIN_CLIP_W)) {
-      behind += 1;
-      continue;
-    }
-    const cz = m[2] * x + m[6] * y + m[10] * z + m[14];
-    if (cz < -cw || cz > cw) continue;
-    const cx = m[0] * x + m[4] * y + m[8] * z + m[12];
-    const cy = m[1] * x + m[5] * y + m[9] * z + m[13];
-    const sx = (cx / cw) * 0.5 * width + width * 0.5;
-    const sy = height * 0.5 - (cy / cw) * 0.5 * height;
-    if (sx < r.x0 || sx > r.x1 || sy < r.y0 || sy > r.y1) continue;
-    covered += 1;
-    if (facingOnly && canFace && !facesCamera(normals, i, x, y, z, camera[0], camera[1], camera[2])) {
-      hidden += 1;
-      continue;
-    }
-    picks[i] = 1;
-  }
-
-  let mirrored = 0;
-  if (mirror && Number.isFinite(mirror.planeX)) {
-    const twice = mirror.planeX * 2;
-    for (let i = 0; i < vertexCount; i += 1) {
-      if (picks[i]) continue;
-      const x = twice - positions[i * 3];
-      const y = positions[i * 3 + 1];
-      const z = positions[i * 3 + 2];
-      const cw = m[3] * x + m[7] * y + m[11] * z + m[15];
-      if (!(cw > MIN_CLIP_W)) continue;
-      const cz = m[2] * x + m[6] * y + m[10] * z + m[14];
-      if (cz < -cw || cz > cw) continue;
-      const cx = m[0] * x + m[4] * y + m[8] * z + m[12];
-      const cy = m[1] * x + m[5] * y + m[9] * z + m[13];
-      const sx = (cx / cw) * 0.5 * width + width * 0.5;
-      const sy = height * 0.5 - (cy / cw) * 0.5 * height;
-      if (sx < r.x0 || sx > r.x1 || sy < r.y0 || sy > r.y1) continue;
-      if (facingOnly && canFace) {
-        // The reflected vertex keeps its own outward normal reflected with it: the mirror flips
-        // the x component, and the camera it has to face is the reflected camera.
-        const nx = -normals[i * 3];
-        const ny = normals[i * 3 + 1];
-        const nz = normals[i * 3 + 2];
-        const vx = twice - camera[0] - x;
-        const vy = camera[1] - y;
-        const vz = camera[2] - z;
-        if (nx * vx + ny * vy + nz * vz <= 0) continue;
-      }
-      picks[i] = 1;
-      mirrored += 1;
-    }
-  }
-
-  let count = 0;
-  for (let i = 0; i < vertexCount; i += 1) if (picks[i]) count += 1;
-  const vertices = new Int32Array(count);
-  let at = 0;
-  for (let i = 0; i < vertexCount; i += 1) if (picks[i]) vertices[at++] = i;
-  return { vertices, count, covered, hidden, mirrored, behind };
-}
-
 /**
  * The triangles a rectangle dragged on screen covers.
  *
- * This is the same inverse transform as `verticesInScreenRect`, asked about a triangle instead of
+ * This is the inverse transform of the projection, asked about a triangle instead of
  * a vertex: a face is under the rectangle when the pixel its **centre** is drawn at is inside it.
  * The centre is the honest rule for a box that means "these triangles" — "any corner inside" takes
  * a triangle that is mostly outside, "every corner inside" drops one that is mostly inside, and
@@ -283,11 +174,4 @@ export function facesInScreenRect({
   }
 
   return { faces, count, covered, hidden, behind };
-}
-
-/** Does this vertex's outward normal point towards the camera? */
-function facesCamera(normals, i, x, y, z, camX, camY, camZ) {
-  return (
-    normals[i * 3] * (camX - x) + normals[i * 3 + 1] * (camY - y) + normals[i * 3 + 2] * (camZ - z) > 0
-  );
 }

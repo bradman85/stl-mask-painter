@@ -12,8 +12,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as THREE from '../vendor/three.module.js';
-import { MaskLayer } from '../js/mask.js';
-import { createFeatureList } from '../js/features.js';
+import { SelectionTint } from '../js/mask.js';
+import { createSelection, applyFaces, paintedFromFaces, facesFromPainted } from '../js/selection.js';
 import { buildTopology, buildStencil, stencilDefaultsForDiagonal } from '../js/stencil.js';
 import { parseBinarySTL, fmt, TriGrid } from './helpers.mjs';
 
@@ -30,12 +30,38 @@ const centre = bbox.getCenter(new THREE.Vector3());
 const size = bbox.getSize(new THREE.Vector3());
 const diagonal = size.length();
 
-const maskLayer = new MaskLayer(geometry, createFeatureList());
+const faceCount = positions.length / 9;
+const maskLayer = new SelectionTint(geometry);
 const brush = Math.max(0.5, diagonal / 45);
+
+/**
+ * An area written as a selection: the spheres below are only a way of naming a region of the
+ * surface, and the faces they touch are what the build is handed — the same path a pick takes.
+ */
+function makeArea() {
+  const ml = new SelectionTint(geometry);
+  const selection = createSelection(faceCount);
+  const show = () => ml.setSelection(paintedFromFaces(selection));
+  const selectSphere = (point, radius) => {
+    const flags = new Uint8Array(ml.vertexCount);
+    for (let i = 0; i < ml.vertexCount; i += 1) {
+      if (
+        Math.hypot(positions[i * 3] - point[0], positions[i * 3 + 1] - point[1], positions[i * 3 + 2] - point[2]) <=
+        radius
+      ) {
+        flags[i] = 1;
+      }
+    }
+    applyFaces(selection, facesFromPainted(flags, faceCount), { add: true });
+    show();
+  };
+  return { ml, selectSphere };
+}
 
 /** Two eye discs, and a bigger cap over the top of the head. */
 function paintEyes() {
-  const ml = new MaskLayer(geometry, createFeatureList());
+  const area = makeArea();
+  const { ml, selectSphere } = area;
   const eye = (side) => {
     let best = null;
     for (let i = 0; i < ml.vertexCount; i += 1) {
@@ -46,21 +72,21 @@ function paintEyes() {
       if (side > 0 ? x < centre.x : x > centre.x) continue;
       if (!best || z > best[2]) best = [x, y, z];
     }
-    ml.paintSphere(best, brush, 1);
+    selectSphere(best, brush);
     return best;
   };
   eye(-1);
   eye(1);
-  return ml;
+  return area;
 }
 
 function paintHeadCap() {
   const capY = bbox.min.y + size.y * 0.78;
-  const ml = new MaskLayer(geometry, createFeatureList());
+  const area = makeArea();
   const p = [centre.x, bbox.max.y, centre.z];
-  ml.paintSphere(p, diagonal * 0.12, 1);
+  area.selectSphere(p, diagonal * 0.12);
   void capY;
-  return ml;
+  return area;
 }
 
 const areas = [
@@ -79,9 +105,9 @@ console.log(
   'area                              standoff  min     p0.5    p5      median  <0.05  <0.1  <0.15  interior',
 );
 
-for (const [name, ml] of areas) {
-  const painted = new Uint8Array(ml.vertexCount);
-  for (let i = 0; i < painted.length; i += 1) if (ml.ids[i] !== 0) painted[i] = 1;
+for (const [name, area] of areas) {
+  // The corner flags the build reads, straight off the selection.
+  const painted = Int16Array.from(area.ml.ids).map((v) => (v ? 1 : 0));
   for (const standoff of standoffs) {
     const params = {
       ...defaults,

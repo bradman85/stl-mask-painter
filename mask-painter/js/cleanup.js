@@ -1,8 +1,8 @@
 // Trimming a mask down to the regions that are worth printing.
 //
-// A mask is painted with a brush, so it always carries company: a dab that landed beside the
-// eye instead of on it, a stamp from a stroke that ran off the edge of the part, a speck left
-// behind where a fill stopped at a seam. The stencil build is honest about every one of them —
+// A mask carries company: a sliver of a panel the click clipped, a triangle picked by mistake, a
+// speck left behind where a box crossed a seam. The stencil build is honest about every one of
+// them —
 // each separate painted region becomes its own window in the shell, and regions that do not
 // touch each other become separate pieces — so a handful of specks turns into a part with a
 // handful of extra windows, several loose shells and nothing to hold them together on the
@@ -126,14 +126,15 @@ export function paintedIslands(topology, ids) {
  * untouched, which is what "remove or designate and remove" needs: a threshold says "smaller
  * than this", a window says "that one".
  *
- * `features` reports which features the window is painted with (largest group first), because a
- * window can be composed of several selections — Shift-click with the Part tool paints another
- * panel with the current feature and keeps the window one window if the two panels touch.
+ * A window used to carry the list of *features* painted inside it, because a mask could be painted
+ * in several colours and a window could hold more than one. There is one selection now, so a
+ * window is just a window: which panel or which picked triangles went into it is not something the
+ * analysis can say, and not something anything downstream asks.
  *
  * @param {object} topology from `buildTopology()`
  * @param {Int16Array|Int8Array} ids the mask, 0 = unpainted
  * @returns {object[]} largest first, each `{ id, weldedVertices, vertices, fileVertices, size,
- *   diagonal, centre, features }` — `vertices`/`fileVertices` count and list file vertices,
+ *   diagonal, centre }` — `vertices`/`fileVertices` count and list file vertices,
  *   `weldedVertices` is the welded count the size test works in.
  */
 export function maskWindows(topology, ids) {
@@ -157,17 +158,7 @@ export function maskWindows(topology, ids) {
       (island.min[1] + island.max[1]) / 2,
       (island.min[2] + island.max[2]) / 2,
     ],
-    features: featureCounts(ids, fileVertices[k]),
   }));
-}
-
-/** Which feature the file vertices of one window carry, largest group first. */
-function featureCounts(ids, fileVertices) {
-  const counts = new Map();
-  for (const i of fileVertices) counts.set(ids[i], (counts.get(ids[i]) || 0) + 1);
-  return [...counts]
-    .map(([id, vertices]) => ({ id, vertices }))
-    .sort((a, b) => b.vertices - a.vertices || a.id - b.id);
 }
 
 /**

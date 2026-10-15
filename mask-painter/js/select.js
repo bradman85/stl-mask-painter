@@ -157,29 +157,6 @@ export function countFaces(mask) {
 }
 
 /**
- * The corner indices of the picked faces — three per face, in face order.
- *
- * Faces are triangles of a flat soup: face `t` owns corners `3t`, `3t+1`, `3t+2`, in the same
- * order the mask's per-corner arrays (`mask.ids`, the colour buffer) are laid out. That is what
- * makes a pick paintable — hand these to `mask.paintIndices` and the picked triangles take the
- * current feature, exactly as a brush stroke over them would.
- */
-export function pickedCorners(faceMask) {
-  let picked = 0;
-  for (let t = 0; t < faceMask.length; t += 1) if (faceMask[t]) picked += 1;
-  const corners = new Int32Array(picked * 3);
-  let w = 0;
-  for (let t = 0; t < faceMask.length; t += 1) {
-    if (!faceMask[t]) continue;
-    corners[w] = t * 3;
-    corners[w + 1] = t * 3 + 1;
-    corners[w + 2] = t * 3 + 2;
-    w += 3;
-  }
-  return corners;
-}
-
-/**
  * A soup without the faces `keepFace` rejects.
  *
  * Everything is copied in face order, so the kept triangles stay where they were relative to each
@@ -263,63 +240,4 @@ export function highlightArrays(positions, faceMask, { limit = 150000 } = {}) {
     }
   }
   return { fill, edges, faces: picked };
-}
-
-/** The corner map of `filterSoup` run backwards: old corner -> new corner, or -1 if it is gone. */
-export function inverseCornerMap(cornerMap) {
-  let maxOld = -1;
-  for (let i = 0; i < cornerMap.length; i += 1) if (cornerMap[i] > maxOld) maxOld = cornerMap[i];
-  const toNew = new Int32Array(maxOld + 1).fill(-1);
-  for (let i = 0; i < cornerMap.length; i += 1) toNew[cornerMap[i]] = i;
-  return toNew;
-}
-
-/**
- * The mask's undo history, renumbered for a soup that was cut.
- *
- * Every entry names corners by index, and a cut moves them, so a history left alone would undo
- * the wrong vertices — silently, and only on the next Ctrl+Z. Entries that name a corner which no
- * longer exists lose those corners; a snapshot (a whole-mask edit) is rebuilt corner by corner,
- * so paint that survived the cut is what redo puts back.
- */
-export function remapHistory(history, cornerMap, newCount) {
-  if (!history || history.length === 0) return [];
-  const toNew = inverseCornerMap(cornerMap);
-  const sample = (ids) => {
-    const out = new Int16Array(newCount);
-    for (let i = 0; i < cornerMap.length; i += 1) {
-      const v = ids[cornerMap[i]];
-      out[i] = v === undefined ? 0 : v;
-    }
-    return out;
-  };
-  const out = [];
-  for (const entry of history) {
-    if (entry.type === 'deltas') {
-      const idx = [];
-      const prev = [];
-      const next = [];
-      for (let k = 0; k < entry.idx.length; k += 1) {
-        const at = entry.idx[k];
-        const moved = at < toNew.length ? toNew[at] : -1;
-        if (moved < 0) continue;
-        idx.push(moved);
-        prev.push(entry.prev[k]);
-        next.push(entry.next[k]);
-      }
-      if (idx.length) {
-        out.push({
-          type: 'deltas',
-          idx: Int32Array.from(idx),
-          prev: Int16Array.from(prev),
-          next: Int16Array.from(next),
-        });
-      }
-    } else {
-      const copy = { type: 'snapshot', ids: sample(entry.ids) };
-      if (entry.next) copy.next = sample(entry.next);
-      out.push(copy);
-    }
-  }
-  return out;
 }
