@@ -2723,7 +2723,13 @@ window.addEventListener('keyup', (e) => {
   if (e.key === ' ') setNavigate(false);
 });
 
-// Boot: try the example model, degrade gracefully if it is not reachable.
+// Boot: an empty app, waiting for a model.
+//
+// The bundled example is *not* fetched on start. Loading it automatically meant the first thing
+// the app did was spend a second parsing and welding somebody else's model — and the mask session
+// then began with a figure in it, which is wrong for the one job this tool has: paint windows on
+// **your** model. The example is one click away (**Load example model**, which is the only place
+// `DEFAULT_MODEL_URL` is used), and every panel already has an empty state.
 setTool('brush');
 setNavigate(false);
 syncSeamPresets();
@@ -2731,4 +2737,7 @@ renderPalette();
 updateUndoButtons();
 updateHud();
 resetStencil();
-loadFromURL(DEFAULT_MODEL_URL);
+setStatus(
+  'Ready — nothing loaded yet. Drop an .stl anywhere, use “Open STL…”, or load the bundled ' +
+    'example with “Load example model”.',
+);

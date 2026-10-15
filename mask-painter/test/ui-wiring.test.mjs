@@ -31,6 +31,31 @@ check(
   queried.join(' | '),
 );
 
+// The app has to open empty. Auto-loading the bundled example on boot meant the first second of
+// every session went on parsing and welding a model the user did not ask for, and the mask
+// session started with somebody else's figure in it. `Load example model` is the only caller of
+// `loadFromURL(DEFAULT_MODEL_URL)`; boot has to end at a status line that says what to do instead.
+check(
+  'the app does not load the example model on boot',
+  (js.match(/loadFromURL\(DEFAULT_MODEL_URL\)/g) || []).length === 1 &&
+    !/^\s*loadFromURL\(DEFAULT_MODEL_URL\);\s*$/m.test(js),
+  `${(js.match(/loadFromURL\(DEFAULT_MODEL_URL\)/g) || []).length} call site(s)`,
+);
+check(
+  'the example model is behind its button, and only there',
+  /el\('loadExampleBtn'\)\.addEventListener\('click', \(\) => loadFromURL\(DEFAULT_MODEL_URL\)\)/.test(js) &&
+    /id="loadExampleBtn"/.test(html),
+);
+check(
+  'and an empty app says how to get a model in',
+  /resetStencil\(\);\s*\n\s*setStatus\(\s*\n\s*'Ready — nothing loaded yet\. Drop an \.stl anywhere, use “Open STL…”, or load the bundled '/.test(js) &&
+    /Load example model/.test(js),
+);
+check(
+  'the empty states the app opens with are still in the markup',
+  />no model loaded</.test(html) && /No model loaded\./.test(html),
+);
+
 const stencilIds = ['stencilBuildBtn', 'stencilClearBtn', 'stencilExportBtn', 'stencilPreview', 'stencilReach', 'stencilWall', 'stencilStandoff', 'stencilOverhang', 'stencilStats'];
 const missingStencil = stencilIds.filter((id) => !declared.has(id));
 check('the stencil panel is complete', missingStencil.length === 0, missingStencil.join(', '));

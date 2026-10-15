@@ -9,8 +9,10 @@ What is painted becomes the **window of a printable paint stencil**: a one-piece
 conforms to the model, so you can hold it on the figure and only the painted area — an eye,
 a mouth, a marking — is exposed to the brush. It exports as a binary STL.
 
-The bundled example is [`Sprunki Mercuy.stl`](../Sprunki%20Mercuy.stl) — 422,658 triangles,
-1,267,974 vertices — and it loads, orients and becomes paintable in about 0.3 s.
+**The app opens empty.** It loads no model on start: the first model in a session is the one you
+chose, and the bundled example is one click away behind **Load example model** —
+[`Sprunki Mercuy.stl`](../Sprunki%20Mercuy.stl), 422,658 triangles, 1,267,974 vertices, which
+loads, orients and becomes paintable in about 0.3 s.
 
 ## Run it
 

@@ -26,7 +26,8 @@ this document is about proving it works.
    `http://127.0.0.1:8137/mask-painter/index.html` unless that port is taken.
 2. Open it in a browser with WebGL (Chrome, Firefox, Edge, Safari) and leave the developer
    console open: several items ask for the absence of errors.
-3. Load the bundled model with **Load example model** unless an item says otherwise. It is
+3. The app starts with **no model** — that is the shipped behaviour, not a fault. Load the
+   bundled model with **Load example model** unless an item says otherwise. It is
    `Sprunki Mercuy.stl` — 422,658 triangles, 1,267,974 vertices, bounding box 60.1 × 103.4 ×
    53.0 units.
 4. Between sections, **reload the page** to start from a clean mask. Several checks are about
@@ -67,14 +68,23 @@ this document is about proving it works.
 #### L1 · The app loads and runs
 
 **Steps**
-1. `node serve.mjs`, then open the printed URL.
-2. Watch the console while the page settles.
+1. `node serve.mjs`, then open the printed URL with the console **and the network panel** open.
+2. Watch both while the page settles.
 
-**Expected** Panel, viewport and ground grid render. No console errors. The model line reads
-`no model loaded`; the Mask panel reads `No model loaded.`
+**Expected** Panel and viewport render and no model is loaded, because nothing asks for one: the
+network panel shows **no request for `Sprunki Mercuy.stl`** and the console has no errors. The model
+line reads `no model loaded`; the Mask panel reads `No model loaded.`; the stencil panel reads
+`No stencil built yet.` with **Build stencil** and **Export stencil STL** disabled; the status bar
+says `Ready — nothing loaded yet. Drop an .stl anywhere, use “Open STL…”, or load the bundled
+example with “Load example model”.` The viewport is empty background — the ground grid is the
+model's bed and appears with the first model — so the only way a model ever loads is an action of
+yours: **Open STL…**, **Load example model**, or a drop.
 **Guide** [Getting started](help.html#start)
 **Automated** `test/ui-wiring.test.mjs` — every element id `main.js` looks up exists in the
-markup; serving itself checked with `curl` (200, `text/html; charset=utf-8`).
+markup, `loadFromURL(DEFAULT_MODEL_URL)` has exactly one call site and it is the **Load example
+model** button (a boot-time fetch fails the suite), boot ends at the status line above, and the two
+empty states are still in the markup; serving itself checked with `curl` (200, `text/html;
+charset=utf-8`).
 **Result** ☐ pass ☐ fail — notes:
 
 #### L2 · Open STL… loads a binary or ASCII STL
@@ -95,10 +105,11 @@ the real file.
 #### L3 · Load example model
 
 **Steps**
-1. Reload the page.
+1. Reload the page and confirm the empty start (L1) — no model, nothing fetched.
 2. Press **Load example model**.
 
-**Expected** Same result as L2 without a file dialog. If the `.stl` is missing from the parent
+**Expected** Same result as L2 without a file dialog, and this is the only way the bundled file is
+ever loaded: it is not fetched until the button is pressed. If the `.stl` is missing from the parent
 folder, the status bar reports the HTTP error and whatever was loaded stays loaded.
 **Guide** [Top bar](help.html#topbar)
 **Automated** not automated — needs a browser fetch.

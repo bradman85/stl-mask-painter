@@ -171,7 +171,8 @@
   </p>
   <ol>
     <li>Load a model — <b>Open STL…</b>, <b>Load example model</b>, or drop an <code>.stl</code>
-      anywhere on the viewport.</li>
+      anywhere on the viewport. <b>The app opens empty</b>: it does not fetch the bundled example
+      for you, so the first model in the session is the one you chose.</li>
     <li>Paint the areas that must stay exposed: brush, region fill, or click a whole
       <b>Part</b> in one go.</li>
     <li>Press <b>Build stencil</b> in the <a href="#stencil">Paint stencil</a> panel and check
@@ -205,8 +206,9 @@
       <td class="k">Load example model</td>
       <td>
         Fetches <code>Sprunki Mercuy.stl</code> from next to the app folder — the same file the
-        tests run against (422,658 triangles, 1,267,974 vertices). If it is missing, the status
-        bar reports the HTTP error and leaves whatever is loaded alone.
+        tests run against (422,658 triangles, 1,267,974 vertices). This is the <em>only</em> way
+        the example is loaded: the app starts empty and never fetches it on its own. If it is
+        missing, the status bar reports the HTTP error and leaves whatever is loaded alone.
       </td>
     </tr>
     <tr>
