@@ -30,6 +30,84 @@ const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  — ${detail}` : ''}`);
 };
 
+/**
+ * The separate shells of an indexed solid, as the Z band each one occupies.
+ *
+ * Written here rather than imported from the app: the point of the bed checks below is what the
+ * *file* contains, so the pieces in the file are found independently of io.js — triangles that
+ * share an edge are one shell, which is the rule the result panel counts pieces with too.
+ */
+function pieceBands(weldedPositions, indices) {
+  const tri = indices.length / 3;
+  const parent = new Int32Array(tri);
+  for (let t = 0; t < tri; t += 1) parent[t] = t;
+  const find = (x) => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    while (parent[x] !== r) {
+      const n = parent[x];
+      parent[x] = r;
+      x = n;
+    }
+    return r;
+  };
+  const owner = new Map();
+  for (let t = 0; t < tri; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const a = indices[t * 3 + k];
+      const b = indices[t * 3 + ((k + 1) % 3)];
+      if (a === b) continue;
+      const key = a < b ? a * 8388608 + b : b * 8388608 + a;
+      const prev = owner.get(key);
+      if (prev === undefined) owner.set(key, t);
+      else {
+        const ra = find(prev);
+        const rb = find(t);
+        if (ra !== rb) parent[ra] = rb;
+      }
+    }
+  }
+  const groups = new Map();
+  for (let t = 0; t < tri; t += 1) {
+    const r = find(t);
+    let g = groups.get(r);
+    if (!g) {
+      g = { tris: 0, minZ: Infinity, maxZ: -Infinity, minX: Infinity, minY: Infinity };
+      groups.set(r, g);
+    }
+    g.tris += 1;
+    for (let k = 0; k < 3; k += 1) {
+      const v = indices[t * 3 + k] * 3;
+      const z = weldedPositions[v + 2];
+      if (z < g.minZ) g.minZ = z;
+      if (z > g.maxZ) g.maxZ = z;
+      if (weldedPositions[v] < g.minX) g.minX = weldedPositions[v];
+      if (weldedPositions[v + 1] < g.minY) g.minY = weldedPositions[v + 1];
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.minZ - b.minZ);
+}
+
+/** The piece bands of a binary STL file, on its welded vertices. */
+function filePieceBands(bytes) {
+  const file = parseBinarySTL(bytes);
+  const topo = buildTopology(file.positions, file.positions.length / 3);
+  const idx = new Int32Array(file.triCount * 3);
+  for (let i = 0; i < idx.length; i += 1) idx[i] = topo.weldOf[i];
+  return { file, bands: pieceBands(topo.positions, idx) };
+}
+
+/** The frontmost vertex of the model inside a Z band — a point that is definitely on it. */
+function frontOf(zLo, zHi) {
+  let best = null;
+  for (let i = 0; i < positions.length / 3; i += 1) {
+    const z = positions[i * 3 + 2];
+    if (z < zLo || z > zHi) continue;
+    if (!best || positions[i * 3 + 1] > positions[best * 3 + 1]) best = i;
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------- the app's mask layer
 
 const geometry = new THREE.BufferGeometry();
@@ -224,6 +302,144 @@ check(
     Math.abs(keptLowest - solidLowest) < 1e-5,
     `lowest Z ${keptLowest.toFixed(3)} — the same as the build's`,
   );
+
+  // ------------------------------------------------- the stencil that comes out in two pieces
+  //
+  // The report: "it hovers above the bed until separate objects is selected and then it drops
+  // down". A slicer imports the shells of one STL as *parts of a single object* and keeps the
+  // coordinates they were written with — only "split to objects" drops each one onto the plate.
+  // So moving the assembly by its single lowest point is not enough: the lower piece lands and
+  // every other piece keeps hovering. These pin the shape of the fix and then measure it on a
+  // real two-piece export.
+  {
+    // Two tetrahedra, 40 mm apart in Z and 20 mm apart in X: two shells, like a window on the
+    // head and one at the feet.
+    const tetra = (b) => [b, b + 2, b + 1, b, b + 1, b + 3, b, b + 3, b + 2, b + 1, b + 2, b + 3];
+    const stacked = Float32Array.from([
+      0, 0, 5, 4, 0, 5, 0, 3, 5, 0, 0, 8,
+      20, 0, 45, 24, 0, 45, 20, 3, 45, 20, 0, 48,
+    ]);
+    const stackedIdx = Int32Array.from([...tetra(0), ...tetra(4)]);
+    const shellMinZ = (arr, from, to) => {
+      let min = Infinity;
+      for (let v = from; v < to; v += 1) min = Math.min(min, arr[v * 3 + 2]);
+      return min;
+    };
+
+    // The whole-solid drop, with no indices to find the pieces in — the shape of the first fix.
+    const whole = setOnBed(stacked);
+    check(
+      'dropping the whole solid by its lowest point leaves the second piece in the air',
+      whole.pieces === 1 && whole.drop === 5 && Math.abs(shellMinZ(whole.positions, 4, 8) - 40) < 1e-6,
+      `pieces ${whole.pieces}, the upper shell now at Z ${shellMinZ(whole.positions, 4, 8).toFixed(2)} (it was 45)`,
+    );
+
+    // Every piece placed: the fix. Each shell moves by its own lowest Z, nothing else moves.
+    const both = setOnBed(stacked, stackedIdx);
+    check(
+      'given the indices, every piece is placed and both shells rest on Z 0',
+      both.pieces === 2 &&
+        Math.abs(shellMinZ(both.positions, 0, 4)) < 1e-6 &&
+        Math.abs(shellMinZ(both.positions, 4, 8)) < 1e-6,
+      `pieces ${both.pieces}, shells now at Z ${shellMinZ(both.positions, 0, 4).toFixed(2)} and ${shellMinZ(both.positions, 4, 8).toFixed(2)}`,
+    );
+    check(
+      'the piece that had to travel furthest is what it reports, and the solid\u2019s lowest Z is still its own',
+      Math.abs(both.moved - 45) < 1e-6 && both.drop === 5,
+      `moved ${both.moved} (the upper shell was floating 45 mm up), drop ${both.drop}`,
+    );
+    let xyMoved = 0;
+    for (let i = 0; i < stacked.length; i += 1) {
+      if (i % 3 === 2) continue;
+      if (Math.abs(both.positions[i] - stacked[i]) > 1e-9) xyMoved += 1;
+    }
+    check(
+      'placing the pieces moves Z only, and only in the copy that is written',
+      xyMoved === 0 && both.positions !== stacked && stacked[2] === 5 && stacked[14] === 45,
+      `${xyMoved} X/Y values changed; the solid handed in still starts at Z ${stacked[2]} and ${stacked[14]}`,
+    );
+    const resting = Float32Array.from(stacked);
+    for (let v = 0; v < 8; v += 1) resting[v * 3 + 2] -= shellMinZ(stacked, v < 4 ? 0 : 4, v < 4 ? 4 : 8);
+    const nothing = setOnBed(resting, stackedIdx);
+    check(
+      'a two-piece solid already resting on the plate is handed back as it is',
+      nothing.pieces === 2 && nothing.moved === 0 && nothing.positions === resting,
+      `pieces ${nothing.pieces}, moved ${nothing.moved}, same array: ${nothing.positions === resting}`,
+    );
+    // A triangle soup shares no vertices at all, so nothing joins any two triangles: treating
+    // each triangle as its own piece would scatter the part instead of placing it.
+    const soupPositions = Float32Array.from(
+      Array.from({ length: 8 }, () => [
+        0, 0, 5, 4, 0, 5, 0, 3, 5, 0, 0, 8,
+        20, 0, 45, 24, 0, 45, 20, 3, 45, 20, 0, 48,
+      ]).flat(),
+    );
+    const soupIdx = Int32Array.from({ length: soupPositions.length / 3 }, (_, i) => i);
+    const soupPlaced = setOnBed(soupPositions, soupIdx);
+    check(
+      'a soup with nothing shared is treated as one piece, not scattered',
+      soupPlaced.pieces === 1 && soupPlaced.drop === 5 && soupPlaced.moved === 5,
+      `pieces ${soupPlaced.pieces}, moved ${soupPlaced.moved}`,
+    );
+
+    // The real thing: a mask that comes out in two pieces — a window on the head and one at the
+    // feet, with a short reach and the widening off — exported with the box ticked. Every piece
+    // has to reach the plate in the file, not just the lowest one.
+    const head = frontOf(centre.z + size.z * 0.28, centre.z + size.z * 0.36);
+    const foot = frontOf(bbox.min.z, bbox.min.z + size.z * 0.08);
+    const twoLayer = new MaskLayer(geometry, createFeatureList());
+    twoLayer.paintSphere([positions[head * 3], positions[head * 3 + 1], positions[head * 3 + 2]], brush, 1);
+    twoLayer.paintSphere([positions[foot * 3], positions[foot * 3 + 1], positions[foot * 3 + 2]], brush, 2);
+    const paintedTwo = new Uint8Array(twoLayer.vertexCount);
+    for (let i = 0; i < paintedTwo.length; i += 1) if (twoLayer.ids[i] !== 0) paintedTwo[i] = 1;
+    const resTwo = buildStencil({
+      topology,
+      painted: paintedTwo,
+      params: { ...params, coverRadius: 8, growIfSplit: false },
+    });
+    check(
+      'a short reach and no widening give a stencil in two pieces',
+      resTwo.ok === true && resTwo.stats.components === 2,
+      resTwo.ok ? `${resTwo.stats.components} piece(s), ${fmt(resTwo.stats.solidTriangles)} triangles` : resTwo.warnings.join(' '),
+    );
+    const asBuilt = filePieceBands(new Uint8Array(buildBinarySTL(resTwo.positions, resTwo.indices).buffer));
+    const placedTwo = setOnBed(resTwo.positions, resTwo.indices);
+    const onPlate = filePieceBands(new Uint8Array(buildBinarySTL(placedTwo.positions, resTwo.indices).buffer));
+    console.log(
+      `      as built the two pieces sit at Z ${asBuilt.bands.map((b) => b.minZ.toFixed(2)).join(' and ')}; ` +
+      `written to the plate: ${onPlate.bands.map((b) => `${b.minZ.toFixed(2)}…${b.maxZ.toFixed(2)}`).join(' and ')}`,
+    );
+    check(
+      'the file still holds both pieces after the placement',
+      asBuilt.bands.length === 2 && onPlate.bands.length === 2,
+      `${asBuilt.bands.length} as built, ${onPlate.bands.length} written`,
+    );
+    check(
+      'and the file the export writes has every piece resting on Z 0',
+      onPlate.bands.every((b) => Math.abs(b.minZ) < 1e-5),
+      `lowest Z per piece: ${onPlate.bands.map((b) => b.minZ.toExponential(1)).join(', ')}`,
+    );
+    check(
+      'which is the difference between the report and the fix: as built, the upper piece floats',
+      asBuilt.bands[1].minZ > 20 && Math.abs(placedTwo.moved - asBuilt.bands[1].minZ) < 1e-4 && placedTwo.pieces === 2,
+      `as built it floated at ${asBuilt.bands[1].minZ.toFixed(2)} mm, the placement moved ${placedTwo.moved.toFixed(2)} mm`,
+    );
+    // Both pieces rest on Z 0 afterwards, so the bands can come back in either order — compare
+    // what the plate plane sees, not the order it arrives in.
+    const footprint = (bands, axis) => bands.map((b) => (axis === 'x' ? b.minX : b.minY).toFixed(4)).sort().join(', ');
+    check(
+      'the pieces keep their X and Y, so they still line up with the figure',
+      footprint(onPlate.bands, 'x') === footprint(asBuilt.bands, 'x') &&
+        footprint(onPlate.bands, 'y') === footprint(asBuilt.bands, 'y'),
+      `min X ${footprint(onPlate.bands, 'x')} vs ${footprint(asBuilt.bands, 'x')}`,
+    );
+    // Unticked is the escape hatch here too: both pieces stay where the model has them.
+    check(
+      'unticked, a two-piece file keeps both pieces where the model has them',
+      Math.abs(asBuilt.bands[0].minZ - lowestZ(resTwo.positions)) < 1e-4 && asBuilt.bands[1].minZ > 20,
+      `lowest Z ${asBuilt.bands[0].minZ.toFixed(2)}, upper piece at ${asBuilt.bands[1].minZ.toFixed(2)}`,
+    );
+  }
 }
 
 // ------------------------------------------------- the window really is the painted area

@@ -52,7 +52,7 @@ this document is about proving it works.
 | [Features](help.html#features) | F1–F6 |
 | [Paint](help.html#paint) | P1–P17 |
 | [Mask](help.html#mask) | M1–M9 |
-| [Paint stencil](help.html#stencil) | S1–S13 |
+| [Paint stencil](help.html#stencil) | S1–S13 (S13 covers the multi-piece export) |
 | [Model & view](help.html#view) | V1–V5 |
 | [Export / import](help.html#export) | X1–X11 |
 | [Keyboard & mouse](help.html#shortcuts) | K1–K2 |
@@ -882,17 +882,24 @@ the model again.
 that function clears the preview, drops the result and disables the export.
 **Result** ☐ pass ☐ fail — notes:
 
-#### S13 · The exported part sits on the bed
+#### S13 · The exported part sits on the bed — every piece of it
 
 **Steps**
 1. Load the example model, paint a face window (the eyes are the quickest), build the stencil and
    read the result panel's size line.
 2. Leave **Sit the exported part on the bed (Z = 0)** ticked and press **Export stencil STL**.
    Read the status bar.
-3. Open the file in a slicer: it must land flat on the plate with no dragging.
+3. Open the file in a slicer: it must land flat on the plate with no dragging, and with no
+   `Split to objects` needed.
 4. Untick the box, export again, and compare the two files in the slicer next to the figure.
 5. Tick it, load a model that already sits on its own Z 0 (or a **Z up** CAD part), and export:
    the status bar should say nothing moved.
+6. The multi-piece case, which is the one the option used to leave hovering. Turn **Widen the
+   reach until the mask is one piece** off, set **Reach (mm)** to 8, paint one window high on the
+   figure (the head) and one low down (the feet), and build — the result panel must say
+   **2 pieces**. Export with the box ticked and read the status bar, then import the file into the
+   slicer.
+7. Repeat step 6 with the box unticked and compare the two files in the slicer.
 
 **Expected** With the box ticked the written file's **lowest vertex is exactly Z 0** — the status
 bar says `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and Y untouched)` for
@@ -905,13 +912,32 @@ Unticked, the status bar says `left in the model's own coordinates (lowest Z 41.
 is the shell exactly where it sits on the model, which is what you want for lining the mask up
 against the figure in a slicer. A part already on Z 0 reports `its lowest point was already on
 Z 0, so nothing moved`.
+
+Step 6 is the report that the fix had to be corrected for: **every piece is placed, not just the
+whole solid by its single lowest point.** A slicer imports the shells of one STL as parts of one
+object and keeps the coordinates they were written with, so the two-piece stencil measures
+`2 pieces` and its pieces sit at Z −2.37 and **32.10** in model coordinates; dropping the assembly
+writes Z 0 and **32.10**, i.e. the upper piece still hovers 32 mm over the plate until the user
+picks `Split to objects`, which is what "it still hovers until separate objects is selected" was.
+With the box ticked the status bar must say `sat each of its 2 pieces on the bed: the furthest
+moved 32.10 mm so every piece's lowest Z is 0 (X and Y untouched)` and both pieces must rest flat
+on the plate in the slicer — no splitting, no dragging. The pieces keep their X and Y, so nothing
+moves in the plate plane; only the written copy changes. Unticked (step 7) the file keeps both
+pieces at the heights the model has them (Z −2.37 and 32.10), which is the alignment escape hatch.
 **Guide** [Paint stencil](help.html#stencil), [Stencil STL format](help.html#stl)
 **Automated** `test/app-path.test.mjs` — the transform as arithmetic (floating, sunk −3 → 0, and
 already-on-the-plate returned unchanged), that the array it is given is never edited, and the real
 export: the file's lowest Z is 0 exactly, it spans Z 0…12.27, min X matches the build's, and it
 re-reads as the same watertight solid (98,820 triangles, volume 2,110.9) — plus that unticking
-leaves the file at the build's own 41.002. `test/ui-wiring.test.mjs` pins the control, its default,
-and that only the written copy is moved.
+leaves the file at the build's own 41.002. For step 6 the same suite builds a real two-piece
+stencil (36,624 triangles, pieces at Z −2.37 and 32.10), exports it, and re-reads the file: it
+still holds 2 pieces, **every piece's lowest Z is 0** (0.0e+0 each), the pieces keep their min X
+and min Y, and as built the upper piece floated 32.10 mm — the amount the placement reports. The
+whole-solid drop is pinned as the failing shape (pieces 1, the upper shell still at Z 40 with the
+synthetic two-shell solid), and a triangle soup is pinned as left in one piece rather than
+scattered. `test/ui-wiring.test.mjs` pins the control, its default and its tooltip, that the export
+hands `setOnBed` the indices so the pieces can be found, that a piece already resting is not
+copied, and that neither branch writes anything but Z.
 **Result** ☐ pass ☐ fail — notes:
 
 ---

@@ -680,8 +680,9 @@ Panels within 3.2 units of the click; click one to select it instead:
         Press the button again; it only costs the island walk.
         <br>Why it matters for the stencil: every painted window becomes <em>its own window</em>
         in the shell, and windows that do not touch become separate pieces — ten specks are ten
-        windows, ten loose shells and nothing to hold them together on the print bed. Trim or
-        remove first, then build.
+        windows and ten loose shells: each one is placed on the plate when you export
+        (<b>Sit the exported part on the bed</b>), so they print — but they are separate pieces to
+        hold against the figure, not one mask. Trim or remove first, then build.
       </td>
     </tr>
     <tr>
@@ -796,7 +797,9 @@ Panels within 3.2 units of the click; click one to select it instead:
         single piece or the limit is reached. Each attempt is a full build, so this is the main
         reason a build can take several seconds. Turn it off for a part-sized window: a band
         around the panel is usually what you want there, it builds in one pass, and it uses a
-        fraction of the plastic.
+        fraction of the plastic. A shell that stays in pieces is still printable —
+        <b>Sit the exported part on the bed</b> below places <em>every</em> piece on the plate, so
+        the pieces print as separate parts rather than as one hovering one.
       </td>
     </tr>
     <tr>
@@ -814,6 +817,14 @@ Panels within 3.2 units of the click; click one to select it instead:
         preview and the built shell are untouched, so nothing you see or paint changes. The
         status line always says which of the three happened: it was moved (and by how far), it was
         already on Z 0, or the box was unticked and the file keeps the model's own coordinates.
+        <br>It covers <b>every piece</b>, not just the lowest one. A slicer imports the shells of
+        one STL as <em>parts of a single object</em>, and parts keep the coordinates they were
+        written with — only <b>Split to objects</b> drops each one onto the plate. So a stencil
+        that came out in two pieces (a window on the head and one at the feet is 2 pieces 32 mm
+        apart) would go on hovering over the upper piece's 32 mm of air, and the option would look
+        like it had done nothing. Each piece is moved by its own lowest Z instead, so every piece
+        rests on Z 0 in the file and nothing has to be split or dragged; the status line names the
+        pieces when there is more than one.
         <br>Untick it when the Z matters: lining the mask up against the figure in a slicer, or
         printing mask and model in one job at the coordinates they were authored in.
       </td>
@@ -1167,7 +1178,7 @@ end_header
   <table>
     <tr><th>Detail</th><th>Behaviour</th></tr>
     <tr><td class="k">Units</td><td>Untouched: the shell is in the model's own units, in the model's own coordinate frame.</td></tr>
-    <tr><td class="k">Z position</td><td>The vertices are written with the part's lowest point at <b>Z 0</b> unless <a href="#stencil">Sit the exported part on the bed</a> is unticked. X and Y are never moved, so a mask still lines up with the figure if you untick it and import both into a slicer together.</td></tr>
+    <tr><td class="k">Z position</td><td>The vertices are written with the lowest point of <b>every piece</b> at <b>Z 0</b> — a multi-piece stencil is placed piece by piece, because a slicer keeps the shells as parts of one object and only drops them when they are split into objects — unless <a href="#stencil">Sit the exported part on the bed</a> is unticked. X and Y are never moved, so a mask still lines up with the figure if you untick it and import both into a slicer together.</td></tr>
     <tr><td class="k">Watertight</td><td>The build only reports success after checking that every edge is used by exactly two triangles with consistent winding. A refused build leaves export disabled.</td></tr>
     <tr><td class="k">Size</td><td>Exactly <code>84 + 50 × triangles</code> bytes — the tests assert this, re-read the file and re-check it welds back into the same watertight, same-volume solid.</td></tr>
     <tr><td class="k">Orientation</td><td>Whatever up axis you are viewing with is <em>not</em> baked in: the mesh is written in model coordinates, so rotate it in the slicer if your printer expects Z up. Only the Z <em>position</em> is moved onto the plate (see above).</td></tr>

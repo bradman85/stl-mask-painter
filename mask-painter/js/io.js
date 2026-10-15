@@ -150,7 +150,7 @@ export function buildPLY(mask) {
 }
 
 /**
- * The same solid, moved so its lowest point rests on the print bed.
+ * The same solid, placed so that every piece of it rests on the print bed.
  *
  * A slicer treats Z = 0 as the plate, and an STL keeps whatever coordinates its exporter used.
  * A shell built on a model that is authored 40 mm above its own Z = 0 therefore lands in the
@@ -159,23 +159,106 @@ export function buildPLY(mask) {
  * the view rather than the mesh — the written file is the only place the part can be put on the
  * bed.
  *
+ * One piece is easy: move the whole solid down by its lowest Z. Several pieces are not, because a
+ * slicer imports the shells of one STL as *parts of a single object*, and parts keep the
+ * coordinates they were written with — only "split to objects" drops each one onto the plate. So
+ * a stencil that the result panel reports as two pieces (a window on the head and one at the feet
+ * comes out as 2 pieces 32 mm apart) keeps hovering over the upper piece's 32 mm of air, and the
+ * option looks like it did nothing. Dropping the assembly by its single lowest point does exactly
+ * that — the lower piece lands and the upper one stays in the air — which is why every piece is
+ * placed by its own lowest Z here.
+ *
  * Only Z moves, and only the copy that gets written: X and Y stay exactly where the model has
  * them (the slicer's own arrange puts the part on the plate), the mask, the panels, the preview
- * and every other export keep the model's coordinates. `drop` is how far the part moved — the
- * lowest Z it had — which is what the status line reports. A part already sitting on Z 0 is
- * returned as it is, so nothing is copied for the common case.
+ * and every other export keep the model's coordinates. A solid already sitting on Z 0 is returned
+ * as it is, so nothing is copied for the common case.
  *
  * @param {Float32Array|number[]} positions flat xyz, the solid's own vertices
- * @returns {{ positions: Float32Array|number[], drop: number }} `drop` is the lowest Z the part
- *   had: positive when it was floating, negative when it was sunk into the plate, 0 when it was
- *   already sitting on it.
+ * @param {Int32Array|number[]|null} indices the solid's flat triangle indices. The pieces can
+ *   only be found in an *indexed* solid — the builder's solids are welded, so their triangles
+ *   share vertices. Without indices the whole solid counts as one piece, and a triangle soup
+ *   (every triangle its own shell) is handled the same way rather than torn apart.
+ * @returns {{ positions, drop, pieces, moved }} `drop` is the lowest Z the solid had: positive
+ *   when its lowest point was floating, negative when it was sunk into the plate, 0 when it was
+ *   already resting on it. `pieces` is how many shells were placed, and `moved` how far the piece
+ *   that had to travel furthest went.
  */
-export function setOnBed(positions) {
+export function setOnBed(positions, indices = null) {
   const drop = lowestZ(positions);
-  if (drop === 0) return { positions, drop: 0 };
+  const shells = shellLowestZ(positions, indices);
+  if (!shells) {
+    if (drop === 0) return { positions, drop: 0, pieces: positions.length ? 1 : 0, moved: 0 };
+    const out = positions.slice();
+    for (let i = 2; i < out.length; i += 3) out[i] -= drop;
+    return { positions: out, drop, pieces: 1, moved: Math.abs(drop) };
+  }
+  let moved = 0;
+  for (const z of shells.lowest) moved = Math.max(moved, Math.abs(z));
+  if (moved === 0) return { positions, drop, pieces: shells.lowest.length, moved: 0 };
   const out = positions.slice();
-  for (let i = 2; i < out.length; i += 3) out[i] -= drop;
-  return { positions: out, drop };
+  for (let v = 0; v < shells.pieceOf.length; v += 1) {
+    const p = shells.pieceOf[v];
+    if (p >= 0) out[v * 3 + 2] -= shells.lowest[p];
+  }
+  return { positions: out, drop, pieces: shells.lowest.length, moved };
+}
+
+/**
+ * The lowest Z of each shell of an indexed solid, and which shell each vertex belongs to.
+ *
+ * Triangles that share a vertex are the same shell — the builder's solids are welded, so two
+ * triangles that touch share vertices. Returns null when there is only one shell, or when
+ * nothing is shared at all: that is a triangle soup rather than a welded solid, and taking it
+ * apart triangle by triangle would scatter the part instead of putting it on the bed.
+ */
+function shellLowestZ(positions, indices) {
+  const tri = indices ? Math.floor(indices.length / 3) : 0;
+  if (tri < 2 || positions.length < 9) return null;
+  const parent = new Int32Array(tri);
+  for (let t = 0; t < tri; t += 1) parent[t] = t;
+  const find = (x) => {
+    let r = x;
+    while (parent[r] !== r) r = parent[r];
+    while (parent[x] !== r) {
+      const n = parent[x];
+      parent[x] = r;
+      x = n;
+    }
+    return r;
+  };
+  const firstTriangleOf = new Map();
+  for (let t = 0; t < tri; t += 1) {
+    for (let k = 0; k < 3; k += 1) {
+      const v = indices[t * 3 + k];
+      const prev = firstTriangleOf.get(v);
+      if (prev === undefined) firstTriangleOf.set(v, t);
+      else {
+        const a = find(prev);
+        const b = find(t);
+        if (a !== b) parent[a] = b;
+      }
+    }
+  }
+  const pieceOf = new Int32Array(positions.length / 3).fill(-1);
+  const pieceOfRoot = new Map();
+  const lowest = [];
+  for (let t = 0; t < tri; t += 1) {
+    const r = find(t);
+    let p = pieceOfRoot.get(r);
+    if (p === undefined) {
+      p = lowest.length;
+      pieceOfRoot.set(r, p);
+      lowest.push(Infinity);
+    }
+    for (let k = 0; k < 3; k += 1) {
+      const v = indices[t * 3 + k];
+      pieceOf[v] = p;
+      const z = positions[v * 3 + 2];
+      if (z < lowest[p]) lowest[p] = z;
+    }
+  }
+  if (lowest.length < 2 || lowest.length === tri) return null;
+  return { pieceOf, lowest };
 }
 
 /** The lowest Z of a solid's own vertices — how high its lowest point floats over Z = 0. */

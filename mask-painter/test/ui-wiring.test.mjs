@@ -321,7 +321,8 @@ check(
 );
 check(
   'and writes the fresh result, never the old one',
-  /const written = onBed \? io\.setOnBed\(res\.positions\)\.positions : res\.positions;/.test(js) &&
+  /const placed = onBed \? io\.setOnBed\(res\.positions, res\.indices\) : null;/.test(js) &&
+    /const written = placed \? placed\.positions : res\.positions;/.test(js) &&
     /const \{ buffer, triangles, bytes \} = io\.buildBinarySTL\(written, res\.indices\)/.test(js) &&
     !/buildBinarySTL\(stencil\.result/.test(js),
 );
@@ -348,25 +349,49 @@ check(
 );
 check(
   'checked, the written points are the ones setOnBed() moved; unticked, the build\'s own',
-  /onBed \? io\.setOnBed\(res\.positions\)\.positions : res\.positions/.test(js),
+  /onBed \? io\.setOnBed\(res\.positions, res\.indices\) : null/.test(js),
+);
+check(
+  'the placement is handed the indices, so the pieces of a multi-piece stencil can be found',
+  /io\.setOnBed\(res\.positions, res\.indices\)/.test(js) && /export function setOnBed\(positions, indices = null\)/.test(ioSrc),
 );
 check(
   'the solid is moved by a copy, so the panel and the preview keep their own vertices',
-  /export function setOnBed\(positions\)[\s\S]{0,300}?positions\.slice\(\)/.test(ioSrc),
+  /export function setOnBed\(positions, indices = null\)[\s\S]{0,1200}?positions\.slice\(\)/.test(ioSrc),
 );
 check(
   'and only Z is moved in it — X and Y stay where the model has them',
   /for \(let i = 2; i < out\.length; i \+= 3\) out\[i\] -= drop;/.test(ioSrc) &&
-    !/out\[i \+= 1\]|out\[i \+ 1\] -=/.test(ioSrc.split('export function setOnBed')[1] || ''),
+    /out\[v \* 3 \+ 2\] -= shells\.lowest\[p\];/.test(ioSrc) &&
+    !/out\[i \+= 1\]|out\[i \+ 1\] -=/.test(ioSrc.split('export function setOnBed')[1] || '') &&
+    !/out\[v \* 3\] =|out\[v \* 3 \+ 1\]/.test(ioSrc.split('export function setOnBed')[1] || ''),
 );
 check(
   'a part already on Z 0 is not copied or moved at all',
-  /const drop = lowestZ\(positions\);\s*\n\s*if \(drop === 0\) return \{ positions, drop: 0 \};/.test(ioSrc),
+  /if \(drop === 0\) return \{ positions, drop: 0, pieces: positions\.length \? 1 : 0, moved: 0 \};/.test(ioSrc),
+);
+// The shells have to be found for any of that to happen: triangles that share a vertex are one
+// piece, several pieces are placed separately, and a soup with nothing shared is left alone.
+check(
+  'the pieces are found by the vertices their triangles share',
+  /function shellLowestZ\(positions, indices\)/.test(ioSrc) &&
+    /const prev = firstTriangleOf\.get\(v\);/.test(ioSrc) &&
+    /if \(lowest\.length < 2 \|\| lowest\.length === tri\) return null;/.test(ioSrc),
 );
 check(
   'the status line says what happened to Z, either way',
   /sat on the bed:[\s\S]{0,160}?lowest Z is 0/.test(js) && /already on Z 0, so nothing moved/.test(js) &&
     /left in the model's own coordinates \(lowest Z/.test(js),
+);
+check(
+  'and names the pieces when the stencil came out in more than one',
+  /sat each of its \$\{placed\.pieces\} pieces on the bed/.test(js) &&
+    /every piece's lowest Z is 0/.test(js) &&
+    /its \$\{s\.components\} pieces wherever the model has them/.test(js),
+);
+check(
+  'the panel option says it covers every piece',
+  /id="stencilOnBed" checked title="[^"]*every piece/.test(html),
 );
 
 // ------------------------------------------------- the session file

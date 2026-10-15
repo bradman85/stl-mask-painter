@@ -1230,10 +1230,14 @@ async function exportStencilSTL() {
     // coordinates — which for a model authored away from its own origin means a part that lands
     // in the slicer floating in mid-air. The viewport never shows that, because centring the
     // model on the grid moves the view, not the mesh, so the file is the only place it can be
-    // put right. Only Z moves, and only in the copy that is written.
+    // put right. Every piece is placed, not just the assembly's lowest point: a slicer imports
+    // the shells of one STL as parts of one object and only drops them when they are split into
+    // objects, so a two-piece stencil would otherwise keep hovering over its upper piece's air.
+    // Only Z moves, and only in the copy that gets written.
     const lowest = io.lowestZ(res.positions);
     const onBed = el('stencilOnBed').checked;
-    const written = onBed ? io.setOnBed(res.positions).positions : res.positions;
+    const placed = onBed ? io.setOnBed(res.positions, res.indices) : null;
+    const written = placed ? placed.positions : res.positions;
     const { buffer, triangles, bytes } = io.buildBinarySTL(written, res.indices);
     io.downloadBlob(`${io.safeBaseName(modelName)}-paint-stencil.stl`, new Blob([buffer], { type: 'model/stl' }));
     const s = res.stats;
@@ -1241,11 +1245,15 @@ async function exportStencilSTL() {
       `Exported paint stencil: ${fmt(triangles)} triangles (${(bytes / 1048576).toFixed(1)} MB), ` +
         `${s.windowLoops} window${s.windowLoops === 1 ? '' : 's'} in ` +
         `${s.components === 1 ? 'one piece' : `${s.components} pieces`}` +
-        (onBed
-          ? lowest === 0
+        (placed
+          ? placed.moved === 0
             ? ' — its lowest point was already on Z 0, so nothing moved.'
-            : ` — sat on the bed: ${lowest > 0 ? 'moved down' : 'moved up'} ${Math.abs(lowest).toFixed(2)} mm so the part's lowest Z is 0 (X and Y untouched).`
-          : ` — left in the model's own coordinates (lowest Z ${lowest.toFixed(2)}), so it lines up with the figure in the slicer.`) +
+            : placed.pieces > 1
+              ? ` — sat each of its ${placed.pieces} pieces on the bed: the furthest moved ` +
+                `${placed.moved.toFixed(2)} mm so every piece's lowest Z is 0 (X and Y untouched).`
+              : ` — sat on the bed: moved ${lowest > 0 ? 'down' : 'up'} ${Math.abs(lowest).toFixed(2)} mm so the part's lowest Z is 0 (X and Y untouched).`
+          : ` — left in the model's own coordinates (lowest Z ${lowest.toFixed(2)}` +
+            `${s.components === 1 ? '' : `, its ${s.components} pieces wherever the model has them`}), so it lines up with the figure in the slicer.`) +
         (rebuilt ? ' Rebuilt from the current mask first, because the paint had changed since the last build.' : ''),
     );
   } catch (err) {

@@ -266,21 +266,41 @@ vertex at **Z 41.0** in model coordinates — 41 mm of air under it in a slicer,
 "the Z is not zeroed out" looks like.
 
 **Sit the exported part on the bed (Z = 0)** (on by default) fixes it in the file, where it has
-to be fixed: `io.setOnBed(positions)` returns a copy of the solid with its lowest Z moved to 0
-(`io.lowestZ` reports what it was — the amount moved, positive when the part was floating, negative
-when it was sunk into the plate). Only Z moves, and only in the copy that is written: X and Y stay
-where the model has them (the slicer's own arrange puts the part on the plate), and the mask, the
-panels, the built shell and the preview keep the model's coordinates, so nothing on screen or in
-any other export changes. A part already on Z 0 is handed back without being copied. Untick the box
-to get the model's own coordinates back, which is what you want when the mask has to line up
-against the figure in a slicer — or when mask and model are printed in one job. The status line
-always says which of the three happened.
+to be fixed: `io.setOnBed(positions, indices)` returns a copy of the solid with **every piece** of
+it resting on Z 0 (`io.lowestZ` reports the solid's own lowest Z — positive when the part was
+floating, negative when it was sunk into the plate — and the result also carries how many pieces
+were placed and how far the furthest one had to travel). Only Z moves, and only in the copy that
+is written: X and Y stay where the model has them (the slicer's own arrange puts the part on the
+plate), and the mask, the panels, the built shell and the preview keep the model's coordinates, so
+nothing on screen or in any other export changes. A part already on Z 0 is handed back without
+being copied. Untick the box to get the model's own coordinates back, which is what you want when
+the mask has to line up against the figure in a slicer — or when mask and model are printed in one
+job. The status line always says which of the three happened.
 
 | What the status line says | Meaning |
 | --- | --- |
-| `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and Y untouched)` | the box was ticked and the part was floating |
+| `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and Y untouched)` | the box was ticked and the one-piece part was floating |
+| `sat each of its 2 pieces on the bed: the furthest moved 32.10 mm so every piece's lowest Z is 0 (X and Y untouched)` | ticked, and the stencil came out in more than one piece |
 | `its lowest point was already on Z 0, so nothing moved` | ticked, and the model was authored on its own Z 0 |
 | `left in the model's own coordinates (lowest Z 41.00)` | unticked |
+
+### A stencil that comes out in more than one piece
+
+Placing the whole solid by its single lowest point is not enough, and that is the second half of
+the "it still hovers" report. A slicer imports the shells of one STL as **parts of a single
+object**, and parts keep the coordinates they were written with: only **Split to objects** drops
+each one onto the plate. So a stencil that the result panel reports as two pieces — a window on
+the head and one at the feet, with a short reach and the widening off, comes out as 2 pieces
+**32 mm apart** — went on hovering over the upper piece's air while the option appeared to do
+nothing, because dropping the assembly put the lower piece on the plate (measured: the two pieces
+built at Z −2.37 and 32.10; the whole-solid drop writes them at Z 0 and **32.10**, which is the
+hover the user then removed by hand with *Split to objects*).
+
+`setOnBed` therefore places **each piece by its own lowest Z**. The pieces are the shells of the
+indexed solid — triangles that share a vertex, the same rule the result panel counts pieces with —
+and a triangle soup, which shares nothing, is deliberately left as one piece rather than being
+taken apart triangle by triangle. The measured file after the fix: both pieces at Z 0 (0…18.26 and
+0…13.90), same X and Y as built, same two watertight pieces.
 
 ### Trimming the specks that would become extra windows
 
@@ -355,7 +375,9 @@ at a handful of spots. Practical readings:
 
 **If the paint is in more than one place** the mask grows its reach automatically until the
 pieces join into a single part (a few passes, reported in the panel); if they are simply too
-far apart, it says so and leaves the pieces separate rather than pretending. A loose island
+far apart, it says so and leaves the pieces separate rather than pretending — each piece is then
+placed on the plate on export, so a multi-piece stencil still prints (see *Sitting the exported
+part on the bed*). A loose island
 of shell surrounded by the window is dropped, and point contacts in the clipped sheet are
 split so no edge is shared by four triangles — both are reported as notes.
 
