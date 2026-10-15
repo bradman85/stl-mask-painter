@@ -20,7 +20,16 @@ import { buildTopology } from '../js/stencil.js';
 import { MaskLayer } from '../js/mask.js';
 import { createFeatureList } from '../js/features.js';
 import { centreTranslation, gridPlacement } from '../js/viewer.js';
-import { shellsOf, shellSize, facesOfShells, countFaces, filterSoup, remapHistory, inverseCornerMap } from '../js/select.js';
+import {
+  shellsOf,
+  shellSize,
+  facesOfShells,
+  countFaces,
+  filterSoup,
+  remapHistory,
+  inverseCornerMap,
+  highlightArrays,
+} from '../js/select.js';
 import { parseBinarySTL, fmt } from './helpers.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -224,6 +233,66 @@ const facesOf = (positions) => Math.floor(positions.length / 9);
   );
   const nothing = filterSoup({ positions: combined, ids }, new Uint8Array(faceCount));
   check('filtering everything out leaves an empty soup rather than throwing', nothing.faces === 0 && nothing.positions.length === 0);
+}
+
+// -------------------------------------------------------------- the highlight
+//
+// One picked face has to be *visible*, and edges alone were the bug: three hairlines lying exactly
+// on the surface they trace z-fight with the triangle they belong to, so a single picked face on a
+// big model showed nothing and the tool looked dead. Hence a fill as well, covering the triangle's
+// own corners: that is what this pins.
+{
+  const soup = combine(boxSoup([0, 0, 0, 4, 4, 4]), boxSoup([0, -10, 0, 2, -8, 2]));
+  const faceCount = facesOf(soup);
+
+  const one = new Uint8Array(faceCount);
+  one[5] = 1;
+  const single = highlightArrays(soup, one);
+  check(
+    'a single picked face is a filled triangle, not just its edges',
+    single !== null && single.faces === 1 && single.fill.length === 9 && single.edges.length === 18,
+    `fill ${single?.fill.length} floats (3 corners), edges ${single?.edges.length} (3 edges)`,
+  );
+  check(
+    'and the fill covers that face\u2019s own corners',
+    (() => {
+      for (let k = 0; k < 9; k += 1) if (single.fill[k] !== soup[5 * 9 + k]) return false;
+      return true;
+    })(),
+    'corner for corner, in the file\u2019s own coordinates',
+  );
+  check(
+    'the boundary is the three edges of that face',
+    (() => {
+      const edges = [];
+      for (let k = 0; k < 3; k += 1) {
+        const a = k * 3;
+        const b = ((k + 1) % 3) * 3;
+        edges.push(`${single.edges[a]},${single.edges[b]}`);
+      }
+      return edges.length === 3 && edges.every((e) => e !== '');
+    })(),
+    'a-b, b-c, c-a',
+  );
+  check(
+    'an empty pick has nothing to draw',
+    highlightArrays(soup, new Uint8Array(faceCount)) === null,
+  );
+  check(
+    'a pick above the limit is refused rather than drawn — the panel reports the count instead',
+    highlightArrays(soup, new Uint8Array(faceCount).fill(1), { limit: 10 }) === null &&
+      highlightArrays(soup, new Uint8Array(faceCount).fill(1), { limit: 100 }).faces === faceCount,
+    `${faceCount} faces: refused above 10, drawn under 100`,
+  );
+  const many = new Uint8Array(faceCount);
+  many[0] = 1;
+  many[3] = 1;
+  const two = highlightArrays(soup, many);
+  check(
+    'two picked faces give two filled triangles',
+    two.faces === 2 && two.fill.length === 18 && two.edges.length === 36,
+    `${two.fill.length} fill floats and ${two.edges.length} edge floats`,
+  );
 }
 
 // -------------------------------------------------- the paint and its undo history

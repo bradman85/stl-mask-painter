@@ -71,7 +71,8 @@ Three.js and three-mesh-bvh are vendored under `vendor/`, so no install is neede
 | Pick | Eyedropper with a live preview: the ring takes the colour of the feature under the cursor, and in the status bar; a click makes that feature current and hands back to the tool you were painting with (`Shift`-click to keep picking) | `I` |
 | Part | Paints the whole panel of the model under the cursor, bounded by its seams. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is selected when the click lands next to it | `P` |
 | Box select | Drag a rectangle over the viewport: every vertex whose screen position falls inside it, and which faces the camera, is painted — or released with `Alt`/`Ctrl` held. One drag, one undo step | `X` |
-| Select | Picks whole models (the separate shells inside one file) or single faces, then **Remove picked** takes them out of the model. Paints nothing | `S` |
+| Select models | Picks the whole model (the separate shell) under the cursor, tinted yellow, then **Remove picked** takes it out of the model. Paints nothing | `S` |
+| Select faces | The same tool with the pick set to one triangle at a time — the face under the cursor is tinted white, the pick yellow | `Shift`+`S` |
 
 - **Features** are a palette of named colours (Eyes, Pupils, Mouth, …). Add your own; each
   row shows how many vertices it owns, and can be hidden or cleared individually.
@@ -130,16 +131,20 @@ geometry gets painted and built into the mask, and the part you want can end up 
 air**, because the bed is drawn under the lowest point of *everything* in the file, stray model
 included.
 
-The **Select** tool (`S`) is the way in. It picks geometry and takes it out of the model:
+**Select models** (`S`) and **Select faces** (`Shift`+`S`) are the way in — one tool, two scopes,
+both of them buttons in the tool row rather than a menu to find. They pick geometry and take it out
+of the model:
 
 - **Whole models.** `js/select.js` cuts the file on shared faces — the same rule a slicer uses
   when it reports *2 objects*, so two models that merely touch at a corner stay separate and a
   model standing inside another is a model of its own. The panel lists them biggest first with the
   faces, the share of the file and the size of each, and a click in the list or in the viewport
   picks one (a second click unpicks it; `Shift` picks outright, `Alt`/`Ctrl` unpicks).
-- **Single faces.** The pick can be set to one triangle at a time instead, for geometry that is
-  not a separate model — a spur, a chunk welded to the figure, a ring of triangles that came out
-  wrong. The face under the cursor is outlined in white, the pick in yellow.
+- **Single faces.** The pick is one triangle at a time instead, for geometry that is not a separate
+  model — a spur, a chunk welded to the figure, a ring of triangles that came out wrong.
+- **What is picked is drawn as a filled tint** (yellow for the pick, white for the face under the
+  cursor), with the boundary of the picked faces outlined on top. The tint is what makes a single
+  picked face visible: edges alone z-fight with the triangle they trace and show nothing at all.
 - **`Ctrl`+`A` / Select all**, then click off the few you want to keep, is the fast way through a
   file of many; **Select none** (`Esc`) and **Invert pick** cover the other directions.
 - **Remove picked** is a two-click confirmation (the label changes for four seconds, like Clear

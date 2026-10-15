@@ -8,7 +8,15 @@ import { buildTopology, buildStencil, validateSolid, stencilDefaultsForDiagonal 
 import { buildParts, partSoupVertices, partsNearPoint, DEFAULT_SEAM_ANGLE } from './parts.js';
 import { paintedIslands, planIslandTrim, maskWindows } from './cleanup.js';
 import { normaliseRect, rectSize } from './boxselect.js';
-import { shellsOf, shellSize, facesOfShells, countFaces, filterSoup, remapHistory } from './select.js';
+import {
+  shellsOf,
+  shellSize,
+  facesOfShells,
+  countFaces,
+  filterSoup,
+  remapHistory,
+  highlightArrays,
+} from './select.js';
 
 // The example model that ships next to this app (repo root).
 const DEFAULT_MODEL_URL = new URL('../Sprunki Mercuy.stl', location.href).href;
@@ -830,20 +838,31 @@ function updateHud() {
   el('brushRadiusVal').textContent = state.brushRadius.toFixed(1);
 }
 
+/**
+ * Lights up the tool buttons. The Select tool carries two of them — one per scope — so a button
+ * with a scope is only active when that scope is the one in hand: the pair reads as one tool with
+ * two modes rather than two tools that both light up.
+ */
+function syncToolButtons() {
+  for (const b of document.querySelectorAll('.tool')) {
+    const scope = b.dataset.scope;
+    const on = b.dataset.tool === state.tool && (!scope || scope === cleanup.scope);
+    b.classList.toggle('active', on);
+  }
+}
+
 function setTool(tool) {
   // Remembered so the eyedropper can hand back to it after a pick.
   if (tool !== 'picker') state.lastPaintTool = tool;
   state.tool = tool;
-  for (const b of document.querySelectorAll('.tool')) {
-    b.classList.toggle('active', b.dataset.tool === tool);
-  }
+  syncToolButtons();
   el('fillOptions').classList.toggle('on', tool === 'fill');
   el('seamOptions').classList.toggle('on', tool === 'fill' || tool === 'part');
   el('boxOptions').classList.toggle('on', tool === 'box');
   el('selectOptions').classList.toggle('on', tool === 'select');
   hoverPick = null;
-  if (tool === 'select') void ensureShells();
-  updateSelectionOutline();
+  if (tool === 'select' && cleanup.scope === 'models') void ensureShells();
+  updatePickHighlight();
   renderShellList();
   renderModelPickHint();
   if (tool !== 'select') clearHoverFace();
@@ -911,7 +930,7 @@ function resetPickedFaces() {
   cleanup.selected = new Uint8Array(faceCountInHand());
   cleanup.shells = null;
   cleanup.shellsKey = '';
-  clearSelectionOutline();
+  clearPickHighlight();
   clearHoverFace();
   renderShellList();
   updateCleanupStats();
@@ -1040,72 +1059,95 @@ function updateCleanupStats() {
 }
 
 /**
- * Yellow lines around the picked faces (and around the face under the cursor).
+ * The highlight a pick is drawn with: a translucent fill over the picked faces, plus their edges.
  *
- * The seams are what makes a face visible in the first place: a flat-shaded sphere is one
- * unbroken surface on screen, and "click the face you can see" only means something once its
- * edges are drawn. The same trick answers the other half of the question — this is what is
- * picked — so a removal is judged before it happens rather than after.
+ * Edges alone were the first attempt and they were invisible, which is the bug this replaces: three
+ * hairlines lying exactly on the surface they trace z-fight with the triangle they belong to, and
+ * on a model of any size a single picked face simply does not show — a pick that worked perfectly
+ * read as a tool that did nothing. The fill is what makes a pick visible; the edges only say where
+ * it stops. The other extreme is a whole-model pick, where edges alone cover the model in lines and
+ * read as a wireframe, which is not what "this model is picked" should look like either.
+ *
+ * The fill is drawn in front of the surface it belongs to (`polygonOffset`, no depth write) but
+ * still depth-tested, so a face on the far side of the model stays behind the model — the pick is
+ * what you can see of it, which is what a removal will take.
  */
-const OUTLINE_FACE_LIMIT = 60000;
+const HIGHLIGHT_FACE_LIMIT = 60000;
 
-function buildFaceOutline(faceMask) {
-  const faces = faceMask.length;
-  let picked = 0;
-  for (let t = 0; t < faces; t += 1) if (faceMask[t]) picked += 1;
-  if (!picked || picked > OUTLINE_FACE_LIMIT) return null;
-  const arr = mask.position.array;
-  const positions = new Float32Array(picked * 18);
-  let w = 0;
-  for (let t = 0; t < faces; t += 1) {
-    if (!faceMask[t]) continue;
-    for (let k = 0; k < 3; k += 1) {
-      const a = (t * 3 + k) * 3;
-      const b = (t * 3 + ((k + 1) % 3)) * 3;
-      positions[w] = arr[a];
-      positions[w + 1] = arr[a + 1];
-      positions[w + 2] = arr[a + 2];
-      positions[w + 3] = arr[b];
-      positions[w + 4] = arr[b + 1];
-      positions[w + 5] = arr[b + 2];
-      w += 6;
-    }
-  }
+function bufferGeometry(array) {
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geometry.setAttribute('position', new THREE.BufferAttribute(array, 3));
   return geometry;
 }
 
-function drawOutline(existing, geometry, color, order) {
-  if (existing) {
-    viewer.modelGroup.remove(existing);
-    existing.geometry.dispose();
-    existing.material.dispose();
+/** The triangles and boundary of a `0/1` face mask, as the two geometries the highlight draws. */
+function buildHighlight(faceMask) {
+  const data = highlightArrays(mask.position.array, faceMask, { limit: HIGHLIGHT_FACE_LIMIT });
+  if (!data) return null;
+  return { fill: bufferGeometry(data.fill), edges: bufferGeometry(data.edges), picked: data.faces };
+}
+
+function disposeHighlight(group) {
+  if (!group) return;
+  viewer.modelGroup.remove(group);
+  for (const child of group.children) {
+    child.geometry.dispose();
+    child.material.dispose();
   }
-  if (!geometry) return null;
-  const material = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 });
-  const lines = new THREE.LineSegments(geometry, material);
-  lines.renderOrder = order;
-  viewer.modelGroup.add(lines);
-  return lines;
 }
 
-function updateSelectionOutline() {
-  const on = mask && state.tool === 'select' && cleanup.selected;
-  const geometry = on ? buildFaceOutline(cleanup.selected) : null;
-  cleanup.outline = drawOutline(cleanup.outline, geometry, 0xffd24d, -1);
+function drawHighlight(existing, faceMask, { color, fillOpacity, lineOpacity, order }) {
+  disposeHighlight(existing);
+  if (!faceMask) return null;
+  const data = buildHighlight(faceMask);
+  if (!data) return null;
+  const offset = { polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 };
+  const fill = new THREE.Mesh(
+    data.fill,
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: fillOpacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      ...offset,
+    }),
+  );
+  const edges = new THREE.LineSegments(
+    data.edges,
+    new THREE.LineBasicMaterial({ color, transparent: true, opacity: lineOpacity, depthWrite: false, ...offset }),
+  );
+  fill.renderOrder = order;
+  edges.renderOrder = order + 1;
+  fill.name = 'pick-fill';
+  edges.name = 'pick-edges';
+  const group = new THREE.Group();
+  group.name = 'pick-highlight';
+  group.add(fill, edges);
+  viewer.modelGroup.add(group);
+  return group;
 }
 
-function clearSelectionOutline() {
-  cleanup.outline = drawOutline(cleanup.outline, null);
+/** The picked faces, in yellow. Empty or too big to draw: nothing, and the panel says which. */
+function updatePickHighlight() {
+  const faces = mask && state.tool === 'select' ? cleanup.selected : null;
+  cleanup.outline = drawHighlight(cleanup.outline, faces, {
+    color: 0xffd24d,
+    fillOpacity: 0.5,
+    lineOpacity: 0.95,
+    order: 2,
+  });
+}
+
+function clearPickHighlight() {
+  cleanup.outline = drawHighlight(cleanup.outline, null);
 }
 
 /**
- * Outlines the thing under the cursor: the model it belongs to, or the single face.
- *
- * What a click is about to pick has to be visible, and a flat-shaded surface is one unbroken
- * grey — the picked faces are outlined in yellow, this one in white, and between them a removal
- * is judged before it happens rather than after.
+ * Highlights what is under the cursor before the click: the model it belongs to, or the single
+ * face. A file with one model has nothing to choose between, so nothing is highlighted there and
+ * the panel says so instead — a whole-model highlight on a one-model file is a screenful of tint
+ * that means nothing.
  */
 function updateHoverFace(faceIndex) {
   if (!mask || state.tool !== 'select' || faceIndex == null || faceIndex < 0 || faceIndex >= faceCountInHand()) {
@@ -1113,19 +1155,25 @@ function updateHoverFace(faceIndex) {
     return;
   }
   const shells = cleanup.shells;
-  const whole = cleanup.scope === 'models' ? shells?.faceShell[faceIndex] : undefined;
+  const whole =
+    cleanup.scope === 'models' && shells && shells.shellCount > 1 ? shells.faceShell[faceIndex] : undefined;
   const key = whole === undefined ? `f${faceIndex}` : `s${whole}`;
   if (cleanup.hoverKey === key) return;
   const under = new Uint8Array(faceCountInHand());
   if (whole === undefined) under[faceIndex] = 1;
   else for (let t = 0; t < under.length; t += 1) under[t] = shells.faceShell[t] === whole ? 1 : 0;
-  cleanup.hover = drawOutline(cleanup.hover, buildFaceOutline(under), 0xffffff, 3);
+  cleanup.hover = drawHighlight(cleanup.hover, under, {
+    color: 0xffffff,
+    fillOpacity: 0.35,
+    lineOpacity: 0.9,
+    order: 4,
+  });
   cleanup.hoverKey = key;
 }
 
 function clearHoverFace() {
   if (cleanup.hoverKey === '' && !cleanup.hover) return;
-  cleanup.hover = drawOutline(cleanup.hover, null);
+  cleanup.hover = drawHighlight(cleanup.hover, null);
   cleanup.hoverKey = '';
 }
 
@@ -1167,7 +1215,7 @@ function pickFace(faceIndex, { add = false, remove = false } = {}) {
 }
 
 function afterPickedFaces(changed) {
-  updateSelectionOutline();
+  updatePickHighlight();
   renderShellList();
   updateCleanupStats();
   renderModelPickHint();
@@ -1180,10 +1228,18 @@ function renderModelPickHint() {
   if (!node) return;
   const picked = pickedFaces();
   const scope = cleanup.scope === 'models' ? 'whole models' : 'single faces';
+  const shells = cleanup.shells;
+  const oneModel = cleanup.scope === 'models' && shells && shells.shellCount === 1;
   node.textContent =
-    `Picking ${scope}: ${fmt(picked)} face${picked === 1 ? '' : 's'} picked` +
-    (cleanup.scope === 'models' && cleanup.shells ? ` of ${fmt(cleanup.shells.faceCount)}` : '') +
-    ', click the model (or the list) to change it.';
+    `Picking ${scope}: ${fmt(picked)} face${picked === 1 ? '' : 's'} picked of ${fmt(faceCountInHand())} ` +
+    (picked > HIGHLIGHT_FACE_LIMIT
+      ? '— too many to tint in the viewport, so the count is the whole answer. '
+      : '— the picked faces are tinted yellow, the one under the cursor white. ') +
+    (oneModel
+      ? 'This file holds one model, so a click here picks the whole file: press “Select faces” (or Shift+S) to take single triangles out instead.'
+      : cleanup.scope === 'models'
+        ? 'Click a model in the viewport or a row in the list; Alt-click unpicks one.'
+        : 'Click a face; Shift-click adds, Alt-click takes one off.');
 }
 
 /** A click in the viewport with the Select tool: the whole model, or the one face, under it. */
@@ -1249,11 +1305,21 @@ function invertPickedFaces() {
 
 function setSelectScope(scope) {
   cleanup.scope = scope === 'faces' ? 'faces' : 'models';
-  el('selectScope').value = cleanup.scope;
+  syncToolButtons();
+  clearHoverFace();
   if (cleanup.scope === 'models' && mask && cleanup.soup) void ensureShells();
   renderShellList();
   renderModelPickHint();
   updateCleanupStats();
+  if (state.tool === 'select' && mask) {
+    setStatus(
+      cleanup.scope === 'models'
+        ? 'Pick: whole models — click the model to remove (the list in the panel picks the same ones), ' +
+            'Ctrl+A for all of them, Alt-click to unpick one.'
+        : 'Pick: single faces — click a triangle: Shift-click adds, Alt-click takes one off, Ctrl+A picks ' +
+            'the lot. The face under the cursor is tinted white and the picked ones yellow.',
+    );
+  }
 }
 
 /**
@@ -1304,7 +1370,7 @@ async function rebuildModelFromSoup({ what, faces, restoring = false } = {}) {
   cleanup.shellsKey = '';
   resetStencil();
   cleanup.selected = new Uint8Array(cut.faces);
-  clearSelectionOutline();
+  clearPickHighlight();
   clearHoverFace();
   applyDisplayState();
   updateStats();
@@ -2392,7 +2458,12 @@ el('featureName').addEventListener('keydown', (e) => {
 });
 
 for (const btn of document.querySelectorAll('.tool')) {
-  btn.addEventListener('click', () => setTool(btn.dataset.tool));
+  btn.addEventListener('click', () => {
+    setTool(btn.dataset.tool);
+    // The Select tool's two buttons differ only in scope, so the scope follows the button that
+    // was pressed rather than hiding in a menu.
+    if (btn.dataset.scope) setSelectScope(btn.dataset.scope);
+  });
 }
 for (const btn of document.querySelectorAll('[data-view]')) {
   btn.addEventListener('click', () => viewer.setView(btn.dataset.view));
@@ -2529,7 +2600,6 @@ el('hideAllBtn').addEventListener('click', () => {
   setStatus(anyVisible ? 'All paint hidden.' : 'All paint shown.');
 });
 
-el('selectScope').addEventListener('change', (e) => setSelectScope(e.target.value));
 el('selectAllBtn').addEventListener('click', selectAllFaces);
 el('selectNoneBtn').addEventListener('click', selectNoFaces);
 el('selectInvertBtn').addEventListener('click', invertPickedFaces);
@@ -2601,7 +2671,11 @@ window.addEventListener('keydown', (e) => {
     case 'b': setTool('brush'); break;
     case 'f': setTool('fill'); break;
     case 'e': setTool('erase'); break;
-    case 's': setTool('select'); break;
+    case 's':
+      // Shift+S is the face half of the same tool: same panel, same pick, single triangles.
+      setTool('select');
+      setSelectScope(e.shiftKey ? 'faces' : 'models');
+      break;
     case 'x': setTool('box'); break;
     case 'escape':
       if (boxDrag) cancelBoxSelect();

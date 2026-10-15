@@ -550,15 +550,16 @@ wording — the browser half (drawing, releasing, hovering) is what this item te
    exported together). If you only have single-model files, load the example model twice into one
    file with any tool that appends triangles — or load the example and read the "one model" half
    of this item.
-2. Press **S** (or the **Select** button) and wait for the weld. Read the list under the panel
-   heading, then click **Count models** and read the status bar.
+2. Press **S** (or the **Select models** button) and wait for the weld. Read the list under the
+   panel heading, then click **Count models** and read the status bar.
 3. Click the model you want to keep, then **Select none**. Now click **Select all** and click the
    model you want to keep a second time.
 4. Press **Remove picked** once and read the status bar; press it again within four seconds.
 5. Look at the grid, the model line and the Mask panel's paint stats.
 6. Press **Restore removed**.
-7. With the pick set to **Single faces (triangles)**, click a face, then Shift-click two more and
-   Alt-click one off. Check the white outline under the cursor and the yellow outline of the pick.
+7. Press **Shift+S** (or the **Select faces** button), hover over the model, then click a face,
+   Shift-click two more and Alt-click one off. Check the white tint under the cursor and the yellow
+   tint of the pick.
 8. Turn on **Show seams** with the pick still on faces, and remove a handful of faces from a flat
    area (leave more than a few hundred faces in the model).
 9. Load a model, paint something, pick a model and remove it, then press **Ctrl+Z** twice.
@@ -567,7 +568,9 @@ wording — the browser half (drawing, releasing, hovering) is what this item te
 count, its share of the file and its own size, and the status bar reports the same numbers — this
 is where a file with a hidden second model is discovered. Step 3: a click picks the model under the
 cursor (a second click unpicks it), **Select all** then picks the whole file and clicking a model
-again takes it back off the pick, which is the point of selecting everything. Step 4: the button
+again takes it back off the pick, which is the point of selecting everything. Only one of the two
+buttons is lit at a time, and pressing **Select faces** lights that one instead and moves the pick
+to single triangles. Step 4: the button
 reads **Click again to remove** for four seconds and the removal goes ahead on the second click —
 the model disappears from the viewport, the status bar reports the faces taken out and
 `The bed is under the surviving model's lowest point (0.00)`, and the survivors are re-measured and
@@ -575,9 +578,12 @@ re-framed. Step 5: the surviving model stands **on** the grid — if it was prev
 top of the model you removed, it now drops onto the plate, and the grid is drawn on its feet rather
 than a fraction of its height below them (the reported `2% of the model's height` gap is gone). The
 painted vertices are still painted. Step 6: the removed model comes back, still unpainted, and the
-bed goes back under the lowest point of everything. Step 7: the face under the cursor is outlined
-in white before the click, the picked faces are outlined in yellow, Shift adds and Alt takes one
-off, and the status bar counts the pick face by face. Step 8: the removal is exact — the region you
+bed goes back under the lowest point of everything. Step 7: the face under the cursor is **tinted
+white** before the click and the picked faces are **tinted yellow** — a single picked face is
+visible at a glance, which is what the edges-only version got wrong (it showed three hairlines that
+z-fight with the surface they lie on, so a working pick looked like a dead tool) — Shift adds and
+Alt takes one off, and the status bar counts the pick face by face. On a one-model file nothing is
+tinted while hovering in the models scope, and the panel says why. Step 8: the removal is exact — the region you
 picked is gone, the rest of the surface is untouched. Step 9: the paint stays where it was painted
 (after the removal the painted vertices are still on the same part of the surface) and **Ctrl+Z**
 still undoes the paint, because the history was renumbered with the geometry.
@@ -587,7 +593,9 @@ and centring)
 construction (two boxes are two models, a shared corner is not a shared surface, a degenerate face
 joins nothing, bounds and sizes per model), the filter and the corner map triangle for triangle,
 the paint carried across a removal corner by corner, the undo history renumbered and still undoing
-what it used to, and on the bundled figure: a copy written 30 units below it lifts the figure off
+what it used to, the highlight of one picked face being a filled triangle (the visible half of the
+fix above — edges alone were invisible) and a pick too big to draw being refused rather than drawn,
+and on the bundled figure: a copy written 30 units below it lifts the figure off
 the bed by 30 (the reported bug, measured), removing it puts the lowest point back at 0, and the bed
 is drawn on the model's own lowest point instead of 2% of its height below it.
 `test/ui-wiring.test.mjs` pins the tool, its key, the panel, the buttons, the scope menu, the

@@ -397,11 +397,20 @@
       </td>
     </tr>
     <tr>
-      <td class="k">Select <small><kbd>S</kbd></small></td>
+      <td class="k">Select models<br><small><kbd>S</kbd></small></td>
       <td>
-        Pick whole models (the separate shells inside one file) or single faces and take them out
-        of the model — see <a href="#cleanup">Cleaning up the model</a>. It paints nothing, so a
-        palette feature is irrelevant while it is up.
+        Pick whole models — the separate shells inside one file — and take them out of the model:
+        see <a href="#cleanup">Cleaning up the model</a>. A click picks the model under the
+        cursor, Alt-click unpicks one, <kbd>Ctrl</kbd>+<kbd>A</kbd> picks the lot. Paints nothing.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Select faces<br><small><kbd>Shift</kbd>+<kbd>S</kbd></small></td>
+      <td>
+        The same tool with the pick set to one triangle at a time: the face under the cursor is
+        tinted white and the picked faces yellow, so a click is judged before it happens. Shift-click
+        adds a face, Alt-click takes one off. It paints nothing — a palette feature is irrelevant
+        while either button is up.
       </td>
     </tr>
   </table>
@@ -640,13 +649,14 @@ Panels within 3.2 units of the click; click one to select it instead:
     finish — and nothing in the format says they are separate objects. Two things go wrong because
     of it: the extra geometry gets painted and built into the mask, and the part you want can end
     up <em>hanging in the air</em>, because the bed sits under the lowest point of <b>everything</b>
-    in the file, stray model included. The <b>Select</b> tool is how both are dealt with: pick the
-    geometry you do not want and take it out of the model.
+    in the file, stray model included. The <b>Select models</b> and <b>Select faces</b> buttons
+    (one tool, two scopes) are how both are dealt with: pick the geometry you do not want and take
+    it out of the model.
   </p>
 
   <h3 id="cleanup-models">Whole models — the shells in the file</h3>
   <p>
-    With <b>Pick: Whole models (shells)</b>, a click picks the model under the cursor. A click that
+    With <b>Select models</b> (<kbd>S</kbd>), a click picks the model under the cursor. A click that
     is not on the model at all clears the pick. The models are the groups of triangles joined to
     each other by shared edges — the same rule a slicer uses when it reports <b>2 objects</b> — so
     two models that merely touch at a corner stay separate and a model standing inside another is
@@ -704,9 +714,9 @@ Panels within 3.2 units of the click; click one to select it instead:
 
   <h3 id="cleanup-faces">Single faces — one triangle at a time</h3>
   <p>
-    With <b>Pick: Single faces (triangles)</b>, a click picks the one triangle under the cursor and
-    nothing else. The face under the cursor is outlined in white and the picked ones in yellow
-    while this tool is up, so "click the face you can see" means something on a surface that is
+    With <b>Select faces</b> (<kbd>Shift</kbd>+<kbd>S</kbd>), a click picks the one triangle under
+    the cursor and nothing else. The face under the cursor is tinted white and the picked faces
+    yellow while this tool is up, so "click the face you can see" means something on a surface that is
     otherwise one unbroken grey: turn on <b>Show seams</b> in the
     <a href="#paint-parts">Part tool's</a> options as well if you want the panel boundaries drawn
     at the same time. This is the tool for geometry that is not a separate model — a spure, a
@@ -714,11 +724,21 @@ Panels within 3.2 units of the click; click one to select it instead:
     out to see how the stencil reacts to a hole.
   </p>
   <div class="note">
+    <strong>The pick is a filled tint, not just an outline.</strong> The first version drew the
+    picked faces as edges, and a single picked face was invisible: three hairlines lying exactly on
+    the surface they trace z-fight with the triangle they belong to, so a pick that worked looked
+    like a tool that did nothing. The tint is drawn just in front of the surface (a polygon offset,
+    no depth write) and is still depth-tested, so it covers the faces you can see of the pick and
+    stays behind the model where the pick is on the far side. It is drawn as long as the pick is
+    under 60,000 faces; above that the panel says the pick is too big to tint and reports the count
+    instead.
+  </div>
+  <div class="note">
     <strong>Faces are the file's own triangles.</strong> A dense scan has hundreds of thousands of
     them, so picking a region face by face is a job for a few faces, not for a whole area — paint,
-    the Part tool and <a href="#paint-box">Box select</a> are the region tools. The outline of the
-    pick is drawn as long as the pick is under 60,000 faces; above that it would be more lines
-    than the screen can show and it is skipped, which the panel still reports as a count.
+    the Part tool and <a href="#paint-box">Box select</a> are the region tools. The nearest paint
+    tool to this one is the <a href="#paint-parts">Part tool</a>, which takes one whole
+    seam-bounded panel per click.
   </div>
 
   <h3 id="cleanup-what-happens">What a removal does</h3>
@@ -1402,7 +1422,8 @@ end_header
     <tr><td class="k"><kbd>F</kbd></td><td>Region fill tool</td></tr>
     <tr><td class="k"><kbd>P</kbd></td><td>Part tool — click a whole seam-bounded panel</td></tr>
     <tr><td class="k"><kbd>X</kbd></td><td>Box select tool — drag a rectangle over what to paint</td></tr>
-    <tr><td class="k"><kbd>S</kbd></td><td>Select tool — pick models (or single faces) and remove them</td></tr>
+    <tr><td class="k"><kbd>S</kbd></td><td>Select models — pick the model under the cursor and remove it</td></tr>
+    <tr><td class="k"><kbd>Shift</kbd>+<kbd>S</kbd></td><td>Select faces — the same tool with the pick set to single triangles</td></tr>
     <tr><td class="k"><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Select all — pick every face in the model, then click off the few you want to keep</td></tr>
     <tr><td class="k"><kbd>E</kbd></td><td>Erase tool</td></tr>
     <tr><td class="k"><kbd>I</kbd></td><td>Pick tool (eyedropper)</td></tr>

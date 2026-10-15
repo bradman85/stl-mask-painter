@@ -481,15 +481,34 @@ check(
 const selectSrc = fs.readFileSync(path.resolve(here, '../js/select.js'), 'utf8');
 check('the paint panel carries the Select tool', /<button class="tool" data-tool="select"/.test(html));
 check('main.js names it, so the HUD can say what is active', /select: 'Select'/.test(js));
-check('and S selects it', /case 's': setTool\('select'\); break;/.test(js));
+check(
+  'and S selects it — whole models, or single faces with Shift',
+  /case 's':\s*\n\s*\/\/[^\n]*\n\s*setTool\('select'\);\s*\n\s*setSelectScope\(e\.shiftKey \? 'faces' : 'models'\);/.test(js),
+);
 check(
   'its options panel exists and is shown for that tool',
   declared.has('selectOptions') && /el\('selectOptions'\)\.classList\.toggle\('on', tool === 'select'\)/.test(js),
 );
+// The scope used to be a menu inside the panel, and a picker nobody finds is a picker nobody
+// uses: the two halves of the tool are buttons in the tool row, one per scope.
 check(
-  'the pick can be a whole model or a single face, and the menu says so',
-  declared.has('selectScope') && /value="models" selected/.test(html) && /value="faces"/.test(html) &&
-    /setSelectScope\(scope\)/.test(js) && /el\('selectScope'\)\.addEventListener\('change', \(e\) => setSelectScope\(e\.target\.value\)\)/.test(js),
+  'the two halves of the tool are two buttons in the tool row, not a menu to find',
+  /<button class="tool" data-tool="select" data-scope="models"[^>]*>Select models<\/button>/.test(html) &&
+    /<button class="tool" data-tool="select" data-scope="faces"[^>]*>Select faces<\/button>/.test(html) &&
+    !/id="selectScope"/.test(html),
+);
+check(
+  'and the pressed one sets the scope',
+  /if \(btn\.dataset\.scope\) setSelectScope\(btn\.dataset\.scope\);/.test(js) &&
+    /function setSelectScope\(scope\)[\s\S]{0,200}?cleanup\.scope = scope === 'faces' \? 'faces' : 'models';/.test(js),
+);
+check(
+  'only the half that is in hand is lit up',
+  /function syncToolButtons\(\)[\s\S]{0,400}?const scope = b\.dataset\.scope;[\s\S]{0,200}?b\.dataset\.tool === state\.tool && \(!scope \|\| scope === cleanup\.scope\)/.test(js),
+);
+check(
+  'the eyedropper says it picks paint, so it is not mistaken for the face picker',
+  /Eyedropper: make the feature painted under the cursor/.test(html),
 );
 check(
   'select all, select none and invert are all wired',
@@ -548,11 +567,32 @@ check(
   /async function restoreRemovedFaces\(\)/.test(js) && /cleanup\.removed\.fill\(0\);/.test(js) &&
     /el\('restoreFacesBtn'\)\.addEventListener\('click', \(\) => void restoreRemovedFaces\(\)\)/.test(js),
 );
+// The bug this pins: a pick drawn as edges alone is invisible. Three hairlines lying on the
+// surface they trace z-fight with the triangle they belong to, so a single picked face showed
+// nothing at all and the tool looked dead. A pick has to be a filled, offset tint.
 check(
-  'the picked faces are outlined in yellow and the hovered one in white',
-  /function updateSelectionOutline\(\)/.test(js) && /drawOutline\(cleanup\.outline, geometry, 0xffd24d, -1\)/.test(js) &&
-    /drawOutline\(cleanup\.hover, buildFaceOutline\(under\), 0xffffff, 3\)/.test(js) &&
-    /const OUTLINE_FACE_LIMIT = 60000;/.test(js),
+  'the pick is drawn as a filled tint as well as edges, not as hairlines on the surface',
+  /function updatePickHighlight\(\)/.test(js) &&
+    /cleanup\.outline = drawHighlight\(cleanup\.outline, faces, \{\s*\n\s*color: 0xffd24d,\s*\n\s*fillOpacity: 0\.5,/.test(js) &&
+    /new THREE\.Mesh\(\s*\n\s*data\.fill,\s*\n\s*new THREE\.MeshBasicMaterial\(\{/.test(js) &&
+    /const offset = \{ polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 \};/.test(js) &&
+    /side: THREE\.DoubleSide,\s*\n\s*\.\.\.offset,/.test(js) &&
+    /new THREE\.LineSegments\(\s*\n\s*data\.edges,/.test(js),
+);
+check(
+  'and the hovered face is tinted white the same way',
+  /function updateHoverFace\(faceIndex\)/.test(js) &&
+    /cleanup\.hover = drawHighlight\(cleanup\.hover, under, \{\s*\n\s*color: 0xffffff,\s*\n\s*fillOpacity: 0\.35,/.test(js),
+);
+check(
+  'a pick too big to draw says so in the panel instead of silently not drawing',
+  /const HIGHLIGHT_FACE_LIMIT = 60000;/.test(js) && /too many to tint in the viewport/.test(js) &&
+    /export function highlightArrays\(positions, faceMask, \{ limit = 60000 \} = \{\}\)/.test(selectSrc),
+);
+check(
+  'a one-model file does not tint the whole model on hover — there is nothing to choose there',
+  /const whole =\s*\n\s*cleanup\.scope === 'models' && shells && shells\.shellCount > 1 \? shells\.faceShell\[faceIndex\] : undefined;/.test(js) &&
+    /This file holds one model, so a click here picks the whole file/.test(js),
 );
 check(
   'select.js keeps the rules the cleanup needs, and exports them',

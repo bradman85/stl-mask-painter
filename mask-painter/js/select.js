@@ -201,6 +201,47 @@ export function filterSoup({ positions, normals = null, ids = null }, keepFace) 
   return { positions: outPositions, normals: outNormals, ids: outIds, cornerMap, faceMap, faces: kept };
 }
 
+/**
+ * The triangles of a `0/1` face mask, plus their boundary: what a pick is drawn with.
+ *
+ * The fill is the point of this function. Edges alone were the first attempt at showing a pick and
+ * they were invisible — three hairlines lying exactly on the surface they trace z-fight with the
+ * triangle they belong to, so a single picked face on a big model showed nothing at all and the
+ * tool looked broken. Filling the triangles is what makes a pick visible from across the room; the
+ * boundary only says where the picked faces stop, which is what matters once a pick is a region.
+ *
+ * Returns `null` for a mask that picks nothing, and for one above `limit`: a highlight that would
+ * be tens of thousands of triangles is left to the count in the panel rather than drawn.
+ */
+export function highlightArrays(positions, faceMask, { limit = 60000 } = {}) {
+  const faces = faceMask.length;
+  let picked = 0;
+  for (let t = 0; t < faces; t += 1) if (faceMask[t]) picked += 1;
+  if (!picked || picked > limit) return null;
+  const fill = new Float32Array(picked * 9);
+  const edges = new Float32Array(picked * 18);
+  let f = 0;
+  let e = 0;
+  for (let t = 0; t < faces; t += 1) {
+    if (!faceMask[t]) continue;
+    const base = t * 9;
+    for (let k = 0; k < 9; k += 1) fill[f + k] = positions[base + k];
+    f += 9;
+    for (let k = 0; k < 3; k += 1) {
+      const a = base + k * 3;
+      const b = base + ((k + 1) % 3) * 3;
+      edges[e] = positions[a];
+      edges[e + 1] = positions[a + 1];
+      edges[e + 2] = positions[a + 2];
+      edges[e + 3] = positions[b];
+      edges[e + 4] = positions[b + 1];
+      edges[e + 5] = positions[b + 2];
+      e += 6;
+    }
+  }
+  return { fill, edges, faces: picked };
+}
+
 /** The corner map of `filterSoup` run backwards: old corner -> new corner, or -1 if it is gone. */
 export function inverseCornerMap(cornerMap) {
   let maxOld = -1;
