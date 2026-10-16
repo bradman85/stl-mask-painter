@@ -273,6 +273,43 @@ h2 .help:hover { background: var(--accent); border-color: var(--accent); color: 
 }
 .chip .swatch { width: 11px; height: 11px; border-radius: 3px; border: 1px solid rgba(255, 255, 255, .25); }
 
+/* The visibility chips sit opposite the tool chips, and unlike the readouts beside them they are
+   pressed: the `hud` container is click-through, so these opt back in. The state is reported twice
+   — a dot and the word after the label — both switched by `data-state`, which main.js writes from
+   the layer the chip stands for rather than from the click. */
+.hud-view {
+  top: 12px;
+  right: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  pointer-events: auto;
+}
+.view-toggle {
+  font: inherit;
+  font-size: 12px;
+  color: var(--dim);
+  cursor: pointer;
+}
+.view-toggle .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #59606b;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .14);
+}
+.view-toggle::after {
+  content: attr(data-state);
+  margin-left: 5px;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.view-toggle[data-state="on"] { color: var(--text); border-color: rgba(126, 231, 135, .45); }
+.view-toggle[data-state="on"] .dot { background: #7ee787; box-shadow: inset 0 0 0 1px rgba(126, 231, 135, .6); }
+.view-toggle[data-state="on"]::after { color: #7ee787; }
+.view-toggle:not(:disabled):hover { border-color: var(--accent); }
+.view-toggle:disabled { opacity: .55; cursor: default; }
+
 .statusbar {
   position: absolute;
   left: 0; right: 0; bottom: 0;

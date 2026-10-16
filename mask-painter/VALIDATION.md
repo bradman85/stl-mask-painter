@@ -60,7 +60,8 @@ this document is about proving it works.
 | [The bed](help.html#cleanup-bed) | P13 |
 | [Windows](help.html#windows) | M5–M6 |
 | [The window list](help.html#windows-list) | M4 |
-| [Tint & view](help.html#tint) | M1–M3 |
+| [Tint & view](help.html#tint) | M1–M3, M7 |
+| [The viewport chips](help.html#view-chips) | M7 |
 | [Stencil (STL)](help.html#stencil) | S1–S13, P11, M6 |
 | [Model & view](help.html#view) | V1–V5, P10 |
 | [Export / import](help.html#export) | X1–X11 |
@@ -548,6 +549,31 @@ were selected.
 **Guide** [Windows](help.html#windows) · [Stencil](help.html#stencil)
 **Automated** `test/stencil.test.mjs` — the window loops of every case, and `test/app-path.test.mjs`
 for the hand-built ones.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M7 · The viewport visibility chips
+
+**Steps**
+1. Load the bundled model, select a panel and press **Build stencil**.
+2. Press the **Selection** chip in the top-right of the viewport, then press it again.
+3. Press the **Model** chip, then the **Stencil** chip.
+4. Press **Stencil** again to put the shell back, then tick and untick the panel's **Preview**,
+   **Show base model** and **Show the selection tint** boxes one at a time.
+5. Press **Discard stencil**, then load a second model.
+
+**Expected** Three chips stand in the corner of the viewport, each reading **on** or **off** with a
+dot to match. **Stencil** is greyed out until a build has succeeded, then reads **on**.
+**Selection** off takes the amber tint away — the shell's windows then show the model's own shading
+— and the selection, the stats, the build and both exports are unchanged; pressing it again brings
+the tint back. **Model** off leaves the shell and the tint exactly as they were. **Stencil** off
+hides the shell *and* turns the model back on, so the viewport is never empty, and the status line
+says why; the shell chip and the panel's **Preview**, like every chip and its checkbox, move
+together in both directions. **Discard stencil** and loading another model turn the model back on
+for the same reason. Nothing here changes the selection or an export.
+**Guide** [The viewport chips](help.html#view-chips) · [Tint & view](help.html#tint) · [Stencil](help.html#stencil)
+**Automated** `test/ui-wiring.test.mjs` — a chip per layer, both controls through the same
+`setViewLayer()`, the state drawn from the layers rather than from the press, and the shell-off
+coupling applied at the chip, at **Discard stencil** and at a model load.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1222,7 +1248,7 @@ which is the order the panels are cut in).
 
 **Expected** Nine suites pass: `stencil.test.mjs` (137 checks), `app-path.test.mjs`,
 `selection.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs`, `boxselect.test.mjs`,
-`select.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (224 checks).
+`select.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (229 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1268,7 +1294,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 64 |
+| Items run | ___ of 65 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |

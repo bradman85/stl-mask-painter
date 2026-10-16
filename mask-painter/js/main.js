@@ -193,6 +193,9 @@ window.maskPainter = {
   openGuide,
   stencilOutOfDate,
   rebuildStencil,
+  setViewLayer,
+  viewState,
+  updateViewState,
   partsIo: { buildParts, partSoupVertices },
   stencilIo: { buildTopology, buildStencil, validateSolid },
   get stencil() {
@@ -692,6 +695,132 @@ function setTool(tool) {
   updateHud();
 }
 
+// ------------------------------------------- the viewport's visibility chips
+//
+// A built shell sits over the model, so three layers can hide one another: the shell, the model
+// under it, and the amber tint of the selected faces. The three chips in the top-right of the
+// viewport report each layer's state and switch it; the panel's own checkboxes (`Preview`,
+// `Show base model`, `Show the selection tint`) are the same three switches, so there is one rule
+// and two places to reach it — a chip click updates its checkbox, and a checkbox change updates
+// its chip.
+//
+// The one rule that couples them: **the shell going off puts the model back on.** With the shell
+// hidden and the model hidden there would be nothing on screen at all, which reads as a broken
+// viewport rather than a hidden layer — and turning the shell off is exactly what you do to look
+// at the model underneath it. Nothing else is forced: the face tint keeps whatever the reader set,
+// so a window can be judged with the model showing through it, with the amber selection showing
+// through it, and with the shell itself out of the way.
+const VIEW_CHIPS = [
+  { id: 'viewStencilBtn', layer: 'stencil' },
+  { id: 'viewModelBtn', layer: 'model' },
+  { id: 'viewHighlightBtn', layer: 'highlight' },
+];
+
+/** Which of the three viewport layers are showing right now. */
+function viewState() {
+  return {
+    stencil: !!stencil.mesh && stencil.mesh.visible,
+    model: el('showBase').checked,
+    highlight: el('showOverlay').checked,
+  };
+}
+
+/** The model comes back when the shell goes: the only coupling the three switches have. */
+function showModelIfHidden() {
+  if (el('showBase').checked) return false;
+  el('showBase').checked = true;
+  viewer.setBaseVisible(true);
+  return true;
+}
+
+/** What a chip's tooltip says about the layer it stands for. */
+function viewChipTitle(layer, on, built) {
+  if (layer === 'stencil') {
+    if (!built) return 'No stencil built yet — the shell appears here once “Build stencil” has run.';
+    return on
+      ? 'The built shell is on screen. Click to hide it — the model comes back on so the viewport is never empty.'
+      : 'The built shell is hidden. Click to show it again.';
+  }
+  if (layer === 'model') {
+    return on
+      ? 'The model under the shell is showing. Click to hide it — the shell and the selection tint keep their own switches.'
+      : 'The model is hidden. Click to show it again.';
+  }
+  return on
+    ? "The selected faces are tinted amber. Click to look through the stencil's windows at the model instead."
+    : 'The tint is hidden — the selection itself is untouched. Click to show it again.';
+}
+
+/**
+ * Draws the three chips from the layers, so the indicator cannot claim a viewport state the
+ * viewport is not in. The dot and the word come from a single `data-state`, and nothing but this
+ * function writes it.
+ */
+function updateViewState() {
+  const s = viewState();
+  const built = !!stencil.mesh;
+  for (const chip of VIEW_CHIPS) {
+    const btn = el(chip.id);
+    if (!btn) continue;
+    const on = !!s[chip.layer];
+    btn.dataset.state = on ? 'on' : 'off';
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btn.classList.toggle('on', on);
+    // Only the shell can be absent: there is nothing to toggle until one has been built.
+    btn.disabled = chip.layer === 'stencil' && !built;
+    btn.title = viewChipTitle(chip.layer, on, built);
+  }
+}
+
+/** The status line a chip (or the matching checkbox) leaves behind. */
+function viewLayerNote(layer, on, forcedModel = false) {
+  if (layer === 'stencil') {
+    if (on) return 'Stencil shown — the built shell is back in the viewport.';
+    return (
+      'Stencil hidden — the selection is untouched, and “Stencil” brings the shell back. ' +
+      (forcedModel
+        ? 'The model was turned back on so the viewport is not empty; the selection tint keeps its own switch.'
+        : 'The selection tint keeps its own switch.')
+    );
+  }
+  if (layer === 'model') {
+    return on
+      ? 'Model shown.'
+      : 'Model hidden — the built shell and the selection tint are unaffected. Turning the stencil off turns the model back on.';
+  }
+  return on
+    ? 'Selection tint shown — the selected faces are amber again.'
+    : "Selection tint hidden — the stencil's windows now show the model rather than amber. The selection itself is untouched.";
+}
+
+/**
+ * Shows or hides one layer and reports it, applying the coupling rule above.
+ *
+ * The layer is the source of truth, never the control: the panel's checkbox and the chip are both
+ * put back in step by `updateViewState()`, so the two can never disagree about what is on screen.
+ */
+function setViewLayer(layer, on, { announce = true } = {}) {
+  let forcedModel = false;
+  if (layer === 'model') {
+    el('showBase').checked = on;
+    viewer.setBaseVisible(on);
+  } else if (layer === 'highlight') {
+    el('showOverlay').checked = on;
+    viewer.setOverlayVisible(on);
+  } else if (layer === 'stencil') {
+    if (!on) forcedModel = showModelIfHidden();
+    // The `Preview` checkbox is the same switch: the chips write it too, so the next build shows
+    // the shell exactly when the chip says it should.
+    el('stencilPreview').checked = on;
+    if (stencil.mesh) stencil.mesh.visible = on;
+  } else {
+    return;
+  }
+  updateViewState();
+  if (!announce && !forcedModel) return;
+  setStatus(viewLayerNote(layer, on, forcedModel));
+}
+
 function applyDisplayState() {
   viewer.setOverlayOpacity(Number(el('overlayOpacity').value));
   viewer.setOverlayVisible(el('showOverlay').checked);
@@ -702,6 +831,7 @@ function applyDisplayState() {
     mask.setBackdrop(el('ghostShell').checked);
     mask.flush();
   }
+  updateViewState();
 }
 
 function setNavigate(on) {
@@ -1213,7 +1343,11 @@ function resetParts() {
 function resetStencil() {
   hidePartCandidates();
   resetParts();
+  // A shell that is being taken away takes the view with it: if the model was hidden to look at
+  // the shell, it comes back on, exactly as if the stencil chip had been switched off.
+  const hadShell = !!stencil.mesh;
   clearStencilPreview();
+  if (hadShell) showModelIfHidden();
   stencil.result = null;
   stencil.topology = null;
   stencil.topologyFor = '';
@@ -1225,6 +1359,7 @@ function resetStencil() {
   el('stencilStandoff').value = String(defaults.standoff);
   el('stencilOverhang').value = String(defaults.overhang);
   updateStencilStats();
+  updateViewState();
 }
 
 /**
@@ -1615,6 +1750,7 @@ function showStencilPreview(res) {
   stencil.mesh.renderOrder = -1;
   stencil.mesh.visible = el('stencilPreview').checked;
   viewer.modelGroup.add(stencil.mesh);
+  updateViewState();
 }
 
 /**
@@ -1636,6 +1772,10 @@ function discardStencil() {
   stencil.result = null;
   el('stencilExportBtn').disabled = true;
   el('stencilClearBtn').disabled = true;
+  // The shell is gone, so the coupling rule applies here too: whatever was hidden to look at the
+  // shell is put back, or discarding the last thing on screen would leave an empty viewport.
+  showModelIfHidden();
+  updateViewState();
   updateStencilStats();
   setStatus(
     `Stencil discarded${triangles ? ` (${fmt(triangles)} triangles)` : ''}. The selection is untouched — ` +
@@ -1700,6 +1840,7 @@ async function rebuildStencil() {
     clearStencilPreview();
     el('stencilExportBtn').disabled = true;
     el('stencilClearBtn').disabled = true;
+    updateViewState();
     el('stencilStats').textContent = res.warnings.join('\n');
     return res;
   }
@@ -2241,14 +2382,16 @@ el('overlayOpacity').addEventListener('input', (e) => {
   viewer.setOverlayOpacity(Number(e.target.value));
   el('overlayOpacityVal').textContent = `${Math.round(Number(e.target.value) * 100)}%`;
 });
-el('showOverlay').addEventListener('change', (e) => viewer.setOverlayVisible(e.target.checked));
+el('showOverlay').addEventListener('change', (e) =>
+  setViewLayer('highlight', e.target.checked, { announce: false }),
+);
 el('ghostShell').addEventListener('change', (e) => {
   if (mask) {
     mask.setBackdrop(e.target.checked);
     mask.flush();
   }
 });
-el('showBase').addEventListener('change', (e) => viewer.setBaseVisible(e.target.checked));
+el('showBase').addEventListener('change', (e) => setViewLayer('model', e.target.checked, { announce: false }));
 el('showGrid').addEventListener('change', (e) => viewer.setGridVisible(e.target.checked));
 el('wireframe').addEventListener('change', (e) => viewer.setWireframe(e.target.checked));
 
@@ -2287,9 +2430,17 @@ el('centreOnGrid').addEventListener('change', onCentreToggle);
 el('stencilBuildBtn').addEventListener('click', buildStencilClicked);
 el('stencilClearBtn').addEventListener('click', discardStencil);
 el('stencilExportBtn').addEventListener('click', exportStencilSTL);
-el('stencilPreview').addEventListener('change', (e) => {
-  if (stencil.mesh) stencil.mesh.visible = e.target.checked;
-});
+el('stencilPreview').addEventListener('change', (e) =>
+  setViewLayer('stencil', e.target.checked, { announce: false }),
+);
+// The chips by the viewport: each one flips the layer it reports, through the same function the
+// panel's checkboxes use, so the coupling rule cannot be bypassed by preferring one control.
+for (const chip of VIEW_CHIPS) {
+  el(chip.id).addEventListener('click', () => {
+    const current = viewState();
+    setViewLayer(chip.layer, !current[chip.layer]);
+  });
+}
 
 el('exportMaskBtn').addEventListener('click', exportMaskJSON);
 el('exportPlyBtn').addEventListener('click', exportPLY);

@@ -134,6 +134,12 @@
 
     <section>
       <h2>Tint &amp; view<a class="help" href="help.html#tint" target="_blank" rel="noopener" title="Guide: Tint and view">?</a></h2>
+      <p class="hint">
+        The three chips in the top-right corner of the viewport are the switches for the layers
+        that can hide one another — the built <b>Stencil</b>, the <b>Model</b> under it and the
+        amber <b>Selection</b> tint — and they report each layer's state. The checkboxes below
+        are the same switches.
+      </p>
       <label class="slider">
         <span>Selection tint <b id="overlayOpacityVal">100%</b></span>
         <input type="range" id="overlayOpacity" min="0" max="1" step="0.02" value="1">
@@ -244,6 +250,23 @@
     <div class="hud hud-top">
       <span class="chip" id="hudTool">Select faces</span>
       <span class="chip" id="hudSelection">nothing selected</span>
+    </div>
+
+    <!--
+      The three layers that can hide one another once a shell is built: the stencil, the model
+      under it and the amber tint of the selected faces. Each chip is both the switch and the
+      state indicator — the dot and the word after the label are set from the layer itself.
+    -->
+    <div class="hud hud-view" id="viewState" role="group" aria-label="Viewport visibility state">
+      <button class="chip view-toggle" id="viewStencilBtn" type="button" data-layer="stencil"
+              data-state="off" aria-pressed="false" disabled
+              title="Show or hide the built stencil shell"><span class="dot" aria-hidden="true"></span>Stencil</button>
+      <button class="chip view-toggle" id="viewModelBtn" type="button" data-layer="model"
+              data-state="on" aria-pressed="true"
+              title="Show or hide the model under the stencil"><span class="dot" aria-hidden="true"></span>Model</button>
+      <button class="chip view-toggle" id="viewHighlightBtn" type="button" data-layer="highlight"
+              data-state="on" aria-pressed="true"
+              title="Show or hide the amber tint of the selected faces"><span class="dot" aria-hidden="true"></span>Selection</button>
     </div>
 
     <div class="loading" id="loading" hidden>

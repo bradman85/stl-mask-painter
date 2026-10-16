@@ -358,6 +358,31 @@ Numbers are in model units, which are millimetres for a model exported at final 
 window edge itself is deliberately thinner (`edgeLip`, ~0.4) than the rest of the sheet, so
 a brush stroke meets a thin lip rather than a wall.
 
+### Looking at the shell: the three viewport toggles
+
+Once a shell is built, three layers are stacked over the model and each can hide the next one: the
+shell itself, the model underneath it, and the amber tint of the selected faces. Three chips in the
+top-right corner of the viewport switch them and report them — a chip reads **on** while its layer
+is showing and **off** while it is hidden — and two of them are the panel's own checkboxes under
+shorter names (**Stencil** is **Preview**, **Model** is **Show base model**, **Selection** is
+**Show the selection tint**). Either control moves the other, because both go through `setViewLayer()`
+in `js/main.js`; nothing writes a layer's `visible` behind its back, and `updateViewState()` redraws
+the chips from the layers rather than from the click, so a chip cannot report a state the viewport is
+not in. The **Stencil** chip is disabled until a build has succeeded — there is no shell to show
+before that.
+
+The pair exists for the build-and-rebuild loop: select, build, keep selecting, build again. With the
+tint hidden you look *through* the shell's windows at the model's own shading instead of a flat
+amber fill; with the model hidden you inspect the printable part on its own; and with the shell
+hidden you are back to plain selecting with the selection still tinted.
+
+One coupling rule is enforced, and only one: **the shell going off puts the model back on.** A shell
+with the model hidden under it is the inspection view; a hidden shell with a hidden model is an empty
+viewport, which reads as a broken app rather than a hidden layer. So **Stencil** off — and
+**Discard stencil**, and loading another model — turns the model back on. The face tint is never
+forced: whether it is on or off is the reader's choice, and the next press of the shell chip leaves
+it exactly as it was.
+
 ### Sitting the exported part on the bed
 
 A slicer reads **Z = 0 as the plate**, and an STL keeps the coordinates its exporter used — so a

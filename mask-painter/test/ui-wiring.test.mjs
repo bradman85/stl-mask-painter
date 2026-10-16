@@ -876,5 +876,83 @@ check(
   /all of them come back as the[\s\S]{0,40}?one selection/.test(html),
 );
 
+// ------------------------------------------------- the viewport visibility chips
+//
+// Once a shell is built, three layers can hide one another: the shell, the model under it, and the
+// amber tint of the selected faces. What can go wrong silently is the *join* rather than any one
+// switch: a chip that reports a state the viewport is not in, a second path that sets a layer
+// without the chips hearing about it, or the one coupling rule (the shell going off must put the
+// model back on, or the viewport is empty) living in one control and not the other.
+const viewChips = [
+  ['viewStencilBtn', 'stencil'],
+  ['viewModelBtn', 'model'],
+  ['viewHighlightBtn', 'highlight'],
+];
+check(
+  'the viewport carries a chip per layer, and main.js knows the same three',
+  viewChips.every(([id]) => new RegExp(`id="${id}"`).test(html)) &&
+    viewChips.every(([, layer]) => new RegExp(`layer: '${layer}'`).test(js)) &&
+    /const VIEW_CHIPS = \[\s*\n\s*\{ id: 'viewStencilBtn', layer: 'stencil' \},/.test(js),
+);
+check(
+  'each chip is both the switch and the state indicator, and the state comes from the layer',
+  /function viewState\(\) \{[\s\S]{0,200}?stencil: !!stencil\.mesh && stencil\.mesh\.visible,[\s\S]{0,120}?model: el\('showBase'\)\.checked,[\s\S]{0,120}?highlight: el\('showOverlay'\)\.checked,/.test(js) &&
+    /function updateViewState\(\) \{[\s\S]{0,400}?btn\.dataset\.state = on \? 'on' : 'off';[\s\S]{0,200}?btn\.setAttribute\('aria-pressed', on \? 'true' : 'false'\);/.test(js) &&
+    /btn\.disabled = chip\.layer === 'stencil' && !built;/.test(js) &&
+    /\.view-toggle::after \{\s*\n\s*content: attr\(data-state\);/.test(fs.readFileSync(path.resolve(here, '../css/style.css'), 'utf8')),
+);
+check(
+  'and the page says what the chips are for, in the panel the switches live in',
+  /id="viewState"[^>]*role="group"/.test(html) &&
+    /the three chips in the top-right corner of the viewport/i.test(html),
+);
+// One switch, two controls: the chips and the panel's own checkboxes both go through
+// `setViewLayer`, so neither can set a layer behind the other's back.
+check(
+  'a chip and the panel checkbox for the same layer run the same code',
+  /function setViewLayer\(layer, on, \{ announce = true \} = \{\}\)/.test(js) &&
+    /el\('showBase'\)\.addEventListener\('change', \(e\) => setViewLayer\('model', e\.target\.checked, \{ announce: false \}\)\);/.test(js) &&
+    /el\('showOverlay'\)\.addEventListener\('change', \(e\) =>\s*\n\s*setViewLayer\('highlight', e\.target\.checked, \{ announce: false \}\),/.test(js) &&
+    /el\('stencilPreview'\)\.addEventListener\('change', \(e\) =>\s*\n\s*setViewLayer\('stencil', e\.target\.checked, \{ announce: false \}\),/.test(js) &&
+    /for \(const chip of VIEW_CHIPS\) \{\s*\n\s*el\(chip\.id\)\.addEventListener\('click',/.test(js),
+);
+check(
+  'no handler reaches a layer directly, where the chips would never hear about it',
+  !/el\('showBase'\)\.addEventListener\('change', \(e\) => viewer\.setBaseVisible/.test(js) &&
+    !/el\('showOverlay'\)\.addEventListener\('change', \(e\) => viewer\.setOverlayVisible/.test(js) &&
+    !/el\('stencilPreview'\)\.addEventListener\('[a-z]+', \(e\) => \{\s*\n\s*if \(stencil\.mesh\) stencil\.mesh\.visible = e\.target\.checked;/.test(js),
+);
+// The rule the request is about: the shell off means the model on. It is applied wherever the
+// shell goes away — the chip (and the `Preview` checkbox, which is the same switch), a discard and
+// a new model — so there is no way to end up looking at an empty viewport.
+check(
+  'hiding the stencil puts the model back on, so the viewport is never empty',
+  /function showModelIfHidden\(\) \{\s*\n\s*if \(el\('showBase'\)\.checked\) return false;\s*\n\s*el\('showBase'\)\.checked = true;\s*\n\s*viewer\.setBaseVisible\(true\);\s*\n\s*return true;/.test(js) &&
+    /if \(!on\) forcedModel = showModelIfHidden\(\);/.test(js),
+);
+check(
+  'and the three places the shell disappears apply it too: discard and a new model',
+  /function discardStencil\(\)[\s\S]{0,800}?showModelIfHidden\(\);/.test(js) &&
+    /function resetStencil\(\)[\s\S]{0,400}?const hadShell = !!stencil\.mesh;[\s\S]{0,200}?if \(hadShell\) showModelIfHidden\(\);/.test(js),
+);
+check(
+  'the tint is never forced: the coupling is the model alone',
+  !/showOverlay'\)\.checked = true;/.test(js.slice(js.indexOf('function setViewLayer('), js.indexOf('function applyDisplayState('))) &&
+    /selection tint keeps its own switch/.test(js),
+);
+// The chips are only as honest as their refresh points. Every path that builds, drops or refuses a
+// shell has to redraw them, or the chip describes the last build instead of this one.
+check(
+  'every path that changes whether a shell exists redraws the chips',
+  (js.match(/updateViewState\(\);/g) || []).length >= 5 &&
+    /stencil\.mesh\.visible = el\('stencilPreview'\)\.checked;\s*\n\s*viewer\.modelGroup\.add\(stencil\.mesh\);\s*\n\s*updateViewState\(\);/.test(js) &&
+    /function resetStencil\(\)[\s\S]{0,900}?updateViewState\(\);/.test(js) &&
+    /function applyDisplayState\(\)[\s\S]{0,400}?updateViewState\(\);/.test(js),
+);
+check(
+  'and the chips are reachable from the console handle, like every other scripted check',
+  /\n\s*setViewLayer,\n\s*viewState,\n\s*updateViewState,/.test(js),
+);
+
 console.log(`\n${missing.length + missingExports.length + (failures ? 1 : 0) === 0 ? 'all wiring checks passed' : `${failures} failure(s)`}`);
 process.exit(failures ? 1 : 0);

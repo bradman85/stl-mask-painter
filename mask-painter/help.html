@@ -140,6 +140,7 @@
     <a href="#windows">Windows</a>
     <a class="sub" href="#windows-list">The window list</a>
     <a href="#tint">Tint &amp; view</a>
+    <a class="sub" href="#view-chips">The viewport chips</a>
     <a href="#stencil">Stencil (STL)</a>
     <a href="#view">Model &amp; view</a>
     <a href="#export">Export / import</a>
@@ -800,6 +801,32 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
   </table>
+
+  <h3 id="view-chips">The viewport chips <a class="anchor" href="#view-chips">#</a></h3>
+  <p>
+    Three chips sit in the top-right corner of the viewport, facing the tool readout. Once a shell
+    has been built, three layers are stacked over the model and each can hide the next one — the
+    printed <b>Stencil</b>, the <b>Model</b> under it, and the amber <b>Selection</b> tint over the
+    selected faces. A chip is both the switch and the report: it reads <b>on</b> while its layer is
+    showing and <b>off</b> while it is hidden, with the dot beside the label saying the same thing
+    at a glance. <b>Stencil</b> is greyed out until a build has succeeded — there is no shell before
+    that, so there is nothing for it to show.
+  </p>
+  <p>
+    Two of the chips are the checkboxes above under shorter names, and either one moves the other:
+    <b>Stencil</b> is <b>Preview</b>, <b>Model</b> is <b>Show base model</b>, and <b>Selection</b> is
+    <b>Show the selection tint</b>. Hiding a layer is view-only: the selection, the counts, the
+    build and both exports are exactly what they were.
+  </p>
+  <div class="note">
+    <strong>Hiding the shell turns the model back on.</strong> A shell with the model hidden under
+    it is how you inspect the part you are about to print; a hidden shell with a hidden model is an
+    empty viewport, which reads as a broken app rather than a hidden layer. So switching
+    <b>Stencil</b> off puts <b>Model</b> back on (and so does <b>Discard stencil</b>, and loading
+    another model). <b>Selection</b> is never forced either way: tint <em>off</em> lets you look
+    through the shell's windows at the model's own shading, tint <em>on</em> shows which faces the
+    window is exposing, and whichever you chose is what the next chip press leaves alone.
+  </div>
 </section>
 
 <section class="doc" id="stencil">
@@ -835,7 +862,10 @@ Panels within 3.2 units of the click; click one to select it instead:
         Keeps a copy of the built shell in the viewport, semi-transparent and double-sided, so
         you can orbit around it and see the window. It is drawn <em>under</em> the selection tint,
         so the selected faces keep their tint and you can keep selecting and unselecting with
-        the preview on. With the preview off you are looking at the mask alone.
+        the preview on. With the preview off you are looking at the model alone — and the model is
+        put back on with it, so the viewport is never left empty (see
+        <a href="#view-chips">The viewport chips</a>). The <b>Stencil</b> chip beside the viewport
+        is this same switch.
       </td>
     </tr>
     <tr>

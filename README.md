@@ -11,15 +11,21 @@ There is **one selection** and nothing to paint in the app: no brush, no palette
 Every tool writes the same set of triangles, so a panel taken with **Part** and a few triangles
 picked with **Select faces** build one stencil together.
 
+Building and rebuilding is a loop — select a window, build the shell, keep selecting, build again —
+so three chips beside the viewport switch what you are looking at and say so: the printed
+**Stencil**, the **Model** under it, and the amber **Selection** tint. Hide the tint to look through
+the shell's windows at the model, hide the model to inspect the part on its own; hiding the shell
+puts the model back on, rather than leaving the viewport empty.
+
 ## ▶︎ Run it
 
 ### [Open the app](https://bradman85.github.io/stl-mask-painter/)
 
-<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded and one panel selected with the Part tool, tinted amber" width="900">
+<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded, one panel taken with the Part tool, the stencil built from it drawn over the model in amber, and the three viewport chips in the corner reading on" width="900">
 
-The app with the bundled model loaded and one panel taken with **Part** — seams cut at 5°, the
-selection tinted amber, and the status bar naming the panel it took. It is a screenshot of this
-code, taken in a browser rather than drawn.
+The app with the bundled model loaded: seams cut at 5°, one panel taken with **Part**, and the
+stencil built from it — 96,220 triangles, one piece, one window — with the three viewport chips in
+the corner reading **on**. It is a screenshot of this code, taken in a browser rather than drawn.
 
 That link is this repository, served by **GitHub Pages** — the app is a static site with no build
 step and no dependencies to install, so it runs in any browser, on any device, and every push to
