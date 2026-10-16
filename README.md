@@ -1,15 +1,21 @@
 # STL Mask Painter
 
-Paint named features — an eye, a mouth, a marking — onto the surface of an STL model, then export
-that paint as a **printable paint stencil**: a one-piece shell that conforms to the model, so only
-the painted area is exposed to the brush. The paint also exports as JSON (re-importable, so a mask
-session can be grown later) and as a per-vertex-coloured PLY of the painted shell.
+Select the part of an STL model you want to paint — a whole panel bounded by its seams with one
+click, a rectangle's worth of triangles, or a single triangle — then build that selection into a
+**printable paint stencil**: a one-piece shell that conforms to the model, so you hold it on the
+figure and only the selected area (an eye, a mouth, a marking) is exposed to the brush. The
+selection also saves as JSON (openable again, so a session can be carried on later) and exports as
+a PLY of the selected shell.
+
+There is **one selection** and nothing to paint in the app: no brush, no palette, no colours to set.
+Every tool writes the same set of triangles, so a panel taken with **Part** and a few triangles
+picked with **Select faces** build one stencil together.
 
 ## ▶︎ Run it
 
 ### [Open the app](https://bradman85.github.io/stl-mask-painter/)
 
-<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded and the eyes painted" width="900">
+<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded and the eyes selected" width="900">
 
 That link is this repository, served by **GitHub Pages** — the app is a static site with no build
 step and no dependencies to install, so it runs in any browser, on any device, and every push to
@@ -49,6 +55,10 @@ only thing that wants `npm ci` (they use the vendored copies in `mask-painter/ve
 
 ## Other files in this repository
 
-The Pages site is served from this branch's root, so the site's own files (`index.html`,
-`.nojekyll`, `mask-painter/`, `Sprunki Mercuy.stl`) sit beside unrelated CAD and preview material —
-OpenSCAD sources, pinhole-disc STLs and rendered previews — which the site ignores.
+The Pages site is served from this branch's root: `index.html` sends a bare URL to the app,
+`.nojekyll` keeps GitHub from running Jekyll over the files, `mask-painter/` is the app itself, and
+`Sprunki Mercuy.stl` is the model the app's **Load example model** button fetches.
+
+The working copy the app is developed in also carries unrelated CAD and preview material — OpenSCAD
+sources, pinhole-disc STLs and rendered previews. None of it is part of the site: it is not
+published here, and the app neither reads nor needs it.

@@ -61,7 +61,7 @@ this document is about proving it works.
 | [Windows](help.html#windows) | M5–M6 |
 | [The window list](help.html#windows-list) | M4 |
 | [Tint & view](help.html#tint) | M1–M3 |
-| [Stencil](help.html#stencil) | S1–S13, P11, M6 |
+| [Stencil (STL)](help.html#stencil) | S1–S13, P11, M6 |
 | [Model & view](help.html#view) | V1–V5, P10 |
 | [Export / import](help.html#export) | X1–X11 |
 | [Selection JSON](help.html#mask-json) | X1–X3, X9 |
@@ -84,8 +84,9 @@ this document is about proving it works.
 
 **Expected** Panel and viewport render and no model is loaded, because nothing asks for one: the
 network panel shows **no request for `Sprunki Mercuy.stl`** and the console has no errors. The model
-line reads `no model loaded`; the Mask panel reads `No model loaded.`; the stencil panel reads
-`No stencil built yet.` with **Build stencil** and **Export stencil STL** disabled; the status bar
+line reads `no model loaded`; the Selection panel's stats line reads `Load a model to see how much
+of it is selected.`; the stencil panel reads `No stencil built yet.` with **Export stencil STL**
+disabled and **Build stencil** live (clicking it says `Load a model first.`); the status bar
 says `Ready — nothing loaded yet. Drop an .stl anywhere, use “Open STL…”, or load the bundled
 example with “Load example model”.` The viewport is empty background — the ground grid is the
 model's bed and appears with the first model — so the only way a model ever loads is an action of
@@ -108,9 +109,9 @@ charset=utf-8`).
 messages (`Parsing STL…`, `Preparing mask layer…`, `Building pick acceleration for 422,658
 triangles…`) and then **clears** — see L8 for what that overlay being left up means. The model line
 shows the file name, `422,658 triangles`, `1,267,974 vertices` and the bounding box. A fresh empty
-mask is created — the Mask panel's paint stats read `0 of 1,267,974 vertices painted (0%)`. Load
-takes roughly 0.3 s, almost all of it the pick acceleration structure (BVH). The console has no
-errors.
+selection is created — the stats line reads `0 of 422,658 faces selected (0.0%) · 0 of 1,267,974
+corners inside the window`. Load takes roughly 0.3 s, almost all of it the pick acceleration
+structure (BVH). The console has no errors.
 **Guide** [Top bar](help.html#topbar)
 **Automated** `test/app-path.test.mjs` drives the same parser and `MaskLayer` construction on
 the real file.
@@ -144,12 +145,12 @@ current model is left alone.
 #### L5 · Screenshot
 
 **Steps**
-1. Paint something so the viewport has visible colour.
+1. Select something so the viewport has visible tint.
 2. Turn on the stencil **Preview** and **Show seams** if you want them in the image.
 3. Press **Screenshot**.
 
 **Expected** A PNG downloads named `<model>-mask-view.png`, showing the viewport exactly as
-rendered — paint overlay, preview and seam lines included.
+rendered — selection tint, preview and seam lines included.
 **Guide** [Top bar](help.html#topbar)
 **Automated** not automated — canvas capture.
 **Result** ☐ pass ☐ fail — notes:
@@ -170,13 +171,15 @@ printed number is meant, because every STL that prints well is in millimetres at
 #### L7 · A second model replaces the mask
 
 **Steps**
-1. Load the example model and paint the eyes.
+1. Load the example model and select the eyes (Part at the 5° preset, or Select faces).
 2. Load a different STL (any other file will do).
 
-**Expected** The painting is gone and the stats read 0 painted: the mask is per vertex and only
-means anything for the model it was painted on.
+**Expected** The selection is gone — the stats line reads `0 of <faces> faces selected (0.0%) ·
+0 of <vertices> corners inside the window` and the viewport shows no tint: a selection is face
+indices into one mesh, so it only means anything for the model it was made on.
 **Guide** [Top bar](help.html#topbar)
-**Automated** `test/ui-wiring.test.mjs` (the load path builds a fresh `MaskLayer`).
+**Automated** `test/ui-wiring.test.mjs` — a new model gets a new tint and an empty selection, and the
+panel is told rather than left showing the last model's numbers.
 **Result** ☐ pass ☐ fail — notes:
 
 #### L8 · A load cannot end stuck on the loading overlay
@@ -544,51 +547,52 @@ for the hand-built ones.
 #### S1 · Build the stencil
 
 **Steps**
-1. Paint one eye generously (a brush blob is fine).
+1. Select one eye — Part at the 5° preset, or a few triangles with Select faces.
 2. Press **Build stencil**. Read the result panel.
 
 **Expected** The build succeeds and reports: triangle count, how many pieces, **how many
-windows** (one per separate painted area — paint the eye and the eyebrow as two areas and this
-reads 2), the reach used, the wall thickness range achieved, the standoff, the bounding box,
+windows** (one per separate group of selected faces — take the eye and the eyebrow as two groups
+and this reads 2), the reach used, the wall thickness range achieved, the standoff, the bounding box,
 whether it is watertight, the measured clearance, per-stage timings, and any warnings. First
 build also welds the model (~0.4 s, cached); the build itself takes 0.7–1.5 s with the widening
 option on. Warnings are not decoration — they are the conditions under which the part will not do
 what you expect.
-**Guide** [Paint stencil](help.html#stencil)
-**Automated** `test/stencil.test.mjs` — ten painted cases checked for two-triangles-per-edge,
+**Guide** [Stencil (STL)](help.html#stencil)
+**Automated** `test/stencil.test.mjs` — every case in the suite (a single eye, both eyes, a narrow
+cover, a dot smaller than the inlay, a head cap, a front slab, two far-apart areas, nothing
+selected, everything selected, a standoff sweep) checked for two-triangles-per-edge,
 outward winding, positive volume, an open window, mask material in the ring, one piece or an
 honest warning. `test/app-path.test.mjs` builds with the panel's own defaults.
 **Result** ☐ pass ☐ fail — notes:
 
-#### S2 · Repainting after a build
+#### S2 · Selecting more after a build
 
 **Steps**
 1. Build a stencil.
-2. Paint somewhere else without rebuilding — and then press **Export stencil STL**.
+2. Select somewhere else without rebuilding — and then press **Export stencil STL**.
 
-**Expected** The panel says the mask has been repainted since this was built and points at both
-ways out — build again, or **Discard stencil** — because the app never hands you a silently
-stale part. Repainting does not invalidate the geometry you already have. Pressing **Build
+**Expected** The panel carries `⚠ the selection has changed since this was built — build again to
+match it, or “Discard stencil” to throw this one away.`, because the app never hands you a silently
+stale part. Selecting more does not invalidate the geometry you already have. Pressing **Build
 stencil** again reuses the cached weld, so the rebuild is fast. Exporting, on the other hand,
 never writes a stale part: it builds again first (S9), so the file matches the mask on screen even
 if you skip the manual build.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/app-path.test.mjs` (a second build reuses the cached topology).
 **Result** ☐ pass ☐ fail — notes:
 
-#### S3 · Preview draws under the paint
+#### S3 · Preview draws under the tint
 
 **Steps**
 1. Build a stencil, leave **Preview** on.
-2. Paint over part of the shell and clear another part, keeping the preview on.
+2. Select part of the shell and clear another part, keeping the preview on.
 3. Turn **Preview** off.
 
 **Expected** The shell is semi-transparent and double-sided, and you can orbit around it. It
-draws **under** the paint layer, so painted areas keep their exact colours and stay fully
-visible; with the preview off you are looking at the mask alone.
-**Guide** [Paint stencil](help.html#stencil)
-**Automated** `test/ui-wiring.test.mjs` pins the preview's render order relative to the paint
-layer; `test/painting.test.mjs` pins painted alpha = 1, which is what makes the paint win.
+draws **under** the selection tint, so selected areas keep their colour and stay fully visible;
+with the preview off you are looking at the mask alone.
+**Guide** [Stencil (STL)](help.html#stencil)
+**Automated** `test/ui-wiring.test.mjs` pins the preview's render order relative to the tint layer.
 **Result** ☐ pass ☐ fail — notes:
 
 #### S4 · Reach
@@ -600,8 +604,8 @@ layer; `test/painting.test.mjs` pins painted alpha = 1, which is what makes the 
 surface*. Default is ~11.5% of the model's diagonal (15 mm on the bundled figure). Small reach
 gives a band around the window; large reach wraps the figure. Triangle count and build time both
 grow with it.
-**Guide** [Paint stencil](help.html#stencil)
-**Automated** `test/stencil.test.mjs` (the band is measured from the paint field).
+**Guide** [Stencil (STL)](help.html#stencil)
+**Automated** `test/stencil.test.mjs` (the band is measured from the selection field).
 **Result** ☐ pass ☐ fail — notes:
 
 #### S5 · Wall
@@ -613,7 +617,7 @@ grow with it.
 **Expected** The sheet away from the window is the wall thickness; the window edge is
 deliberately thinner (~0.4 mm, half the wall) so a brush meets a thin lip instead of a wall and
 paint cannot wick under it. The result panel reports the wall range it achieved.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/stencil.test.mjs` — thickness stays inside the expected band for every case.
 **Result** ☐ pass ☐ fail — notes:
 
@@ -629,7 +633,7 @@ vertex to the nearest surface triangle — not just the number you typed. Expect
 median 0.100, min 0.002; 0.2 mm → median 0.200, min 0.003; 0.3 mm → median 0.300, min 0.005.
 The minimum barely improves as you raise the standoff, because creases sharper than the averaged
 vertex normal force the offset back to the surface — a geometric limit, not a setting.
-**Guide** [Paint stencil → Clearance](help.html#stencil)
+**Guide** [Stencil (STL) → Clearance](help.html#stencil)
 **Automated** `test/app-path.test.mjs` cross-checks the reported clearance against an
 independent measurement of every inner vertex; `node test/clearance.mjs 0.1 0.2 0.3` prints the
 distribution for any standoff.
@@ -640,12 +644,12 @@ distribution for any standoff.
 **Steps**
 1. Build at the default **Window inlay** (0.35 mm), then rebuild with 0.
 
-**Expected** Inlay is mask material overlapping the painted side of the boundary, so brush
-strokes cannot creep under the window edge. Raising it makes the window slightly smaller than
-the painted area and the edge more forgiving; 0 puts the window exactly on the painted boundary.
+**Expected** Inlay is mask material overlapping the *selected* side of the boundary, so paint
+cannot creep under the window edge. Raising it makes the window slightly smaller than the
+selection and the edge more forgiving; 0 puts the window exactly on the selected boundary.
 On top of the inlay there is always a small inset, because the distance field is smoothed so the
 cut is not ragged.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/stencil.test.mjs` — the "narrow cover" and "dot smaller than the inlay"
 cases cover both ends.
 **Result** ☐ pass ☐ fail — notes:
@@ -653,7 +657,7 @@ cases cover both ends.
 #### S8 · Widen the reach until the mask is one piece
 
 **Steps**
-1. Paint one big panel with **Part** (about half the figure). Leave **Widen the reach…** on and
+1. Select one big panel with **Part** (about half the figure). Leave **Widen the reach…** on and
    build — note the time and the reported piece count and reach.
 2. Turn it off and build again.
 
@@ -662,7 +666,7 @@ the shell is one piece, or the limit is reached — this is the main reason a bu
 several seconds (up to ~6 builds, 8.8 s on the measured run). With it off you get a band around
 the panel: one pass, far less material, much faster (about 110,676 triangles in 749 ms versus
 644,876). If it still comes out in pieces, the panel says so.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/parts.test.mjs` — a part-sized window builds and the shell covers the band
 around it (2525/2525 probes) with nothing on the far side (14186/14186 bare).
 **Result** ☐ pass ☐ fail — notes:
@@ -672,7 +676,7 @@ around it (2525/2525 probes) with nothing on the far side (14186/14186 bare).
 **Steps**
 1. Before building anything, look at **Export stencil STL**.
 2. Build successfully, press it, and check the downloaded file's size.
-3. Now Shift-click two more panels (or paint another area), leave the build alone, and press
+3. Now Shift-click two more panels (or select another area), leave the build alone, and press
    **Export stencil STL** again. Compare the two files: window count in the result panel, and the
    STL sizes.
 4. Press **Build stencil** and export once more; compare with step 3.
@@ -681,13 +685,14 @@ around it (2525/2525 probes) with nothing on the far side (14186/14186 bare).
 writes a binary STL named `<model>-paint-stencil.stl` whose size is exactly
 `84 + 50 × triangles` bytes.
 The second export must contain **every** window, not just the ones from the last build: the app
-notices the paint has moved on, builds again first (the status bar says so while it works), and
-reports `… N windows in M pieces — rebuilt from the current mask first…`. Its file is therefore
+notices the selection has moved on, builds again first (the status bar says so while it works), and
+reports `… Rebuilt from the current selection first, because the selection had changed since the
+last build.` Its file is therefore
 bigger than the first one and matches what step 4 writes. Before this was fixed the second export
 was a byte-for-byte copy of the first, under a fresh timestamp — the reported bug. If that
 rebuild is rejected, nothing is written and the status bar says why rather than leaving an older
 part to be saved.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/stencil.test.mjs` — byte size equals `84 + 50 × triangles`, and the file
 re-reads into the same watertight, same-volume solid. `test/app-path.test.mjs` rounds the real
 model twice: the second round is its own window in a rebuild (2 → 3 windows, 4.9 MB → 10.6 MB)
@@ -705,8 +710,8 @@ export rebuilds before writing and writes nothing when the rebuild is refused.
 coordinate frame, so it lines up with the figure without scaling, and — with **Sit the exported
 part on the bed** ticked (the default, S13) — its lowest point on **Z 0**, so the slicer puts it on
 the plate instead of leaving it floating. Up axis is *not* baked in — rotate it in the slicer if
-your printer expects Z up. The painted area is a hole, not a thin wall.
-**Guide** [Paint stencil → Stencil STL](help.html#stl)
+your printer expects Z up. The selected area is a hole, not a thin wall.
+**Guide** [Stencil (STL) → Stencil STL](help.html#stl)
 **Automated** `test/stencil.test.mjs` (watertight and consistent winding, re-read from the file);
 `test/app-path.test.mjs` measures the written file's lowest Z;
 **not** automated for slicer behaviour.
@@ -720,7 +725,7 @@ your printer expects Z up. The painted area is a hole, not a thin wall.
 **Expected** It prints the clearance distribution at each standoff, measured against the whole
 model rather than against the mask's own footprint — the reference behind the table in the
 guide.
-**Guide** [Paint stencil → Clearance](help.html#stencil)
+**Guide** [Stencil (STL) → Clearance](help.html#stencil)
 **Automated** this *is* the tool; `test/app-path.test.mjs` checks the same numbers from the app
 path.
 **Result** ☐ pass ☐ fail — notes:
@@ -729,17 +734,17 @@ path.
 
 **Steps**
 1. Build a stencil, then press **Discard stencil**.
-2. Clear the mask with **Clear all** (Mask panel) while a build is in hand, and read the status
+2. Clear the selection with **Select none** (Esc) while a build is in hand, and read the status
    bar.
 
 **Expected** Discarding removes the shell from the viewport, clears the result panel back to
 "No stencil built yet.", disables **Export stencil STL** and says how many triangles went; the
 button is only enabled while a build exists (a refused build, a discarded one and a fresh model
-all leave it disabled). The mask keeps its paint — a build is a snapshot of the paint, so
-keeping the shell after clearing is allowed, and the status bar says the shell is still there
+all leave it disabled). The selection is untouched — a build is a snapshot of the selection, so
+keeping the shell after clearing it is allowed, and the status bar says the shell is still there
 and names this button. Before this control existed the only way to remove a shell was to load
 the model again.
-**Guide** [Paint stencil](help.html#stencil)
+**Guide** [Stencil (STL)](help.html#stencil)
 **Automated** `test/ui-wiring.test.mjs` — the button exists, its handler is `discardStencil`, and
 that function clears the preview, drops the result and disables the export.
 **Result** ☐ pass ☐ fail — notes:
@@ -747,7 +752,7 @@ that function clears the preview, drops the result and disables the export.
 #### S13 · The exported part sits on the bed — every piece of it
 
 **Steps**
-1. Load the example model, paint a face window (the eyes are the quickest), build the stencil and
+1. Load the example model, select a face window (the eyes are the quickest), build the stencil and
    read the result panel's size line.
 2. Leave **Sit the exported part on the bed (Z = 0)** ticked and press **Export stencil STL**.
    Read the status bar.
@@ -757,7 +762,7 @@ that function clears the preview, drops the result and disables the export.
 5. Tick it, load a model that already sits on its own Z 0 (or a **Z up** CAD part), and export:
    the status bar should say nothing moved.
 6. The multi-piece case, which is the one the option used to leave hovering. Turn **Widen the
-   reach until the mask is one piece** off, set **Reach (mm)** to 8, paint one window high on the
+   reach until the mask is one piece** off, set **Reach (mm)** to 8, select one window high on the
    figure (the head) and one low down (the feet), and build — the result panel must say
    **2 pieces**. Export with the box ticked and read the status bar, then import the file into the
    slicer.
@@ -768,7 +773,7 @@ bar says `sat on the bed: moved down 41.00 mm so the part's lowest Z is 0 (X and
 the example face mask, which in model coordinates has its lowest point at Z 41.0 and therefore
 floats 41 mm in the air in a slicer. The part is otherwise identical: same triangles, same size,
 still one watertight piece, and X/Y unchanged, so it still lines up with the figure. **Only the
-written copy moves** — the mask, the panels, the preview and the result panel are untouched (paint
+written copy moves** — the mask, the panels, the preview and the result panel are untouched (select
 and build once, then export with the box on and off: the viewport must not change either time).
 Unticked, the status bar says `left in the model's own coordinates (lowest Z 41.00)` and the file
 is the shell exactly where it sits on the model, which is what you want for lining the mask up
@@ -786,7 +791,7 @@ moved 32.10 mm so every piece's lowest Z is 0 (X and Y untouched)` and both piec
 on the plate in the slicer — no splitting, no dragging. The pieces keep their X and Y, so nothing
 moves in the plate plane; only the written copy changes. Unticked (step 7) the file keeps both
 pieces at the heights the model has them (Z −2.37 and 32.10), which is the alignment escape hatch.
-**Guide** [Paint stencil](help.html#stencil), [Stencil STL format](help.html#stl)
+**Guide** [Stencil (STL)](help.html#stencil), [Stencil STL format](help.html#stl)
 **Automated** `test/app-path.test.mjs` — the transform as arithmetic (floating, sunk −3 → 0, and
 already-on-the-plate returned unchanged), that the array it is given is never edited, and the real
 export: the file's lowest Z is 0 exactly, it spans Z 0…12.27, min X matches the build's, and it
@@ -825,8 +830,8 @@ by exporting before and after; the files are byte-identical).
 1. Press **Front**, **Back**, **Left**, **Right**, **Top**, then **Home**.
 
 **Expected** Each frames the whole model from that direction; **Home** is the three-quarter view
-the model loads with. Painting works from any angle, but remember the brush only reaches what
-you can see.
+the model loads with. Selecting works from any angle; a rectangle takes only the triangles facing
+the camera, and **Part** takes the panel its ray hits.
 **Guide** [Model & view](help.html#view)
 **Automated** not automated — camera framing.
 **Result** ☐ pass ☐ fail — notes:
@@ -839,7 +844,7 @@ you can see.
 3. On a touch screen: one finger over the model, then two fingers.
 
 **Expected** Right-drag orbits, middle-drag pans, the wheel zooms. `Space` + left-drag orbits
-without disarming the paint tool. One finger paints; two fingers pan and zoom.
+without disarming the selection tool. One finger selects; two fingers pan and zoom.
 **Guide** [Model & view](help.html#view)
 **Automated** not automated — pointer and touch handling.
 **Result** ☐ pass ☐ fail — notes:
@@ -847,10 +852,10 @@ without disarming the paint tool. One finger paints; two fingers pan and zoom.
 #### V4 · Status bar
 
 **Steps**
-1. Paint, export, import, and provoke a no-op (erase where nothing is painted).
+1. Select, export, import, and provoke a no-op (Select none with nothing selected).
 2. Move the cursor over the model and off it.
 
-**Expected** The left side reports what just happened — what was painted, how many vertices,
+**Expected** The left side reports what just happened — what was selected, how many faces,
 what was exported — and any warning that needs attention. The right side shows the cursor's
 model-space position and the frame rate; both update as you move.
 **Guide** [Model & view](help.html#view)
@@ -868,7 +873,7 @@ model-space position and the frame rate; both update as you move.
 **Expected** With the checkbox on (the default) a loaded model is moved so its footprint centre
 sits on the grid's centre lines and its lowest point on the grid's plane; the status bar reports how
 far it moved, or that it was already centred. Unticking puts the model back exactly where the file
-puts it. Either way the grid is sized from the model's own bounding box and painting behaves the
+puts it. Either way the grid is sized from the model's own bounding box and selecting behaves the
 same. It is a view transform, like the up axis: no coordinate the mask or an export is written in
 changes, so masks imported before or after still line up with the original STL. The bundled figure
 is authored about 10 units off in x and 42 in y; the offset reported is −10.5, 42.1, −26.4.
@@ -882,36 +887,38 @@ leaves the model's coordinates untouched); `test/ui-wiring.test.mjs` pins that c
 
 # F. Export / import
 
-#### X1 · Save mask (JSON)
+#### X1 · Save selection (JSON)
 
 **Steps**
-1. With nothing painted, press **Save mask (JSON)**.
-2. Paint something and press it again.
+1. With nothing selected, press **Save selection (JSON)**.
+2. Select something and press it again.
 
-**Expected** With an empty mask it refuses politely in the status bar instead of writing an
-empty file. With paint it downloads `<model>-mask.json` and the status bar reports the painted
-vertex count, the feature count and the file size, and points at **Open mask (JSON)**. This is the
-session file: it holds the windows you have marked up *now*, including this round's Shift-clicked
-panels, and it is the only format that can be loaded back in.
+**Expected** With an empty selection it refuses politely in the status bar instead of writing an
+empty file (`Nothing selected yet — select the area the stencil should expose first.`). With a
+selection it downloads `<model>-mask.json`, and the status bar reports the corner count and the file
+size and points at **Open selection (JSON)…**. This is the session file: it holds the windows you
+have marked up *now*, including this round's Shift-clicked panels, and it is the only format that
+can be loaded back in.
 **Guide** [Export / import](help.html#export)
-**Automated** `test/app-path.test.mjs` — export → import of the mask this suite paints
-(6,814 vertices) is exact, vertex for vertex and id for id.
+**Automated** `test/app-path.test.mjs` — export → import of the selection this suite makes is exact,
+corner for corner and id for id.
 **Result** ☐ pass ☐ fail — notes:
 
 #### X2 · Mask JSON fields
 
 **Steps**
-1. Export a mask with two features.
+1. Export a selection.
 2. Open the file in a text editor and compare it with the schema table in the guide.
 
 **Expected** `format: "stl-mask"`, `version: 1`, `model`, `unit: "model units"`,
-`vertexCount` equal to the model's vertex count (1,267,974), `features` with `id`/`name`/`color`,
-`paintedVertices` equal to half the length of `painted`, and `painted` as a flat
-`[vertexIndex, featureId]` pair list holding only painted vertices. Id 0 never appears in the
-list. Sizes scale with the paint: 82,127 painted vertices is a 0.79 MB file. A mask saved by the
-app also carries `stencil` with the build settings that were in the panel (`coverRadius`, `wall`,
-`standoff`, `overhang`, `growIfSplit`); the field is optional, and a file without it still loads.
-**Guide** [Export / import → Mask JSON](help.html#mask-json)
+`vertexCount` equal to the model's vertex count (1,267,974), `features` holding the single entry
+this app has (`id: 1`, its name and colour), `paintedVertices` equal to half the length of
+`painted`, and `painted` as a flat `[vertexIndex, featureId]` pair list holding only the corners
+inside the window — id 0 never appears in it. Sizes scale with the selection: a whole-panel
+selection is a multi-megabyte file, a few triangles a few kilobytes. The file also carries
+`stencil` with the build settings that were in the panel (`coverRadius`, `wall`, `standoff`,
+`overhang`, `growIfSplit`); the field is optional, and a file without it still loads.
+**Guide** [Export / import → Selection JSON](help.html#mask-json)
 **Automated** `test/app-path.test.mjs` asserts each field; `test/help.test.mjs` proves the
 embedded sample in the guide parses with the fields the importer reads.
 **Result** ☐ pass ☐ fail — notes:
@@ -919,52 +926,51 @@ embedded sample in the guide parses with the fields the importer reads.
 #### X3 · Round trip is exact
 
 **Steps**
-1. Paint several features; note each feature's vertex count in the palette.
-2. **Save mask (JSON)**, then **Clear all**.
-3. **Open mask (JSON)…** and pick the file you just saved.
+1. Select a couple of panels; note the stats line's face and corner counts.
+2. **Save selection (JSON)**, then **Select none**.
+3. **Open selection (JSON)…** and pick the file you just saved.
 
-**Expected** Every feature's count returns to exactly what it was, and the status bar reports the
-loaded vertex count, any new features, that the build settings were restored, and that
-Shift-clicking more panels is the next step.
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
-**Automated** `test/app-path.test.mjs` — the imported mask reproduces every vertex and id.
+**Expected** Both counts return to exactly what they were, and the status bar reports the loaded
+corner count, the face count, that the build settings were restored, and that clicking a panel with
+Part is the next step.
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
+**Automated** `test/app-path.test.mjs` — the imported selection reproduces every corner and id.
 **Result** ☐ pass ☐ fail — notes:
 
 #### X11 · Save your place, reload it and add more windows
 
 **Steps**
-1. Load the example model, pick a feature, mark up two panels with **Part** (Shift-click the
-   second) and press **Save mask (JSON)**.
+1. Load the example model, mark up two panels with **Part** (Shift-click the second) and press
+   **Save selection (JSON)**.
 2. Reload the page (or load another model and come back), then **Load example model** again.
-3. Press **Open mask (JSON)…** and pick the file. Then Shift-click a third panel, press **Build
+3. Press **Open selection (JSON)…** and pick the file. Then Shift-click a third panel, press **Build
    stencil**, and export.
 
-**Expected** The reloaded mask has both windows exactly where they were (status bar: painted
-vertex count, `build settings restored`, and the next step). The third panel paints onto the
-loaded mask rather than replacing it, and the build reports **3 windows** — including the ones
-from the previous session — so the exported STL has all three. This is the flow the file format is
-for: the mask JSON is the thing you save to keep working, and the stencil export rebuilds from it
-rather than serving a stale build (S9).
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Expected** The reloaded selection has both windows exactly where they were (status bar: the
+corner count, the face count, `build settings restored`, and the next step). The third panel is
+added to the loaded selection rather than replacing it, and the build reports **3 windows** —
+including the ones from the previous session — so the exported STL has all three. This is the flow
+the file format is for: the selection JSON is the thing you save to keep working, and the stencil
+export rebuilds from it rather than serving a stale build (S9).
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
 **Automated** `test/app-path.test.mjs` — a saved session files the build settings, reopens with
-every vertex and id intact, and a window added after the reload reaches the build (3 → 4 windows
+every corner and id intact, and a window added after the reload reaches the build (3 → 4 windows
 on the bundled model).
 **Result** ☐ pass ☐ fail — notes:
 
-#### X4 · Importing merges palettes by id
+#### X4 · A mask from the painting version opens as one selection
 
 **Steps**
-1. Note your current palette.
-2. Import a mask whose features you do not have (the guide's sample adds two).
-3. Import it again.
+1. Import the guide's sample — its `features` table carries two ids, as an older file would.
+2. Note the stats line, then import the same file again.
 
-**Expected** Features you lack are added; features you already have keep *your* colour and name.
-Nothing is removed, so two files with different palettes give you the union. Importing the same
-file twice adds no duplicates.
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
-**Automated** partially — `test/help.test.mjs` proves the sample carries the ids the importer
-reads; the merge itself is in `js/main.js` and is covered by `test/ui-wiring.test.mjs` wiring
-checks only.
+**Expected** Every corner the file lists comes back selected: this app has exactly one feature, so
+several ids collapse into the one selection rather than being refused. Importing the same file twice
+changes nothing, because a selection is a set of faces and an import replaces it as one undo step.
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
+**Automated** `test/selection.test.mjs` — a mask saved by the painting version (several ids, brushed
+per vertex) loads as one selection over the same corners; `test/help.test.mjs` proves the guide's
+sample carries the ids the importer reads.
 **Result** ☐ pass ☐ fail — notes:
 
 #### X5 · Vertex-count mismatch warns
@@ -972,11 +978,11 @@ checks only.
 **Steps**
 1. With the bundled figure open, import the guide's 36-vertex sample (`vertexCount: 36`).
 
-**Expected** The import is **not** blocked, but the status bar warns that the mask was painted
-on 36 vertices while this model has 1,267,974, so the indices land on the wrong vertices. A mask
+**Expected** The import is **not** blocked, but the status bar warns `Warning: this selection was
+saved on 36 vertices but this model has 1,267,974.`, so the corners land on the wrong triangles. A mask
 from a slightly re-exported mesh is often close enough to be a starting point, which is why it
 is a warning and not a refusal.
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
 **Automated** `test/app-path.test.mjs` — the importer exposes both numbers, so this comparison
 cannot silently disappear.
 **Result** ☐ pass ☐ fail — notes:
@@ -984,14 +990,14 @@ cannot silently disappear.
 #### X6 · A bad file is refused without damage
 
 **Steps**
-1. Paint something.
+1. Select something.
 2. Try to import a JSON file that is not a mask (e.g. `{}` or a random document), then a file
    that is not JSON at all.
 
 **Expected** The status bar shows the reason (`Not an STL mask file…`, `Mask file has no
-"painted" vertex list.`, or a JSON parse error). Your current painting is left exactly as it was;
+"painted" vertex list.`, or a JSON parse error). Your current selection is left exactly as it was;
 nothing is half-applied.
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
 **Automated** `test/help.test.mjs` (the format/`painted` validation the guide describes is the
 one in `js/io.js`).
 **Result** ☐ pass ☐ fail — notes:
@@ -999,30 +1005,29 @@ one in `js/io.js`).
 #### X7 · Import is one undo step
 
 **Steps**
-1. Paint a mask; export it; clear all; import it.
+1. Select something; export it; **Select none**; import it.
 2. Press `Ctrl`+`Z`.
 
-**Expected** One undo returns the mask to what it was before the import (empty). Features the
-import added to the palette stay in the palette — the undo covers the paint, not the palette.
-**Guide** [Export / import → Import mask JSON](help.html#import-json)
-**Automated** `test/painting.test.mjs` (the load path's history semantics).
+**Expected** One undo returns the selection to what it was before the import (empty).
+**Guide** [Export / import → Import a saved selection](help.html#import-json)
+**Automated** `test/selection.test.mjs` (the load path's history semantics).
 **Result** ☐ pass ☐ fail — notes:
 
-#### X8 · Painted shell PLY
+#### X8 · Selected shell PLY
 
 **Steps**
-1. Paint a patch that includes triangles whose neighbours are unpainted.
-2. Press **Painted shell PLY** and inspect the header of the downloaded file, or open it in
+1. Select a patch that includes triangles whose neighbours are not selected.
+2. Press **Selected shell PLY** and inspect the header of the downloaded file, or open it in
    MeshLab/Blender/CloudCompare.
 
 **Expected** `binary_little_endian 1.0` with the vertex and face counts in the header and the
 documented property list (x, y, z as floats; red, green, blue, alpha as uchar; faces as
-`list uchar uint`). Only triangles whose *three* vertices are all painted are written, and the
-vertices are repacked onto their own list, so the file is the painted shell rather than the whole
-model. Per-vertex colour matches the palette; alpha is 255 where painted and 0 where hidden or
-unpainted. Byte size is `header + 16 × vertices + 13 × faces`, and the app reports both counts
-and the file size after export. It is a zero-thickness display artefact, not a printable part.
-**Guide** [Export / import → Painted shell PLY](help.html#ply)
+`list uchar uint`). Only triangles whose *three* corners are all selected are written, and the
+vertices are repacked onto their own list, so the file is the selected shell rather than the whole
+model. Per-vertex colour is the selection colour; alpha is 255 where selected and 0 elsewhere.
+Byte size is `header + 16 × vertices + 13 × faces`, and the app reports both counts and the file
+size after export. It is a zero-thickness display artefact, not a printable part.
+**Guide** [Export / import → Selected shell PLY](help.html#ply)
 **Automated** `test/help.test.mjs` proves the guide's layout matches `js/io.js`'s writer
 exports; the byte-level layout is otherwise manual.
 **Result** ☐ pass ☐ fail — notes:
@@ -1032,12 +1037,12 @@ exports; the byte-level layout is otherwise manual.
 **Steps**
 1. Copy the *Ready to import* JSON block from the guide (each code block has a **Copy** button).
 2. Paste it into `example-mask.json`.
-3. **Open mask (JSON)…** and pick it.
+3. **Open selection (JSON)…** and pick it.
 
 **Expected** The block is valid JSON and imports without an error. On a model with 36 vertices
-the four listed vertices come back painted — the first three with feature 1, the fourth with
-feature 2 — and on the bundled figure it imports with the vertex-count warning from X5.
-**Guide** [Export / import → Mask JSON](help.html#mask-json)
+all four listed corners come back selected — the file's two ids are the one selection here — and on
+the bundled figure it imports with the vertex-count warning from X5.
+**Guide** [Export / import → Selection JSON](help.html#mask-json)
 **Automated** `test/help.test.mjs` parses the embedded sample with the app's own importer and
 checks it against a 1,267,974-vertex model and a 36-vertex one.
 **Result** ☐ pass ☐ fail — notes:
@@ -1061,40 +1066,43 @@ checks cannot prove.
 #### K1 · Every binding
 
 **Steps**
-1. Press each key below, in a loaded, painted session, and compare with the expected result.
+1. Press each key below, in a loaded session with something selected, and compare with the expected
+   result.
 
 **Expected**
 
 | Key | Action | Expected result | Result |
 | --- | --- | --- | --- |
-| `B` / `F` / `P` / `E` / `I` | Tool | The matching tool button becomes active and the cursor line names it. | ☐ pass ☐ fail |
-| `1`…`9` | Feature | The nth feature becomes current. | ☐ pass ☐ fail |
-| `M` | Mirror | The **Mirror across X plane** checkbox toggles. | ☐ pass ☐ fail |
-| `[` / `]` | Brush size | Radius changes by 0.4 and the ring resizes. | ☐ pass ☐ fail |
-| `Space` (hold) | Orbit | Left-drag orbits without leaving the paint tool. | ☐ pass ☐ fail |
+| `P` | Part tool | The Part button becomes active and the cursor line names it. | ☐ pass ☐ fail |
+| `S` | Select models | The Select models button is active; a click takes the whole model under the cursor. | ☐ pass ☐ fail |
+| `Shift`+`S` | Select faces | The same tool with the pick set to single triangles. | ☐ pass ☐ fail |
+| `Ctrl`+`A` | Select all | Every face in the model is selected; the stats line counts them. | ☐ pass ☐ fail |
+| `Shift`+`I` | Invert | The window becomes everything except what was selected (`I` alone does nothing). | ☐ pass ☐ fail |
+| `B` | Build | **Build stencil** runs from the selection in hand. | ☐ pass ☐ fail |
 | `Ctrl`+`Z` | Undo | The last edit is taken back. | ☐ pass ☐ fail |
 | `Ctrl`+`Shift`+`Z` | Redo | The undone edit is re-applied. | ☐ pass ☐ fail |
-| `Shift`+`I` | Invert | The mask inverts; `I` alone is still Pick. | ☐ pass ☐ fail |
-| `Shift`+click (Part) | Add panel | The clicked panel is added to the current feature. | ☐ pass ☐ fail |
-| `Shift`+click (Pick) | Sample | The feature is picked and Pick stays active. | ☐ pass ☐ fail |
-| `Alt`+click (Part) | Remove panel | The clicked panel leaves the paint. | ☐ pass ☐ fail |
+| `Esc` | Cancel / clear | A rectangle being dragged is thrown away; with Select faces and something selected, the
+selection is cleared; otherwise the panel list is hidden. | ☐ pass ☐ fail |
+| `Space` (hold) | Orbit | Left-drag orbits without leaving the selection tool. | ☐ pass ☐ fail |
+| `Shift`+click (either tool) | Add | Another panel, face or model joins the selection. | ☐ pass ☐ fail |
+| `Alt`+click (either tool) | Remove | What the click covers leaves the selection. | ☐ pass ☐ fail |
+| `Shift`+drag / `Alt`+drag (Select faces) | Rectangle | The faces inside the rectangle join or leave the selection. | ☐ pass ☐ fail |
 | `?` or `F1` | Guide | The guide opens in a new tab. | ☐ pass ☐ fail |
 | right-drag / middle-drag / wheel | Navigate | Orbit / pan / zoom. | ☐ pass ☐ fail |
 | drop an `.stl` | Load | The model loads (see L4). | ☐ pass ☐ fail |
 
 **Guide** [Keyboard & mouse](help.html#shortcuts)
-**Automated** `test/ui-wiring.test.mjs` — the modifier guard exempts the Part tool, `Shift`+`I`
-is separated from plain `I`, and the picker's `Shift`-click behaviour is pinned.
+**Automated** `test/ui-wiring.test.mjs` (the key handler ignores keys while a field has focus);
+`test/help.test.mjs` (`?` and `F1` reach `openGuide`).
 **Result** ☐ pass ☐ fail — notes:
 
 #### K2 · Typing is safe
 
 **Steps**
-1. Click into the **New feature name** box (or a number field) and type `b`, `f`, `p`, `e`, `i`,
-   `m`, `1`, `[`, `?`.
+1. Click into a number field (a stencil parameter, say) and type `b`, `p`, `s`, `i`, `1`, `?`.
 
-**Expected** The characters are typed. No tool switches, no feature changes, no brush resize and
-no guide tab — shortcuts are ignored while a text or number field has focus.
+**Expected** The characters are typed. No tool switches, no selection changes and no guide tab —
+shortcuts are ignored while a text or number field has focus.
 **Guide** [Keyboard & mouse](help.html#shortcuts)
 **Automated** `test/ui-wiring.test.mjs` (the key handler checks the focused element).
 **Result** ☐ pass ☐ fail — notes:
@@ -1104,8 +1112,8 @@ no guide tab — shortcuts are ignored while a text or number field has focus.
 **Steps**
 1. Press the **Guide** button in the top bar.
 2. Press `?` on a machine with a keyboard, then `F1`.
-3. Press the small `?` next to each panel heading — Features, Paint, Mask, Paint stencil,
-   Model & view, Export / import.
+3. Press the small `?` next to each panel heading — Selection, Seams & panels, Windows, Tint & view,
+   Model, Stencil (STL), Export / import.
 4. In the console, run `window.maskPainter.openGuide()`.
 
 **Expected** The guide opens in a new tab; each panel's `?` opens it *at that panel's section*,
@@ -1138,14 +1146,14 @@ option in `index.html` is named in the guide, and the suite list in the guide ma
 #### N1 · Nothing leaves the page
 
 **Steps**
-1. Open the browser's network panel, clear it, and use the app: load, paint, build the stencil,
+1. Open the browser's network panel, clear it, and use the app: load, select, build the stencil,
    export every format.
 2. Run a session with the developer tools set to offline after the page has loaded (keep the
    vendored files cached).
 
 **Expected** Requests only for the app's own files — `index.html`, `css/`, `js/`, `vendor/`, and
 the `.stl` when you load the example. No analytics, no telemetry, no upload of the model or the
-mask; parsing, painting, segmentation and the stencil build all run in the page.
+mask; parsing, segmentation, selecting and the stencil build all run in the page.
 **Guide** [How it works](help.html#howitworks)
 **Automated** not automated — needs the browser's network panel.
 **Result** ☐ pass ☐ fail — notes:
@@ -1160,7 +1168,8 @@ mask; parsing, painting, segmentation and the stencil build all run in the page.
 | Step | Expected | Measured | Result |
 | --- | --- | --- | --- |
 | Load + BVH | ~0.3 s | | ☐ pass ☐ fail |
-| Brush stamp | sub-millisecond (dragging feels continuous) | | ☐ pass ☐ fail |
+| Hover pick | sub-millisecond (the outline follows the cursor) | | ☐ pass ☐ fail |
+| Rectangle select | ~29 ms for 930,758 triangles under the box (measured) | | ☐ pass ☐ fail |
 | Seam parts | ~0.4 s first Part click or **Show seams**, then cached | | ☐ pass ☐ fail |
 | Mesh weld | ~0.4 s on the first stencil build, then cached | | ☐ pass ☐ fail |
 | Stencil build | 0.7–1.5 s (plus each widening attempt) | | ☐ pass ☐ fail |
@@ -1180,17 +1189,17 @@ suites' own output.
 
 | Limit | How to see it | Expected | Result |
 | --- | --- | --- | --- |
-| Resolution comes from the mesh | Turn on **Wireframe** and paint on a coarse mesh | The window edge is blocky, no finer than the triangles | ☐ pass ☐ fail |
-| The window insets | Paint a patch, build, and compare the window with the paint | Mask material covers a thin sliver of what you painted | ☐ pass ☐ fail |
+| Resolution comes from the mesh | Turn on **Wireframe** and select on a coarse mesh | The window edge is blocky, no finer than the triangles | ☐ pass ☐ fail |
+| The window insets | Select a patch, build, and compare the window with the selection | Mask material covers a thin sliver of what you selected | ☐ pass ☐ fail |
 | Clearance at creases is zero | Build at 0.3 mm standoff and read the minimum | The minimum barely improves; a few spots still touch | ☐ pass ☐ fail |
 | Undercuts | Build a shell that wraps the whole figure | It builds, but cannot be placed on a rigid print | ☐ pass ☐ fail |
-| One piece is preferred, not guaranteed | Paint two far-apart areas with widening off | More than one shell, reported in plain words | ☐ pass ☐ fail |
-| A click selects the panel it hits | Click two pixels off a thin panel | The big panel is painted and the list appears (P10) | ☐ pass ☐ fail |
-| A hidden panel cannot be clicked | Aim at a detail that is behind another surface | The panel in front is painted; the hidden one is only reachable from the list (P10) | ☐ pass ☐ fail |
+| One piece is preferred, not guaranteed | Select two far-apart areas with widening off | More than one shell, reported in plain words | ☐ pass ☐ fail |
+| A click selects the panel it hits | Click two pixels off a thin panel | The big panel is selected and the list appears (P10) | ☐ pass ☐ fail |
+| A hidden panel cannot be clicked | Aim at a detail that is behind another surface | The panel in front is selected; the hidden one is only reachable from the list (P10) | ☐ pass ☐ fail |
 
 **Guide** [How it works](help.html#howitworks)
-**Automated** `test/stencil.test.mjs` (the "must fail" cases — nothing painted, everything
-painted, a dot smaller than the inlay) and `test/parts.test.mjs` (panel sizes, the near-miss
+**Automated** `test/stencil.test.mjs` (the "must fail" cases — nothing selected, everything
+selected, a dot smaller than the inlay) and `test/parts.test.mjs` (panel sizes, the near-miss
 list, and that every raycast reports the triangle under the cursor in the model's face order,
 which is the order the panels are cut in).
 **Result** ☐ pass ☐ fail — notes:
@@ -1202,9 +1211,9 @@ which is the order the panels are cut in).
    install), then `npm test`.
 2. Confirm the exit status is 0 and read the per-suite summaries.
 
-**Expected** Eight suites pass: `stencil.test.mjs` (131 checks), `app-path.test.mjs`,
-`painting.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs` (47 checks), `boxselect.test.mjs`
-(23 checks), `ui-wiring.test.mjs` and `help.test.mjs` (215 checks).
+**Expected** Nine suites pass: `stencil.test.mjs` (137 checks), `app-path.test.mjs`,
+`selection.test.mjs`, `parts.test.mjs`, `cleanup.test.mjs`, `boxselect.test.mjs`,
+`select.test.mjs`, `ui-wiring.test.mjs` and `help.test.mjs` (224 checks).
 The last one proves this documentation cannot drift from the app: a new control or a new suite
 that is not documented fails the build.
 **Guide** [How it is verified](help.html#tests)
@@ -1224,20 +1233,18 @@ the guide. Record them under N3 instead:
 - A few inner-face spots sit **on the surface** at any standoff, wherever a crease is sharper
   than the averaged vertex normal can follow. 0.15–0.25 mm keeps a real gap over ~99% of the
   part.
-- A **sliver of painted area stays covered** by mask material: the window edge is smoothed and
-  inset on purpose, and **Window inlay** is the deliberate part of that overlap.
+- A **sliver of the selected area stays covered** by mask material: the window edge is smoothed
+  and inset on purpose, and **Window inlay** is the deliberate part of that overlap.
 - A **click on a thin panel can select the big panel behind it** — the ray really did hit the
   big panel, so that is the panel you get. The panel list and `Alt`-click are the workaround; a
   two-pixel target cannot be made easy to hit. A panel that is *hidden behind* the surface is
   only reachable from that list.
-- A **brush stamp is a sphere**, so it can paint the far side of a thin part. Use **Part** or
-  **Region fill**.
-- **Box paint leaves the surface facing away** unpainted, and says so in the status bar. A screen
-  rectangle covers the back of a closed figure as well, and painting it would be a surprise; with
+- **A rectangle leaves the surface facing away** alone, and says so in the status bar. A screen
+  rectangle covers the back of a closed figure as well, and taking it would be a surprise; with
   the figure turned, the same rectangle takes the other surface instead.
-- A **hidden feature** still counts, still exports and still becomes part of the window — hiding
-  is view-only.
-- The stencil is **not** part of the undo history. Repainting after a build leaves the old part
+- A **hidden model** still counts, still exports and still becomes part of the window — hiding the
+  base model or the tint is view-only, and **Ghost shell** never changes a selection.
+- The stencil is **not** part of the undo history. Selecting more after a build leaves the old part
   in hand; the panel says so and asks you to build again.
 - **Undo stops after 40 steps**, and undoing past the cap does nothing rather than erroring.
 
@@ -1264,8 +1271,9 @@ Item:            P10
 Model:           Sprunki Mercuy.stl (422,658 triangles)
 Steps:           clicked the left eyebrow, 2 px inside its edge
 Expected:        eyebrow panel selected
-Observed:        panel 1 (48.3%) painted; eyebrow stayed bare
-Status bar:      Painted part 1 — 204,113 vertices
+Observed:        the 43% panel selected; the eyebrow stayed bare
+Status bar:      Selected part 1 of 26 — 181,000 faces (43.0% of the mesh), 181,000 faces added to
+the selection (181,000 of 422,658 selected in all, seams at 8°)
 Console:         (first error, if any)
 Reproduced:      yes / no / intermittent
 ```

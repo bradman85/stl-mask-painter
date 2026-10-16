@@ -564,11 +564,11 @@ Panels within 3.2 units of the click; click one to select it instead:
       </td>
     </tr>
     <tr>
-      <td class="k">Remove picked</td>
+      <td class="k">Remove selected</td>
       <td>
-        Takes the picked faces out of the model. Click it twice (the label changes to
-        "Click again to remove" for four seconds) — the same two-click confirmation <b>Clear all</b>
-        uses, because a browser dialog is blocked in some embedded views. The model cannot be left
+        Takes the selected faces out of the model. Click it twice (the label changes to
+        "Click again to remove" for four seconds), because a browser confirmation dialog is blocked
+        in some embedded views — the second click is the confirmation. The model cannot be left
         empty: a removal that would take every face is refused with the reason.
       </td>
     </tr>
@@ -1158,7 +1158,7 @@ Panels within 3.2 units of the click; click one to select it instead:
     <tr><td class="k">model</td><td>Recorded for reference. Never used to match anything, so renaming a model does not break its mask.</td></tr>
     <tr><td class="k">vertexCount</td><td>The model's vertex count when the mask was made. Import compares it against the loaded model and warns when they differ.</td></tr>
     <tr><td class="k">features</td><td>The mask format's feature table. This app has exactly one feature — id 1, the selection — so the array holds one entry and every corner in <code>painted</code> carries id 1. It is kept so that a file saved by the earlier, painting version (several colours) still opens: the ids are read and all of them come back as the one selection. Id 0 means "not selected" and is never listed.</td></tr>
-    <tr><td class="k">stencil</td><td>The build settings that were in the stencil panel when the mask was saved (reach, wall, standoff, window inlay, and whether the reach may widen until the part is one piece). Optional — an older file without it still loads; with it, <b>Open mask (JSON)</b> puts the numbers back into the panel so a reloaded session builds the same shell. Nothing in a build is stored, only how to make it: the geometry is rebuilt from the mask.</td></tr>
+    <tr><td class="k">stencil</td><td>The build settings that were in the stencil panel when the mask was saved (reach, wall, standoff, window inlay, and whether the reach may widen until the part is one piece). Optional — an older file without it still loads; with it, <b>Open selection (JSON)…</b> puts the numbers back into the panel so a reloaded session builds the same shell. Nothing in a build is stored, only how to make it: the geometry is rebuilt from the mask.</td></tr>
     <tr><td class="k">painted</td><td>A flat list of <code>[vertexIndex, featureId]</code> pairs — one entry per selected corner of the model's soup, nothing per unselected one. This is the part that scales with the selection: 82,127 corners is a 0.79 MB file, the whole model selected would be 11.2 MB (measured with the app's own writer).</td></tr>
   </table>
   <p>

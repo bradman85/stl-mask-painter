@@ -406,9 +406,9 @@ taken apart triangle by triangle. The measured file after the fix: both pieces a
 Every separate selected region becomes its own **window** in the shell, and regions that do not
 touch become separate pieces — so the stray triangles a hand-picked selection leaves turn into a part with
 extra windows, several loose shells and nothing to hold them together on the print bed. There
-are two ways to be rid of one, both in the Mask panel: **Trim windows**, which releases every
-window smaller than a threshold, and **List windows**, which names each one and lets you remove
-the one you mean.
+are two ways to be rid of one, both in the Windows panel: **Drop small windows**, which releases
+every window smaller than the threshold above it, and **List windows**, which names each one and
+lets you remove the one you mean.
 
 A window is a connected selected region of the **welded** surface, found by walking the vertex
 adjacency the welder already built (`js/cleanup.js`, dependency-free like the stencil engine).
