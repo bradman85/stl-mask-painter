@@ -146,9 +146,21 @@ check(
     /add: e\.shiftKey,\s*\n\s*remove: e\.altKey \|\| e\.ctrlKey \|\| e\.metaKey,/.test(js),
 );
 check(
-  'the hover face is what both tools aim at, so it is drawn for either',
-  /function onPointerMove\(e\)[\s\S]{0,1200}?updateHoverFace\(hit \? hit\.faceIndex : null\)/.test(js) &&
+  'the hover face is drawn by the Select tool, which is the tool that clicks a face',
+  /function onPointerMove\(e\)[\s\S]{0,1600}?if \(state\.tool === 'select'\) updateHoverFace\(hit \? hit\.faceIndex : null\);/.test(js) &&
     /function updateHoverFace\(faceIndex\)/.test(js),
+);
+// Part takes a whole panel, so a single triangle lighting up under the cursor describes a click
+// that Part will not make. The report was exactly that: "when in Part mode the triangles should
+// not light up under mouse movement". Two paths have to agree about it — the pointer move that
+// would draw one, and the tool switch that would leave the last one on screen.
+check(
+  'and Part draws none: a triangle lit up for a tool that takes panels describes the wrong click',
+  /function onPointerMove\(e\)[\s\S]{0,1600}?else clearHoverFace\(\);/.test(js),
+);
+check(
+  'including on the way in, so a tint left by the Select tool does not outlive the tool',
+  /function setTool\(tool\) \{[\s\S]{0,400}?if \(state\.tool !== 'select'\) clearHoverFace\(\);/.test(js),
 );
 check(
   'and the scope clears it, because the scope is what a hover means',

@@ -77,7 +77,7 @@ it.
 
 | Tool | What it does | Shortcut |
 | --- | --- | --- |
-| Part | Selects the whole panel of the model under the cursor, bounded by its seams — a head, a torso, a limb. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is reached when the click lands next to it | `P` |
+| Part | Selects the whole panel of the model under the cursor, bounded by its seams — a head, a torso, a limb. Every click also lists the panels near the cursor (size and distance), which is how a thin or hidden panel is reached when the click lands next to it. Nothing is drawn under the cursor in this tool: it takes a panel, not a triangle, and the status bar and the list say which one | `P` |
 | Select models | The pick is the whole model (the separate shell) under the cursor, so **Remove selected** can take a stray one out of the file. A drag picks every model its rectangle covers | `S` |
 | Select faces | The pick is one triangle at a time, or a rectangle's worth of them. The selected triangles are tinted amber and the one under the cursor is outlined white, so a click is judged before it happens | `Shift`+`S` |
 
@@ -159,8 +159,10 @@ out of the model:
   for a triangle is its **centre** and its own normal, so a box over the face of a closed figure
   takes the front and reports how many triangles it left facing away — `facesInScreenRect()` in
   `js/boxselect.js`, checked against three.js' own `project()` for the centre pixel.
-- **What is selected is drawn as a filled tint** (amber for the selection, white for the face under
-  the cursor), with the boundary of the selected faces outlined on top. The tint is what makes a
+- **What is selected is drawn as a filled tint** (amber for the selection, and — while **Select
+  faces** is in hand — white for the face under the cursor), with the boundary of the selected faces
+  outlined on top. The cursor's own tint is the *face* tool's because a face is what it is judging;
+  **Part** leaves the cursor unpainted and reports the panel it would take in words instead. The tint is what makes a
   single selected face visible: edges alone z-fight with the triangle they trace and show nothing at
   all. It stays lit whatever tool is in hand, because the selection is shared by every tool and is
   what **Build stencil** and **Remove selected** act on — hiding it merely because the tool changed
@@ -302,7 +304,9 @@ An STL has no UVs, so the selection is drawn **per vertex** rather than as a tex
   a renderer ignored vertex alpha.
 - The face under the cursor is drawn as its own highlight by `js/highlight.js`, which takes the
   group to draw into as an argument — that is what lets the whole path (draw, replace, clear) run
-  under Node in `test/select.test.mjs` rather than only in a browser.
+  under Node in `test/select.test.mjs` rather than only in a browser. It is drawn by the **Select**
+  tool only: `onPointerMove` calls `updateHoverFace` in that tool and `clearHoverFace` in Part, and
+  `setTool` clears it on the way into Part so a face outlined for one tool cannot outlive it.
 - Colour updates are uploaded with `BufferAttribute.addUpdateRange`, so a selection that changes a
   few faces re-uploads only the changed slice of the colour buffer instead of the whole 20 MB
   attribute. Above 150,000 selected faces the tint is switched off and the panel says so; the
@@ -418,27 +422,30 @@ of the model's diagonal (2% by default, 0–100) compared with each window's **b
 because a speck is a size on the print, not a vertex count — the same speck is 40 vertices on a
 coarse mesh and 4,000 on a dense one.
 
-The trim is one undo step, like every other mask edit, and it always keeps the largest window,
-so a threshold set too high can shrink a mask to its main region but never wipe it out (the
-status bar says when it was spared). On the bundled figure a chest blob with two stray dabs is
-three islands at 27.2, 2.0 and 1.9 units across; the default threshold releases the two dabs —
-429 vertices, exactly the vertices inside them and nothing else — in one ~60 ms pass.
+The trim is one undo step, like every other edit to the selection, and it always keeps the largest
+window, so a threshold set too high can shrink the selection to its main region but never wipe it
+out (the status bar says when it was spared). On the bundled figure a panel selected on the chest
+with one stray speck of triangles near it is two islands, **28.02** and **2.66** units across; the
+default threshold releases the speck — 87 faces, 261 corners, exactly the corners inside it and
+nothing else — in one undo step, all measured in `test/cleanup.test.mjs`.
 
 **A threshold can only say "smaller than this", and only about whole windows.** It skips the
-largest and it cannot split anything, so a mask that is *one* connected region has nothing it
+largest and it cannot split anything, so a selection that is *one* connected region has nothing it
 can ever release, whatever it is set to: two panels that touch (a Shift-click on the panel next
-to the selected one — 552,231 vertices at 90.8 units across on the bundled figure, measured in
-`test/cleanup.test.mjs`), a stroke back and forth, a region fill. That is what **List windows**
+to the selected one — 552,231 corners at 90.8 units across on the bundled figure, measured in
+`test/cleanup.test.mjs`), two eyes picked separately that meet in the middle, a rectangle dragged
+into the neighbour it already had. That is what **List windows**
 is for. It lists every window with its vertex count, its size in units and as a share of
 the model, each row carrying:
 
-- **Remove** — releases that window, the largest included; the row's `fileVertices` (the mask's
-  own indices, joined to the window through the weld) are exactly what the edit releases.
+- **Remove** — releases that window, the largest included; the row's `fileVertices` (the
+  selection's own indices, joined to the window through the weld) are exactly what the edit
+  releases.
 - **Keep only** — releases every other window, which is how you keep one panel out of several.
 
 Both are one undo step, and the list rebuilds itself from what is left, so the numbers on screen
-are the numbers in the mask. The list is hidden the moment the mask changes — every row names
-the vertices behind it — so it never describes a mask that no longer exists. When a threshold
+are the numbers in the selection. The list is hidden the moment the selection changes — every row
+names the corners behind it — so it never describes a selection that no longer exists. When a threshold
 can do nothing the status bar says so in those words and names the two things that can, instead
 of reporting zero and looking like a dead button.
 

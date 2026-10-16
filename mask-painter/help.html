@@ -312,8 +312,12 @@
     at all.
   </p>
   <p>
-    The selection is drawn as an amber tint over the model's own surface, and the triangle under the
-    cursor is outlined white, so a click is judged before it happens. Above 150,000 selected faces
+    The selection is drawn as an amber tint over the model's own surface, and — while
+    <b>Select faces</b> is the tool in hand — the triangle under the cursor is outlined white, so a
+    click on a triangle is judged before it happens. <b>Part</b> draws nothing under the cursor: a
+    panel is not a triangle, so a triangle lighting up under a click that is about to take a head
+    or a limb would describe the wrong click. Part says which panel it will take in the status bar
+    and in <a href="#parts">the panel list</a> its click opens. Above 150,000 selected faces
     the tint is switched off rather than crawling — the panel's count line says so, and
     <a href="#tint">Selection tint</a> is where the overlay itself is turned down.
   </p>
@@ -585,7 +589,7 @@ Panels within 3.2 units of the click; click one to select it instead:
   <p>
     With <b>Select faces</b> (<kbd>Shift</kbd>+<kbd>S</kbd>), a click picks the one triangle under
     the cursor and nothing else. The face under the cursor is tinted white and the picked faces
-    yellow while this tool is up, so "click the face you can see" means something on a surface that is
+    amber while this tool is up, so "click the face you can see" means something on a surface that is
     otherwise one unbroken grey: turn on <b>Show seams</b> in the
     <a href="#parts">Part tool's</a> options as well if you want the panel boundaries drawn
     at the same time. This is the tool for geometry that is not a separate model — a spure, a

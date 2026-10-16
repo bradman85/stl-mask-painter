@@ -15,7 +15,11 @@ picked with **Select faces** build one stencil together.
 
 ### [Open the app](https://bradman85.github.io/stl-mask-painter/)
 
-<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded and the eyes selected" width="900">
+<img src="mask-painter/screenshot.png" alt="The app with the bundled example model loaded and one panel selected with the Part tool, tinted amber" width="900">
+
+The app with the bundled model loaded and one panel taken with **Part** — seams cut at 5°, the
+selection tinted amber, and the status bar naming the panel it took. It is a screenshot of this
+code, taken in a browser rather than drawn.
 
 That link is this repository, served by **GitHub Pages** — the app is a static site with no build
 step and no dependencies to install, so it runs in any browser, on any device, and every push to
@@ -48,7 +52,7 @@ only thing that wants `npm ci` (they use the vendored copies in `mask-painter/ve
 
 | | |
 | --- | --- |
-| [`mask-painter/README.md`](mask-painter/README.md) | the full manual: tools, the mask, stencils, exports, and the why behind them |
+| [`mask-painter/README.md`](mask-painter/README.md) | the full manual: the tools, the selection, stencils, exports, and the why behind them |
 | [`mask-painter/help.html`](mask-painter/help.html) | the same material as the in-app guide (**Guide** in the top bar) |
 | [`mask-painter/VALIDATION.md`](mask-painter/VALIDATION.md) | the checklist every feature is verified against, item by item |
 | `mask-painter/test/` | the automated half: nine suites, run with `cd mask-painter && npm test` |

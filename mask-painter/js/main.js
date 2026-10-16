@@ -389,9 +389,13 @@ function onPointerMove(e) {
   }
   const hit = viewer.pick(e.clientX, e.clientY);
   // The face under the cursor is outlined before the click, so "the face under the cursor" is
-  // something you can see rather than something you have to believe — and it is outlined whichever
-  // selection tool is in hand, because both of them are aiming at a face.
-  updateHoverFace(hit ? hit.faceIndex : null);
+  // something you can see rather than something you have to believe — while the Select tool is in
+  // hand, which is the tool that clicks a face. Part does not draw it: Part takes a whole panel, so
+  // one triangle lighting up under a cursor that is about to take a head or a limb describes the
+  // wrong click. Part says what it will take in the status line and in the panel list instead, and
+  // a tint left over from the Select tool is taken off screen rather than left to be misread.
+  if (state.tool === 'select') updateHoverFace(hit ? hit.faceIndex : null);
+  else clearHoverFace();
   el('statusCursor').textContent = hit
     ? state.tool === 'part'
       ? `face ${fmt(hit.faceIndex)} — click to select the panel it belongs to`
@@ -670,6 +674,9 @@ function syncToolButtons() {
  */
 function setTool(tool) {
   state.tool = tool === 'part' ? 'part' : 'select';
+  // The hover tint belongs to the Select tool, so it goes with it: a face outlined under a cursor
+  // in Part mode is a triangle lighting up for a tool that does not click triangles.
+  if (state.tool !== 'select') clearHoverFace();
   syncToolButtons();
   el('seamOptions').classList.toggle('on', state.tool === 'part');
   el('selectOptions').classList.toggle('on', state.tool === 'select');
@@ -877,6 +884,9 @@ function renderShellList() {
  * face. A file with one model has nothing to choose between, so nothing is highlighted there and
  * the panel says so instead — a whole-model highlight on a one-model file is a screenful of tint
  * that means nothing.
+ *
+ * Reached from the Select tool only (`onPointerMove`), because it is a *face* being judged: Part's
+ * unit is a panel, which the click itself reports.
  */
 function updateHoverFace(faceIndex) {
   if (!mask || faceIndex == null || faceIndex < 0 || faceIndex >= faceCountInHand()) {

@@ -228,10 +228,18 @@ is about 43% of the mesh and the bar adds the sentence naming the smaller panel 
 aimed at (`the detail you aimed at is probably Part <n> …`), because a click can only ever select the
 panel it lands on. The selected triangles are tinted amber, the stats line counts them, and nothing
 is added to the mesh or the file.
+
+Nothing lights up under the cursor while **Part** is the tool in hand. A panel is not a triangle, so
+a triangle outlined under a cursor that is about to take a head or a limb describes the wrong click:
+Part names the panel it would take in the status bar and in the list the click opens, and the white
+outline under the cursor belongs to **Select faces** (P5). Switching from Select faces to Part takes
+that outline off screen rather than leaving the last one drawn — a face still lit up in Part mode is
+the report this rule answers.
 **Guide** [Selection](help.html#selection) · [Seam panels](help.html#parts)
 **Automated** `test/parts.test.mjs` — the seam rule on a cube with a known answer, then every face of
 one part on the real model, and a real raycast through a real camera reporting the model's own
-triangle order.
+triangle order. `test/ui-wiring.test.mjs` — the pointer move draws the hover face in the Select tool
+and clears it in Part, and `setTool` clears it on the way into Part, so no path can leave one lit.
 **Result** ☐ pass ☐ fail — notes:
 
 #### P2 · Shift-click and Alt-click add and remove panels
@@ -294,7 +302,8 @@ the markup and the guide.
    back off with <kbd>Alt</kbd>.
 3. Watch the status bar and the stats line.
 
-**Expected** One triangle is tinted per click and the status bar says `Selected face <i> of 422,658 —
+**Expected** The triangle under the cursor is outlined white while this tool is in hand, so the click
+is judged before it happens. One triangle is tinted per click and the status bar says `Selected face <i> of 422,658 —
 <n> selected in all. Shift-click adds, Alt-click takes one off, “Select all” takes the lot.` A second
 plain click on the same triangle unselects it; <kbd>Shift</kbd> adds without ever flipping,
 <kbd>Alt</kbd> removes. The stats line counts the faces and the corners inside the window.
