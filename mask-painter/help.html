@@ -141,6 +141,7 @@
     <a class="sub" href="#windows-list">The window list</a>
     <a href="#tint">Tint &amp; view</a>
     <a class="sub" href="#view-chips">The viewport chips</a>
+    <a class="sub" href="#colours">Colours</a>
     <a href="#stencil">Stencil (STL)</a>
     <a href="#view">Model &amp; view</a>
     <a href="#export">Export / import</a>
@@ -210,6 +211,19 @@
         tests run against (422,658 triangles, 1,267,974 vertices). This is the <em>only</em> way
         the example is loaded: the app starts empty and never fetches it on its own. If it is
         missing, the status bar reports the HTTP error and leaves whatever is loaded alone.
+      </td>
+    </tr>
+    <tr>
+      <td class="k">Reload</td>
+      <td>
+        Loads the file that is open again <em>from the start</em>: the same bytes, with nothing
+        selected, no built stencil, no removed faces and an empty undo history. It is the way back
+        from a session that has gone several clicks down the wrong path — before it existed, the
+        only way to start over was to find the model again by hand. Greyed out until a model has
+        loaded.
+        <br><b>Not the same as Restore removed</b>, which puts only the removed faces back and
+        keeps the selection. The view settings (up axis, centring, colours, the layer switches)
+        are kept: they are preferences, not work.
       </td>
     </tr>
     <tr>
@@ -414,6 +428,12 @@
       about half a second.
     </li>
     <li>
+      Picking <b>Part</b> starts the cut straight away, and a click that arrives before it has
+      finished <b>waits for it</b> and then selects the panel — it is not dropped. The work is
+      reported in a small chip above the status bar, not under a full-screen overlay, so the model
+      and any built stencil stay on screen while it runs.
+    </li>
+    <li>
       Panels smaller than 0.02% of the mesh are <em>merged</em> into the neighbour they share the
       longest seam with. Without that, the default 8° cut of the bundled model gives 7,550 parts,
       most of them single triangles, and clicking one selects a speck. After merging: 26 panels.
@@ -565,14 +585,17 @@ Panels within 3.2 units of the click; click one to select it instead:
       <td>
         Cuts the file into its separate models and reports them in the status bar — how many, how
         big the largest is, and how big the rest are. The cut is a weld of the whole mesh, so the
-        first one takes a moment; it is cached until the geometry changes.
+        first one takes a moment (a chip above the status bar says so, with the model still on
+        screen); it is cached until the geometry changes. Switching to <b>Select models</b> starts
+        the same cut, so the first click on a model usually finds it done.
       </td>
     </tr>
     <tr>
       <td class="k">Remove selected</td>
       <td>
-        Takes the selected faces out of the model. Click it twice (the label changes to
-        "Click again to remove" for four seconds), because a browser confirmation dialog is blocked
+        Takes the selected faces out of the model. Click it twice — the label changes to
+        "Click again to remove" for four seconds, then reads "Remove selected" again (changing the
+        selection cancels the confirmation too) — because a browser confirmation dialog is blocked
         in some embedded views — the second click is the confirmation. The model cannot be left
         empty: a removal that would take every face is refused with the reason.
       </td>
@@ -823,9 +846,39 @@ Panels within 3.2 units of the click; click one to select it instead:
     it is how you inspect the part you are about to print; a hidden shell with a hidden model is an
     empty viewport, which reads as a broken app rather than a hidden layer. So switching
     <b>Stencil</b> off puts <b>Model</b> back on (and so does <b>Discard stencil</b>, and loading
-    another model). <b>Selection</b> is never forced either way: tint <em>off</em> lets you look
+    another model).    <b>Selection</b> is never forced either way: tint <em>off</em> lets you look
     through the shell's windows at the model's own shading, tint <em>on</em> shows which faces the
     window is exposing, and whichever you chose is what the next chip press leaves alone.
+  </div>
+
+  <h3 id="colours">Colours <a class="anchor" href="#colours">#</a></h3>
+  <p>
+    The <b>Preferences</b> panel has three swatches — <b>Model colour</b>, <b>Selection colour</b>
+    and <b>Stencil colour</b>. They exist because the shell and the selection were both amber: once
+    a window was built, a newly selected face and the mask around it were almost the same colour,
+    and judging what had just been selected meant hiding a layer. Pick a colour for each layer and
+    the three read apart at a glance.
+  </p>
+  <ul>
+    <li><b>Model colour</b> is the unpainted surface. A dark model against the dark background is
+      the usual reason to lighten it.</li>
+    <li><b>Selection colour</b> is the tint on the selected faces, the count in the viewport HUD and
+      the colour recorded in a saved selection JSON. Changing it repaints the faces already selected.</li>
+    <li><b>Stencil colour</b> is the shell. A <b>Build stencil</b> after a change uses it; a shell
+      already on screen is repainted in place, so the colour can be judged without rebuilding.</li>
+  </ul>
+  <p>
+    The viewport updates as the picker moves. The choice is saved in this browser (local storage)
+    and is applied to every model loaded afterwards — a browser in private mode, or a page opened
+    straight from disk, simply forgets it when the tab closes. <b>Reset colours</b> puts the
+    defaults back: <code>#9aa4b2</code> for the model, <code>#ffc94d</code> for the selection and
+    <code>#ffb703</code> for the stencil. None of the three changes the geometry, the selection or
+    an export.
+  </p>
+  <div class="note">
+    <strong>Colours are a view, not a setting of the part.</strong> The exported STL carries no
+    colour at all, the PLY is geometry only, and the arithmetic of the build never reads a colour —
+    so two sessions that differ only in these three swatches build byte-identical parts.
   </div>
 </section>
 

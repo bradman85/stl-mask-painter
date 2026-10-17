@@ -484,6 +484,11 @@ export class Viewer {
     if (this.overlayMesh) this.overlayMesh.material.opacity = v;
   }
 
+  /** The colour the unpainted model is drawn in — a preference, not a constant. */
+  setBaseColor(hex) {
+    if (this.baseMesh) this.baseMesh.material.color.set(hex);
+  }
+
   setBaseVisible(v) {
     if (this.baseMesh) this.baseMesh.visible = v;
   }

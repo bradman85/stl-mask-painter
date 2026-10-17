@@ -227,7 +227,7 @@ check(
 check(
   'the slider tracks a drag without re-cutting on every step',
   /el\('seamAngle'\)\.addEventListener\('input',[\s\S]{0,160}syncSeamPresets\(\)/.test(js) &&
-    /el\('seamAngle'\)\.addEventListener\('change',[\s\S]{0,160}ensureParts\(\{ force: true \}\)/.test(js),
+    /el\('seamAngle'\)\.addEventListener\('change',[\s\S]{0,160}ensureParts\(\{ force: true, quiet: true \}\)/.test(js),
 );
 check(
   'a Part click names the panel it thinks you aimed at',
@@ -637,8 +637,13 @@ check(
   /function syncToolButtons\(\)[\s\S]{0,400}?const scope = b\.dataset\.scope;[\s\S]{0,200}?b\.dataset\.tool === state\.tool && \(!scope \|\| scope === cleanup\.scope\)/.test(js),
 );
 check(
-  'no brush, fill, eyedropper or palette is left in the panel',
-  !/brush/i.test(html) && !/Eyedropper|Fill region|Colour|Color picker/.test(html) && !/id="featureList"|id="palette"/.test(html),
+  'no brush, fill, eyedropper or paint palette is left in the panel',
+  // The three swatches in Preferences are the layer colours, not the paint palette: the check is
+  // that nothing paints a model any more, so it looks for the brush and the palette rather than
+  // for the word "colour", which the colour preferences legitimately use.
+  !/\bbrush\b/i.test(html) &&
+    !/Eyedropper|Fill region|palette/i.test(html) &&
+    !/id="featureList"|id="palette"/.test(html),
 );
 check(
   'select all, select none and invert are the three buttons of the panel',
@@ -947,11 +952,90 @@ check(
   (js.match(/updateViewState\(\);/g) || []).length >= 5 &&
     /stencil\.mesh\.visible = el\('stencilPreview'\)\.checked;\s*\n\s*viewer\.modelGroup\.add\(stencil\.mesh\);\s*\n\s*updateViewState\(\);/.test(js) &&
     /function resetStencil\(\)[\s\S]{0,900}?updateViewState\(\);/.test(js) &&
-    /function applyDisplayState\(\)[\s\S]{0,400}?updateViewState\(\);/.test(js),
+    // 800 rather than the original 400: applying the colour preferences on every geometry install
+    // (a reload, a removal) added a call and a note to `applyDisplayState`, and the point of the
+    // pattern is that the function ends by redrawing the chips, not the exact byte count.
+    /function applyDisplayState\(\)[\s\S]{0,800}?updateViewState\(\);/.test(js),
 );
 check(
   'and the chips are reachable from the console handle, like every other scripted check',
   /\n\s*setViewLayer,\n\s*viewState,\n\s*updateViewState,/.test(js),
+);
+
+// ------------------------------------------------- reloading, colours and the label
+//
+// Five things a user asked for after the chips landed, each of which fails silently when it is only
+// half-wired: a Reload button that reloads the file that is actually open, three colour
+// preferences, the remove-button label that has to name itself again, work that must not take the
+// viewport away, and a click that must wait for a running cut instead of being dropped.
+check('the top bar carries a Reload button, disabled until a model is loaded', /id="reloadBtn" disabled/.test(html) && /id="reloadBtn"/.test(html));
+check('and it is wired to one function', /el\('reloadBtn'\)\.addEventListener\('click', \(\) => void reloadModel\(\)\)/.test(js) && /async function reloadModel\(\)/.test(js));
+check(
+  'Reload re-loads the file the session started from — a URL or a file handle',
+  /lastSource = \{ kind: 'url'|\{ kind: 'url', url \}/.test(js) &&
+    /kind: 'file', file/.test(js) &&
+    /if \(lastSource\.kind === 'url'\)/.test(js) &&
+    /lastSource\.file\.arrayBuffer\(\)/.test(js),
+);
+check(
+  'a load is what enables it, and a failed reload does not claim to have started over',
+  /if \(source\) setLastSource\(source\);\s*\n\s*loadCount \+= 1;/.test(js) &&
+    /if \(loadCount === before\) return;/.test(js),
+);
+check(
+  'a new model is a new undo history',
+  /history\.clear\(\);/.test(js) && /clear\(\) \{\s*\n\s*this\.undoStack\.length = 0;/.test(selectionSrc),
+);
+check(
+  'Preferences carries the three layer colours, with the defaults the docs quote',
+  declared.has('colorModel') && declared.has('colorSelection') && declared.has('colorStencil') &&
+    /id="colorModel" value="#9aa4b2"/.test(html) &&
+    /id="colorSelection" value="#ffc94d"/.test(html) &&
+    /id="colorStencil" value="#ffb703"/.test(html),
+);
+check(
+  'each swatch feeds one colour, and only through setColorPref',
+  /for \(const \[key, spec\] of Object\.entries\(COLOR_PREFS\)\)/.test(js) &&
+    /input\.addEventListener\('input', \(\) => setColorPref\(key, input\.value, \{ save: false \}\)\)/.test(js) &&
+    /el\('colorsResetBtn'\)\.addEventListener\('click', resetColorPrefs\)/.test(js),
+);
+check(
+  'the three colours reach the three layers, and are re-painted when a geometry is installed',
+  /viewer\.setBaseColor\(colors\.model\)/.test(js) &&
+    /mask\.setColor\(colors\.selection\)/.test(js) &&
+    /stencil\.mesh\.material\.color\.set\(colors\.stencil\)/.test(js) &&
+    /setBaseColor\(hex\) \{/.test(viewerSrc) &&
+    /setColor\(hex\) \{/.test(maskSrc) &&
+    /color: colors\.stencil,/.test(js) &&
+    /function applyDisplayState\(\)[\s\S]{0,800}?applyColors\(\);/.test(js),
+);
+check(
+  'and are remembered in the browser, not in the build',
+  /localStorage\.getItem\(PREFS_KEY\)/.test(js) && /localStorage\.setItem\(PREFS_KEY/.test(js) &&
+    /loadColorPrefs\(\);/.test(js) && /saveColorPrefs\(\)/.test(js),
+);
+check(
+  'the Remove button names itself again: the label follows the armed state',
+  /function syncRemoveLabel\(\)/.test(js) &&
+    /btn\.textContent = cleanup\.armedAt \? 'Click again to remove' : 'Remove selected'/.test(js) &&
+    /setTimeout\(\(\) => \{[\s\S]{0,200}?cleanup\.armedAt = 0;[\s\S]{0,200}?syncRemoveLabel\(\);/.test(js) &&
+    /function afterSelection\(changed\) \{[\s\S]{0,120}?disarmRemove\(\);/.test(js),
+);
+check(
+  'a freshly loaded page cannot remove on the first click (zero is not a timestamp)',
+  /const armed = cleanup\.armedAt > 0 && !\(now - cleanup\.armedAt > 4000\)/.test(js),
+);
+check(
+  'work a click starts reports in the chip, not under the full-screen overlay',
+  declared.has('working') && declared.has('workingText') && /\.working\b/.test(cssSrc) &&
+    /function setWorking\(show, text\)/.test(js) &&
+    /const report = \(text\) => \(quiet \? setWorking\(true, text\) : setLoading\(true, text\)\)/.test(js) &&
+    /ensureParts\(\{ quiet: true \}\)/.test(js),
+);
+check(
+  'the weld, the cut and the model count are shared in-flight, so a click waits instead of getting null',
+  /stencil\.topologyPromise/.test(js) && /parts\.promise/.test(js) && /cleanup\.shellsPromise/.test(js) &&
+    !/parts\.building/.test(js) && !/shellsPending/.test(js),
 );
 
 console.log(`\n${missing.length + missingExports.length + (failures ? 1 : 0) === 0 ? 'all wiring checks passed' : `${failures} failure(s)`}`);

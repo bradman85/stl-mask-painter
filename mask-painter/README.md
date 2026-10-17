@@ -102,7 +102,16 @@ it.
   group of selected faces becomes one opening in the built stencil, so this is where the specks that
   would become loose pieces are taken out.
 - **Remove selected** takes the selected faces — or whole models — out of the model, and **Restore
-  removed** puts them back. The selection and its undo history are carried through the cut.
+  removed** puts them back. The selection and its undo history are carried through the cut. It asks
+  twice: the first press reads **Click again to remove** for four seconds, then the label goes back
+  to **Remove selected** (so the button, the status bar and this document name the same thing), and
+  changing the selection cancels a pending confirmation.
+- **Reload** in the top bar loads the file this session started from again — the same bytes, nothing
+  selected, no built stencil, no removed faces and an empty undo history — for a session that has
+  gone several clicks down the wrong path. It is greyed out until a model has loaded, it handles a
+  file that was opened or dropped as well as the bundled example, and it keeps the view settings
+  (up axis, centring, colours, the layer switches). It is not **Restore removed**: that puts removed
+  faces back and keeps the selection.
 - **Undo / redo** with `Ctrl+Z` / `Ctrl+Shift+Z`: a click, a rectangle, a panel, a window removal and
   an invert are one step each (40 kept). A gesture that selects what was already selected is not a
   step at all.
@@ -383,6 +392,26 @@ viewport, which reads as a broken app rather than a hidden layer. So **Stencil**
 forced: whether it is on or off is the reader's choice, and the next press of the shell chip leaves
 it exactly as it was.
 
+### Colours: the shell, the tint and the model
+
+The shell and the selection used to be the same amber, so once a window was built a newly selected
+face and the mask around it were nearly indistinguishable — judging what had just been selected
+meant hiding a layer. **Preferences** has three swatches: **Model colour**, **Selection colour** and
+**Stencil colour**. Each paints its layer as the picker moves: the model's own material, the tint on
+the selected faces (and the count in the viewport HUD, and the colour written into a saved selection
+JSON), and the shell — a shell already on screen is repainted in place, and the next build uses the
+new colour. The three live in `applyColors()` in `js/main.js`, are applied again whenever a geometry
+is installed (a load, a removal, a reload), and are remembered in this browser through
+`localStorage`; **Reset colours** restores `#9aa4b2`, `#ffc94d` and `#ffb703`. None of them changes
+the geometry, the selection, the build or an export — two sessions that differ only in these three
+swatches build identical parts.
+
+The work a click starts is reported in a small chip above the status bar rather than under the
+full-screen overlay: welding the surface, counting the models and cutting the panels keep the model
+and any built shell on screen, and a click that arrives while the cut is running waits for it and
+then selects — it used to be handed `null` and silently dropped. The full-screen overlay is kept for
+opening a file, when there is nothing on screen worth keeping.
+
 ### Sitting the exported part on the bed
 
 A slicer reads **Z = 0 as the plate**, and an STL keeps the coordinates its exporter used — so a
@@ -620,6 +649,29 @@ that produces it.
 - **Exports are the selection on screen.** The stencil export rebuilds when the selection has moved
   on; the session file round-trips every corner; the PLY holds exactly the selected shell.
   `test/app-path.test.mjs`.
+- **Starting over is one click, and it really starts over.** `Reload` re-loads the file the session
+  started from; a headless-Chrome run built a shell and removed a face, then pressed it once:
+  422,658 triangles back, nothing selected, no shell, no removals, undo disabled, the chosen colours
+  kept, and the status line saying `Reloaded …`. Loading a model clears the undo history, so a
+  `Ctrl+Z` cannot reach a face of the previous file. `test/ui-wiring.test.mjs`; the browser run is
+  described in `VALIDATION.md` item L9.
+- **The colours are preferences, and preferences survive.** In the same browser run, `#112233`
+  reached the base material, `#22cc44` the tint layer and the HUD count, and `#8844ee` repainted a
+  built shell in place; a fresh page read all three back from local storage, and **Reset colours**
+  restored and saved the defaults. `test/ui-wiring.test.mjs` pins the three inputs and the single
+  `applyColors()` path. `VALIDATION.md` item M8.
+- **A click never takes the viewport away.** With a shell built, a **Part** click selected a panel
+  while the shell stayed present and visible on every frame of the sequence (0 missing of 7
+  frames), and the full-screen overlay never appeared — the cut and the weld report through the
+  chip instead (`setWorking`). The first **Select models** click on a freshly loaded file likewise
+  raised the overlay zero times, where it used to weld under it and hand the click `null`.
+  `test/ui-wiring.test.mjs`; `VALIDATION.md` item P14.
+- **The two-click removal says what it is doing.** The first press reads `Click again to remove` and
+  removes nothing; after four seconds the label is `Remove selected` again, still with nothing
+  removed; two quick presses remove exactly one face and the label returns immediately. On a fresh
+  page the first press only asks — the armed timestamp starting at zero used to read as “armed long
+  ago”, so the first click in the first four seconds removed without confirmation.
+  `test/ui-wiring.test.mjs`; `VALIDATION.md` item P15.
 - **Nothing leaves the page.** Parsing, segmentation, selecting and the build all run in the tab;
   there is no server-side step and no telemetry.
 

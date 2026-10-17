@@ -13,9 +13,14 @@ picked with **Select faces** build one stencil together.
 
 Building and rebuilding is a loop — select a window, build the shell, keep selecting, build again —
 so three chips beside the viewport switch what you are looking at and say so: the printed
-**Stencil**, the **Model** under it, and the amber **Selection** tint. Hide the tint to look through
+**Stencil**, the **Model** under it, and the **Selection** tint. Hide the tint to look through
 the shell's windows at the model, hide the model to inspect the part on its own; hiding the shell
 puts the model back on, rather than leaving the viewport empty.
+
+**Preferences** sets the colour of each of those three layers, so a newly selected face and the
+shell around it stop being the same amber — the choice is remembered in the browser. And **Reload**
+in the top bar loads the file you are working on again from the start, for a session that has gone
+several clicks down the wrong path: same bytes, nothing selected, no shell, no removed faces.
 
 ## ▶︎ Run it
 

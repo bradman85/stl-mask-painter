@@ -30,6 +30,7 @@
       <input type="file" id="fileInput" accept=".stl,model/stl" hidden>
     </label>
     <button class="btn" id="loadExampleBtn" title="Load the bundled Sprunki Mercuy.stl (422,658 triangles) — the file the tests run against. The app does not load it for you on start.">Load example model</button>
+    <button class="btn" id="reloadBtn" disabled title="Load the file you are working on again, from the start — the selection, the built stencil and every removed face are discarded. Not to be confused with “Restore removed”, which only puts removed faces back">Reload</button>
     <button class="btn" id="shotBtn">Screenshot</button>
     <a class="btn" href="help.html" target="_blank" rel="noopener" title="Open the guide to every control">Guide</a>
   </div>
@@ -149,6 +150,23 @@
       <label class="check"><input type="checkbox" id="showBase" checked><span>Show base model</span></label>
       <label class="check"><input type="checkbox" id="showGrid" checked><span>Show ground grid</span></label>
       <label class="check"><input type="checkbox" id="wireframe"><span>Wireframe</span></label>
+    </section>
+
+    <section>
+      <h2>Preferences<a class="help" href="help.html#colours" target="_blank" rel="noopener" title="Guide: Colours">?</a></h2>
+      <p class="hint">
+        The three colours the viewport draws with. A stencil built in the same amber as the selection
+        is hard to read — pick a colour for each layer here, and the choice is remembered in this
+        browser. <b>Reset colours</b> puts the defaults back.
+      </p>
+      <div class="row colour-row">
+        <label class="colour"><span>Model colour</span><input type="color" id="colorModel" value="#9aa4b2"></label>
+        <label class="colour"><span>Selection colour</span><input type="color" id="colorSelection" value="#ffc94d"></label>
+        <label class="colour"><span>Stencil colour</span><input type="color" id="colorStencil" value="#ffb703"></label>
+      </div>
+      <div class="row">
+        <button class="btn small" id="colorsResetBtn" title="Put the model, selection and stencil colours back to the app's defaults">Reset colours</button>
+      </div>
     </section>
 
     <section>
@@ -272,6 +290,17 @@
     <div class="loading" id="loading" hidden>
       <div class="spinner"></div>
       <p id="loadingText">Loading…</p>
+    </div>
+
+    <!--
+      Work that happens behind a click — welding the surface, counting the models, cutting panels —
+      is reported here rather than under the full-screen overlay: covering the viewport to do a few
+      hundred milliseconds of work made the model (and a built stencil) appear to vanish the first
+      time a model was clicked.
+    -->
+    <div class="working" id="working" hidden role="status" aria-live="polite">
+      <span class="spinner small" aria-hidden="true"></span>
+      <span id="workingText">Working…</span>
     </div>
 
     <div class="statusbar">

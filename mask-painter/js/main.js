@@ -79,6 +79,7 @@ const stencil = {
   result: null,
   mesh: null,
   buildMs: 0,
+  topologyPromise: null,
 };
 
 // Seam-based parts, cached per model and seam angle. The segmentation pass takes a few
@@ -89,7 +90,7 @@ const parts = {
   key: '',
   seams: null,
   seamsKey: '',
-  building: false,
+  promise: null,
 };
 
 // The model cleanup: the separate models (shells) inside one file, and the faces picked out of
@@ -104,7 +105,7 @@ const cleanup = {
   liveFace: null,
   shells: null,
   shellsKey: '',
-  shellsPending: false,
+  shellsPromise: null,
   hover: null,
   hoverKey: '',
   scope: 'faces',
@@ -151,6 +152,12 @@ window.maskPainter = {
   },
   loadFromURL,
   loadFromBuffer,
+  reloadModel,
+  get colors() {
+    return colors;
+  },
+  setColorPref,
+  resetColorPrefs,
   exportMaskJSON,
   exportPLY,
   importMaskFile,
@@ -228,6 +235,23 @@ function setLoading(show, text) {
   if (text) el('loadingText').textContent = text;
 }
 
+/**
+ * Work that must not take the viewport away: shown as a chip above the status bar.
+ *
+ * The full-screen overlay is right for opening a file — there is nothing on screen yet worth
+ * keeping — and wrong for the work a *click* starts. Welding the surface, counting the models or
+ * cutting the panels used to raise that overlay, so the first click in Select models made every
+ * model disappear for a second or two, and the first Part click made a built stencil vanish; the
+ * work was happening, but the screen said the app had lost the model. This reports the same work
+ * without covering anything.
+ */
+function setWorking(show, text) {
+  const node = el('working');
+  if (!node) return;
+  node.hidden = !show;
+  if (text) el('workingText').textContent = text;
+}
+
 // Pointer capture throws for pointer ids the browser never activated (synthetic events),
 // which must not abort a stroke.
 function capturePointer(id) {
@@ -261,14 +285,14 @@ async function loadFromURL(url) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const buffer = await res.arrayBuffer();
     const name = decodeURIComponent(url.split('/').pop() || 'model.stl');
-    await loadFromBuffer(buffer, name);
+    await loadFromBuffer(buffer, name, { kind: 'url', url });
   } catch (err) {
     setLoading(false);
     setStatus(`Could not load ${url} (${err.message}). Use “Open STL…” or drop a file.`);
   }
 }
 
-async function loadFromBuffer(buffer, name) {
+async function loadFromBuffer(buffer, name, source = null) {
   const t0 = performance.now();
   setLoading(true, 'Parsing STL…');
   await nextFrame();
@@ -329,6 +353,61 @@ async function loadFromBuffer(buffer, name) {
       `${centreNote()}, and the bed is under its lowest point (${viewer.bedY.toFixed(2)}). ` +
       'Click a panel with Part (P) to take the whole of it, or drag a box in Select faces ' +
       '(Shift+S); “Build stencil” turns the selection into the shell.',
+  );
+  // The file this session started from, so **Reload** can start it over. A file object stays
+  // readable, and a URL can be fetched again, so neither the parsed buffer nor a copy of the soup
+  // has to be kept alive for it.
+  if (source) setLastSource(source);
+  loadCount += 1;
+}
+
+// ------------------------------------------------------------------- reload
+//
+// Iterating on a stencil is a loop of select → build → look → select again, and a session that has
+// gone several clicks down the wrong path had exactly one way back: find the model again by hand
+// (“Open STL…” or “Load example model”) and start from nothing. **Reload** is that, in one click,
+// for the file that is actually open — the selection, the built stencil, the removed faces, the
+// undo history and the panels all start over from the bytes as they were loaded. The view
+// preferences (up axis, centring, colours, the layer switches) are not work and are left alone.
+let lastSource = null;
+// Counts successful loads: a reload that failed must not report that it started over.
+let loadCount = 0;
+
+function setReloadEnabled(on) {
+  const btn = el('reloadBtn');
+  if (btn) btn.disabled = !on;
+}
+
+function setLastSource(source) {
+  lastSource = source;
+  setReloadEnabled(!!source);
+}
+
+async function reloadModel() {
+  if (!lastSource) {
+    setStatus('Nothing to reload yet — load a model first, and “Reload” brings that file back.');
+    return;
+  }
+  const before = loadCount;
+  const name = modelName;
+  if (lastSource.kind === 'url') {
+    await loadFromURL(lastSource.url);
+  } else if (lastSource.kind === 'file') {
+    try {
+      const buffer = await lastSource.file.arrayBuffer();
+      await loadFromBuffer(buffer, lastSource.file.name, lastSource);
+    } catch (err) {
+      setStatus(
+        `Could not read ${lastSource.file.name} again (${err.message}) — use “Open STL…” to pick ` +
+          'the file from disk instead.',
+      );
+      return;
+    }
+  }
+  if (loadCount === before) return; // the load failed and has already said why
+  setStatus(
+    `Reloaded ${name} from the file as it was loaded — the selection, the built stencil, any ` +
+      'removed faces and the undo history start over. The colours and view settings are kept.',
   );
 }
 
@@ -627,6 +706,8 @@ function updateStats() {
   }
   const removeBtn = el('removeFacesBtn');
   if (removeBtn) removeBtn.disabled = selectedFaces() === 0;
+  // The label follows the arm, not the last click: see `syncRemoveLabel`.
+  syncRemoveLabel();
   const restoreBtn = el('restoreFacesBtn');
   if (restoreBtn) restoreBtn.disabled = removedFaces() === 0;
   if (stencil.result) updateStencilStats(mask ? mask.stats().painted : 0);
@@ -652,7 +733,7 @@ function updateHud() {
   node.textContent = mask
     ? `${fmt(picked)} face${picked === 1 ? '' : 's'} selected`
     : 'nothing selected';
-  node.style.color = mask && picked ? SELECTION_COLOR : '';
+  node.style.color = mask && picked ? colors.selection : '';
 }
 
 /**
@@ -684,6 +765,9 @@ function setTool(tool) {
   el('seamOptions').classList.toggle('on', state.tool === 'part');
   el('selectOptions').classList.toggle('on', state.tool === 'select');
   if (state.tool === 'select' && cleanup.scope === 'models') void ensureShells();
+  // Cutting the panels takes long enough to notice, so it is started the moment the Part tool is
+  // picked rather than on the first click — the click then finds the panels already there.
+  if (state.tool === 'part' && mask) void ensureParts({ quiet: true });
   renderShellList();
   renderModelPickHint();
   // The panel list belongs to the click that produced it, not to the next tool.
@@ -693,6 +777,93 @@ function setTool(tool) {
   if (state.tool !== 'select' && selectDrag) cancelSelectDrag();
   hideBoxRect();
   updateHud();
+}
+
+// -------------------------------------------------------------------- colours
+//
+// Three layers, three colours, and one of them was fixed in the source: the shell was amber, the
+// selection was amber, and on a model seen through the shell the newly selected faces were almost
+// impossible to tell from the mask itself. The three swatches in **Preferences** are those three
+// colours. They are preferences rather than settings of a build, so they are remembered in this
+// browser (localStorage) and applied to whatever is on screen; a stencil built after a change uses
+// the new colour, and an existing one is repainted in place.
+//
+// Nothing else reads a colour: the exports write geometry, and the mask JSON carries the selection
+// colour only so a human opening the file can see what it was.
+const PREFS_KEY = 'stl-mask-painter.prefs';
+const COLOR_PREFS = {
+  model: { id: 'colorModel', label: 'Model', fallback: '#9aa4b2' },
+  selection: { id: 'colorSelection', label: 'Selection', fallback: SELECTION_COLOR },
+  stencil: { id: 'colorStencil', label: 'Stencil', fallback: '#ffb703' },
+};
+const colors = {
+  model: COLOR_PREFS.model.fallback,
+  selection: COLOR_PREFS.selection.fallback,
+  stencil: COLOR_PREFS.stencil.fallback,
+};
+
+/** A `#rrggbb` string, or the fallback. Inputs and storage are the two ways a bad value arrives. */
+function hexColor(value, fallback) {
+  const v = String(value || '').trim().toLowerCase();
+  return /^#[0-9a-f]{6}$/.test(v) ? v : fallback;
+}
+
+/** Reads the saved colours; a browser that refuses storage simply gets the defaults. */
+function loadColorPrefs() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(PREFS_KEY) || 'null');
+  } catch {
+    saved = null;
+  }
+  for (const [key, spec] of Object.entries(COLOR_PREFS)) {
+    colors[key] = hexColor(saved && saved[key], spec.fallback);
+    const input = el(spec.id);
+    if (input) input.value = colors[key];
+  }
+}
+
+function saveColorPrefs() {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(colors));
+  } catch {
+    /* private mode, a file:// origin: the choice lasts for this session, which is honest enough */
+  }
+}
+
+/** Paints the three layers from the preferences. Cheap enough to call on every load and toggle. */
+function applyColors() {
+  viewer.setBaseColor(colors.model);
+  if (mask && mask.setColor(colors.selection)) mask.flush();
+  if (stencil.mesh) stencil.mesh.material.color.set(colors.stencil);
+  updateHud();
+}
+
+function setColorPref(key, value, { announce = false, save = true } = {}) {
+  const spec = COLOR_PREFS[key];
+  if (!spec) return;
+  colors[key] = hexColor(value, spec.fallback);
+  const input = el(spec.id);
+  if (input && input.value !== colors[key]) input.value = colors[key];
+  applyColors();
+  if (save) saveColorPrefs();
+  if (announce) {
+    setStatus(
+      `${spec.label} colour set to ${colors[key]}` +
+        (key === 'stencil' ? ' — “Build stencil” paints the next shell in it.' : '.') +
+        ' The viewport updates as you pick; the choice is remembered in this browser.',
+    );
+  }
+}
+
+function resetColorPrefs() {
+  for (const [key, spec] of Object.entries(COLOR_PREFS)) {
+    setColorPref(key, spec.fallback, { save: false });
+  }
+  saveColorPrefs();
+  setStatus(
+    `Colours reset — model ${colors.model}, selection ${colors.selection}, stencil ${colors.stencil}.`,
+  );
 }
 
 // ------------------------------------------- the viewport's visibility chips
@@ -831,6 +1002,7 @@ function applyDisplayState() {
     mask.setBackdrop(el('ghostShell').checked);
     mask.flush();
   }
+  applyColors(); // a rebuilt model has a new material and tint layer, so repaint it here
   updateViewState();
 }
 
@@ -876,6 +1048,9 @@ function resetSelection() {
   tintScratch = null;
   cleanup.shells = null;
   cleanup.shellsKey = '';
+  cleanup.shellsPromise = null;
+  history.clear(); // a new file is a new history — Ctrl+Z must not reach a face of the last model
+  disarmRemove(); // a pending “click again to remove” belongs to the model that is going away
   clearHoverFace();
   syncTint();
   renderShellList();
@@ -901,6 +1076,8 @@ function syncTint() {
 
 /** What every selection edit does afterwards: show it, count it, and say what it means. */
 function afterSelection(changed) {
+  // A confirmation that was asked for about other faces is not a confirmation of these.
+  disarmRemove();
   syncTint();
   renderShellList();
   updateStats();
@@ -922,23 +1099,34 @@ function removedFaces() {
  * removing a model changes the shells of what is left, so the cache key carries the build
  * counter as well as the file name.
  */
-async function ensureShells() {
+async function ensureShells({ quiet = true } = {}) {
   if (!mask || !cleanup.soup) return null;
   const key = `${modelName}|${cleanup.build}`;
   if (cleanup.shells && cleanup.shellsKey === key) return cleanup.shells;
-  if (cleanup.shellsPending) return cleanup.shells;
-  cleanup.shellsPending = true;
-  try {
-    const topology = await ensureTopology();
+  // A second caller while the first is still counting waits for the same answer instead of being
+  // handed `null` — which is what a click that arrived a moment too early used to get, so the
+  // first click after loading a model selected nothing at all.
+  if (cleanup.shellsPromise) return cleanup.shellsPromise;
+  cleanup.shellsPromise = (async () => {
+    const topology = await ensureTopology({ quiet });
     if (!mask || !cleanup.soup) return null;
+    if (quiet) {
+      setWorking(true, 'Counting the models in the file…');
+      // Give the chip a frame before the (synchronous) walk over every face.
+      await nextFrame();
+    }
     cleanup.shells = shellsOf(topology);
     cleanup.shellsKey = key;
+    if (quiet) setWorking(false);
+    renderShellList();
+    updateStats();
+    return cleanup.shells;
+  })();
+  try {
+    return await cleanup.shellsPromise;
   } finally {
-    cleanup.shellsPending = false;
+    cleanup.shellsPromise = null;
   }
-  renderShellList();
-  updateStats();
-  return cleanup.shells;
 }
 
 /** Says how many models the file holds, for the panel's own button. */
@@ -1283,6 +1471,46 @@ async function applyRemoval(origFaceList, { what = 'Removed' } = {}) {
   return true;
 }
 
+// The armed state of the two-click removal, and the button's own label.
+//
+// The label used to be changed to “Click again to remove” and never put back, so the button stopped
+// naming itself: the status bar, this document and the guide all say “Remove selected”, and the
+// panel said something else for the rest of the session. The label is derived from
+// `cleanup.armedAt` now, and arming starts a timer, so the button reads “Remove selected” again
+// after four seconds — or as soon as the selection changes, because a confirmation is about the
+// faces that were selected when it was asked for, not about whatever is selected when it lands.
+let removeArmTimer = 0;
+
+function syncRemoveLabel() {
+  const btn = el('removeFacesBtn');
+  if (btn) btn.textContent = cleanup.armedAt ? 'Click again to remove' : 'Remove selected';
+}
+
+function disarmRemove() {
+  clearTimeout(removeArmTimer);
+  removeArmTimer = 0;
+  if (!cleanup.armedAt) return false;
+  cleanup.armedAt = 0;
+  syncRemoveLabel();
+  return true;
+}
+
+function armRemove() {
+  cleanup.armedAt = performance.now();
+  clearTimeout(removeArmTimer);
+  removeArmTimer = setTimeout(() => {
+    removeArmTimer = 0;
+    if (!cleanup.armedAt) return;
+    cleanup.armedAt = 0;
+    syncRemoveLabel();
+    setStatus(
+      'The removal was not confirmed within 4 seconds — nothing was taken out, and the button ' +
+        'reads “Remove selected” again. Press it twice to remove what is selected.',
+    );
+  }, 4000);
+  syncRemoveLabel();
+}
+
 /** Removes every selected face. Two clicks: a confirm dialog is blocked in some embedded views. */
 function removeClicked() {
   if (!requireModel()) return;
@@ -1294,19 +1522,24 @@ function removeClicked() {
   const now = performance.now();
   // Two clicks rather than window.confirm: a confirm dialog is silently blocked in some embedded
   // browser views, which made the button look broken instead of asking.
-  if (now - cleanup.armedAt > 4000) {
-    cleanup.armedAt = now;
-    el('removeFacesBtn').textContent = 'Click again to remove';
+  //
+  // Zero is not a moment: `armedAt` starts at 0, and a page younger than four seconds used to read
+  // as "armed long ago", so on a fresh page the *first* click removed without asking. (It was
+  // also true after anything disarmed the button inside four seconds.) The timestamp only counts
+  // when there is one.
+  const armed = cleanup.armedAt > 0 && !(now - cleanup.armedAt > 4000);
+  if (!armed) {
+    armRemove();
     const shells = cleanup.shells;
     const models = shells && cleanup.scope === 'models' ? shells.shellCount : 0;
     setStatus(
-      `Click “Remove selected” again within 4 seconds to take ${fmt(picked)} faces out of the model` +
+      `Click the button again within 4 seconds to take ${fmt(picked)} faces out of the model` +
         (models ? ` (the file holds ${fmt(models)} models)` : '') +
         '. The selection keeps every face that stays, and “Restore removed” puts the geometry back.',
     );
     return;
   }
-  cleanup.armedAt = 0;
+  disarmRemove();
   const list = [];
   for (let f = 0; f < cleanup.selected.length; f += 1) {
     if (cleanup.selected[f]) list.push(cleanup.liveFace[f]);
@@ -1398,17 +1631,37 @@ function stencilParamsFromInputs() {
   return p;
 }
 
-/** The welded surface, built once per loaded model and shared by everything that needs it. */
-async function ensureTopology() {
-  if (stencil.topology && stencil.topologyFor === modelName) return stencil.topology;
-  setLoading(true, 'Welding the model into a shared-vertex surface…');
-  await nextFrame();
-  const t0 = performance.now();
-  stencil.topology = buildTopology(mask.position.array, mask.vertexCount);
-  stencil.topologyFor = modelName;
-  stencil.weldMs = Math.round(performance.now() - t0);
-  setLoading(false);
-  return stencil.topology;
+/**
+ * The welded surface, built once per loaded model and shared by everything that needs it.
+ *
+ * `quiet` is the difference between opening a file and clicking in one: the weld takes long enough
+ * to notice on a big model, and the full-screen overlay that reports it also hides the model and any
+ * built stencil — which is exactly the "everything disappeared for a second" this fixes. Callers
+ * reached from a click pass `quiet: true` and get the chip above the status bar instead.
+ *
+ * The in-flight promise is shared, so two callers who arrive together (switching to Select models
+ * and clicking a model) weld once and both get the surface rather than one getting `null`.
+ */
+function ensureTopology({ quiet = false } = {}) {
+  if (stencil.topology && stencil.topologyFor === modelName) return Promise.resolve(stencil.topology);
+  if (stencil.topologyPromise) return stencil.topologyPromise;
+  stencil.topologyPromise = (async () => {
+    const report = (text) => (quiet ? setWorking(true, text) : setLoading(true, text));
+    report('Welding the model into a shared-vertex surface…');
+    try {
+      await nextFrame();
+      const t0 = performance.now();
+      stencil.topology = buildTopology(mask.position.array, mask.vertexCount);
+      stencil.topologyFor = modelName;
+      stencil.weldMs = Math.round(performance.now() - t0);
+      return stencil.topology;
+    } finally {
+      if (quiet) setWorking(false);
+      else setLoading(false);
+      stencil.topologyPromise = null;
+    }
+  })();
+  return stencil.topologyPromise;
 }
 
 const seamAngleInput = () => Math.max(3, Math.min(60, Number(el('seamAngle').value) || DEFAULT_SEAM_ANGLE));
@@ -1431,7 +1684,8 @@ async function setSeamAngle(angle, { announce = false } = {}) {
   el('seamAngleVal').textContent = `${state.seamAngle}°`;
   syncSeamPresets();
   if (!mask) return;
-  await ensureParts();
+  // Quiet: changing the cut is a view/edit action, and the viewport is what is being judged.
+  await ensureParts({ quiet: true });
   updateSeams();
   if (!announce || !parts.data) return;
   const preset = presetFor(state.seamAngle);
@@ -1443,28 +1697,49 @@ async function setSeamAngle(angle, { announce = false } = {}) {
   );
 }
 
-/** Cuts the model into seam-bounded parts, reusing the cache when nothing relevant changed. */
-async function ensureParts({ force = false } = {}) {
+/**
+ * Cuts the model into seam-bounded parts, reusing the cache when nothing relevant changed.
+ *
+ * A caller that arrives while the cut is running **waits for it** and gets the panels. It used to
+ * be handed `null` when `building` was true, and Part's first click after switching tools is
+ * exactly that case: the click did nothing, which read as Part "not adding to the selection". The
+ * in-flight promise is the answer to both callers.
+ */
+async function ensureParts({ force = false, quiet = false } = {}) {
   if (!mask) return null;
   const angle = seamAngleInput();
   const key = `${modelName}|${angle}`;
   if (!force && parts.data && parts.key === key) return parts.data;
-  if (parts.building) return parts.data;
-  parts.building = true;
-  try {
-    const topology = await ensureTopology();
-    setLoading(true, `Cutting the model into parts (seams at ${angle}°)…`);
-    await nextFrame();
-    const t0 = performance.now();
-    parts.data = buildParts(topology, { seamAngleDeg: angle });
-    parts.key = key;
-    parts.ms = Math.round(performance.now() - t0);
-    reportParts();
-  } finally {
-    parts.building = false;
-    setLoading(false);
+  if (parts.promise) {
+    if (!force) return parts.promise;
+    try {
+      await parts.promise;
+    } catch {
+      /* the new cut is the answer; a failed one has already reported itself */
+    }
   }
-  return parts.data;
+  parts.promise = (async () => {
+    const report = (text) => (quiet ? setWorking(true, text) : setLoading(true, text));
+    try {
+      const topology = await ensureTopology({ quiet });
+      report(`Cutting the model into parts (seams at ${angle}°)…`);
+      await nextFrame();
+      const t0 = performance.now();
+      parts.data = buildParts(topology, { seamAngleDeg: angle });
+      parts.key = key;
+      parts.ms = Math.round(performance.now() - t0);
+      reportParts();
+    } finally {
+      if (quiet) setWorking(false);
+      else setLoading(false);
+    }
+    return parts.data;
+  })();
+  try {
+    return await parts.promise;
+  } finally {
+    parts.promise = null;
+  }
 }
 
 function reportParts() {
@@ -1668,7 +1943,9 @@ let partFacesScratch = null;
 
 async function partClick(e) {
   if (!mask) return;
-  const d = await ensureParts();
+  // Quiet, and awaited: the click waits for the cut if one is running instead of being dropped,
+  // and the model and any built shell stay on screen while it happens.
+  const d = await ensureParts({ quiet: true });
   if (!d) return;
   // faceIndex is the hit triangle in the file's own face order — the order the panels were cut
   // in. The BVH's own index counts in its internal order instead (see viewer.sourceTriangleIndex),
@@ -1728,7 +2005,7 @@ function showStencilPreview(res) {
   geometry.setIndex(new THREE.BufferAttribute(Uint32Array.from(res.indices), 1));
   geometry.computeVertexNormals();
   const material = new THREE.MeshStandardMaterial({
-    color: 0xffb703,
+    color: colors.stencil,
     roughness: 0.62,
     metalness: 0,
     transparent: true,
@@ -2000,7 +2277,7 @@ function exportMaskJSON() {
   }
   const data = io.buildMaskJSON({
     mask,
-    features: [{ id: SELECTION_ID, name: 'Selection', color: SELECTION_COLOR }],
+    features: [{ id: SELECTION_ID, name: 'Selection', color: colors.selection }],
     modelName,
     pairs,
     stencil: stencilSettings(),
@@ -2335,11 +2612,12 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 el('fileInput').addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
-  await loadFromBuffer(await file.arrayBuffer(), file.name);
+  await loadFromBuffer(await file.arrayBuffer(), file.name, { kind: 'file', file });
   e.target.value = '';
 });
 
 el('loadExampleBtn').addEventListener('click', () => loadFromURL(DEFAULT_MODEL_URL));
+el('reloadBtn').addEventListener('click', () => void reloadModel());
 el('shotBtn').addEventListener('click', screenshot);
 for (const btn of document.querySelectorAll('.tool')) {
   btn.addEventListener('click', () => {
@@ -2360,7 +2638,7 @@ el('seamAngle').addEventListener('input', (e) => {
 });
 el('seamAngle').addEventListener('change', async () => {
   if (!mask) return;
-  await ensureParts({ force: true });
+  await ensureParts({ force: true, quiet: true });
   updateSeams();
 });
 // Preset buttons: the named cuts, in one click each.
@@ -2370,7 +2648,7 @@ for (const btn of document.querySelectorAll('[data-seam]')) {
 el('showSeams').addEventListener('change', async () => {
   if (!mask) return;
   if (el('showSeams').checked) {
-    await ensureParts();
+    await ensureParts({ quiet: true });
     updateSeams();
     if (!parts.seams) setStatus('No seams at this angle — lower it to split the model into parts.');
   } else {
@@ -2393,6 +2671,16 @@ el('ghostShell').addEventListener('change', (e) => {
 });
 el('showBase').addEventListener('change', (e) => setViewLayer('model', e.target.checked, { announce: false }));
 el('showGrid').addEventListener('change', (e) => viewer.setGridVisible(e.target.checked));
+
+// The three layer colours. `input` paints while the picker is open; `change` is the moment to save
+// and to say what changed, so dragging through a hundred colours is not a hundred status lines.
+for (const [key, spec] of Object.entries(COLOR_PREFS)) {
+  const input = el(spec.id);
+  if (!input) continue;
+  input.addEventListener('input', () => setColorPref(key, input.value, { save: false }));
+  input.addEventListener('change', () => setColorPref(key, input.value, { announce: true }));
+}
+el('colorsResetBtn').addEventListener('click', resetColorPrefs);
 el('wireframe').addEventListener('change', (e) => viewer.setWireframe(e.target.checked));
 
 el('upAxis').addEventListener('change', (e) => {
@@ -2461,7 +2749,7 @@ viewport.addEventListener('drop', async (e) => {
   e.preventDefault();
   viewport.classList.remove('dragover');
   const file = [...(e.dataTransfer?.files || [])].find((f) => /\.stl$/i.test(f.name));
-  if (file) await loadFromBuffer(await file.arrayBuffer(), file.name);
+  if (file) await loadFromBuffer(await file.arrayBuffer(), file.name, { kind: 'file', file });
 });
 
 // Keyboard shortcuts.
@@ -2531,11 +2819,13 @@ window.addEventListener('keyup', (e) => {
 // began with a figure in it, which is wrong for the one job this tool has: select the windows on
 // **your** model. The example is one click away (**Load example model**, which is the only place
 // `DEFAULT_MODEL_URL` is used), and every panel already has an empty state.
+loadColorPrefs();
 setTool('select');
 setSelectScope('faces');
 setNavigate(false);
 updateUndoButtons();
 updateHud();
+applyColors();
 resetStencil();
 setStatus(
   'Ready — nothing loaded yet. Drop an .stl anywhere, use “Open STL…”, or load the bundled ' +

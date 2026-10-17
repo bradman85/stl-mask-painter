@@ -148,6 +148,36 @@ input[type="color"] {
 input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .check { display: flex; align-items: center; gap: 8px; font-size: 12.5px; margin: 7px 0; color: #d6dae0; }
+
+/* The three layer colours. A native colour input is a small swatch, so the label wraps it and the
+   name sits over it; the value itself is never typed, which is what keeps a preference from being
+   a validation problem. */
+.colour-row { flex-wrap: wrap; gap: 10px; }
+.colour {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: #d6dae0;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px 4px 10px;
+  cursor: pointer;
+}
+.colour:hover { border-color: var(--accent); }
+.colour input[type="color"] {
+  width: 26px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}
+.colour input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.colour input[type="color"]::-webkit-color-swatch { border: none; border-radius: 3px; }
+.colour input[type="color"]::-moz-color-swatch { border: none; border-radius: 3px; }
 .check input { accent-color: var(--accent); }
 .check input[type="number"] { width: 74px; }
 
@@ -344,6 +374,29 @@ h2 .help:hover { background: var(--accent); border-color: var(--accent); color: 
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Work done behind a click: a chip above the status bar, so the viewport keeps showing the model
+   and any built stencil while the surface is welded or the panels are cut. The full-screen overlay
+   above is for loading a file, where there is nothing on screen worth keeping. */
+.working[hidden] { display: none; }
+.working {
+  position: absolute;
+  left: 14px;
+  bottom: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px;
+  background: rgba(20, 24, 30, .88);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #cfd5dd;
+  backdrop-filter: blur(4px);
+  z-index: 3;
+  pointer-events: none;
+}
+.spinner.small { width: 13px; height: 13px; border-width: 2px; }
 
 @media (max-width: 900px) {
   main { flex-direction: column; }

@@ -87,6 +87,19 @@ export class SelectionTint {
     this.setSelection(new Uint8Array(0));
   }
 
+  /**
+   * The colour the selection is drawn in. A preference, so it can be changed while a model is in
+   * hand; only the selected corners carry it, so the buffer is not rewritten wholesale.
+   * Returns true when something changed (the caller then flushes).
+   */
+  setColor(hex) {
+    const rgb = hexToRgb(hex);
+    if (rgb.r === this._rgb.r && rgb.g === this._rgb.g && rgb.b === this._rgb.b) return false;
+    this._rgb = rgb;
+    for (let i = 0; i < this.vertexCount; i += 1) if (this.ids[i] !== 0) this._writeVertex(i);
+    return true;
+  }
+
   setBackdrop(on) {
     const next = !!on;
     if (next === this.backdrop) return;

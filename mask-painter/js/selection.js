@@ -237,6 +237,17 @@ export class SelectionHistory {
     this.redoStack = [];
   }
 
+  /**
+   * Forget both stacks. A new model is a new selection: an undo entry from the file that was in
+   * hand before would otherwise be applied to the faces of the file in hand now, which silently
+   * selects the wrong triangles — or, after a reload, the ones the user just asked to start over
+   * from.
+   */
+  clear() {
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+  }
+
   /** Remember the selection as it is *before* the edit about to happen. */
   remember(sel) {
     if (!sel) return;

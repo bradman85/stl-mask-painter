@@ -48,20 +48,21 @@ this document is about proving it works.
 
 | Guide section | Items |
 | --- | --- |
-| [Getting started](help.html#start) | L1–L8, U1–U2 |
-| [Top bar](help.html#topbar) | L1–L8 |
-| [Selection](help.html#selection) | P1–P3, P5, P9, P11–P12, M1, M3 |
+| [Getting started](help.html#start) | L1–L9, U1–U2 |
+| [Top bar](help.html#topbar) | L1–L9 |
+| [Selection](help.html#selection) | P1–P3, P5, P9, P11–P12, P14, M1, M3 |
 | [The tools](help.html#select) | P1–P5, K1 |
 | [The rectangle](help.html#select-box) | P6 |
 | [Seam panels](help.html#parts) | P1, P3–P4 |
 | [Select all, none, invert](help.html#select-more) | P8–P9 |
-| [Cleaning up the model](help.html#cleanup) | P12–P13, V5 |
+| [Cleaning up the model](help.html#cleanup) | P12–P13, P15, V5 |
 | [Whole models](help.html#cleanup-models) | P7, P12 |
 | [The bed](help.html#cleanup-bed) | P13 |
 | [Windows](help.html#windows) | M5–M6 |
 | [The window list](help.html#windows-list) | M4 |
-| [Tint & view](help.html#tint) | M1–M3, M7 |
+| [Tint & view](help.html#tint) | M1–M3, M7–M8 |
 | [The viewport chips](help.html#view-chips) | M7 |
+| [Colours](help.html#colours) | M8 |
 | [Stencil (STL)](help.html#stencil) | S1–S13, P11, M6 |
 | [Model & view](help.html#view) | V1–V5, P10 |
 | [Export / import](help.html#export) | X1–X11 |
@@ -207,8 +208,31 @@ a throw in it fails `npm test` instead of a session; `test/ui-wiring.test.mjs` p
 its own function with no options to miss, that every drawing option has a default, that the pick is
 released on the load path, and that the drawing lives in `js/highlight.js` rather than reaching into
 the viewer from a closure. Verified in a real headless browser while fixing it: the shipped commit
-leaves `#loading` visible with the text `Preparing mask layer…` and reports the throw, the fixed one
-loads the model in 1.4 s and clears the overlay.
+leaves `#loading` visible with the text `Preparing mask layer…` and reports the throw, the fixed oneloads the model in 1.4 s and clears the overlay.
+**Result** ☐ pass ☐ fail — notes:
+
+#### L9 · Reload — starting the file over
+
+**Steps**
+1. Load the bundled model. **Reload** is in the top bar, greyed out until a model has loaded.
+2. Select a panel, **Build stencil**, then select a face and press **Remove selected** twice.
+3. Press **Reload** once. Then load a different model and press it again.
+4. Load a model from disk with **Open STL…**, work on it, and press **Reload**.
+
+**Expected** The file that is open comes back from the start: the full triangle count, nothing
+selected, no built stencil, no removed faces and an empty undo history. The status line says
+`Reloaded …`, the view settings (up axis, centring, colours, the layer switches) are kept, and the
+button stays enabled for the next attempt. It reloads the *file this session started from* — the
+URL for the bundled example, the file object for one opened or dropped — so it does not ask you to
+find it again. **Reload** is not **Restore removed**: restoring puts removed faces back and keeps
+the selection; this starts over.
+**Guide** [Top bar](help.html#topbar) · [Getting started](help.html#start)
+**Automated** `test/ui-wiring.test.mjs` — the button exists and starts disabled, is wired to
+`reloadModel`, the loader records where the bytes came from, and a load clears the undo history
+(`SelectionHistory.clear()`) so an undo cannot reach the previous file's faces. Verified in a real
+headless browser: after a build and a removal, one press restores 422,658 triangles with an empty
+selection, no shell, no removals and undo disabled, keeps the chosen colours and reports
+`Reloaded …`; the button is disabled again on a fresh page.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -450,6 +474,51 @@ the Z of the file that is written.
 by exactly that, and removing it puts the lowest point back at 0.
 **Result** ☐ pass ☐ fail — notes:
 
+#### P14 · Part and Select faces after a build — the loop
+
+**Steps**
+1. Load the bundled model, pick a panel with **Part** and press **Build stencil**.
+2. Without discarding anything, press **Part** and click a second panel.
+3. Press **Shift**+**S** and add a few triangles, then press **Build stencil** again.
+4. Watch the status bar and the viewport for the whole sequence.
+
+**Expected** The shell stays on screen while the second panel is selected, the newly selected
+faces show in the selection colour, and the build that follows is the old window *plus* the new
+faces. If the panel cut has to run, a chip above the status bar says so and the model and shell
+stay visible; the click waits for the cut and then selects the panel instead of being dropped. No
+full-screen overlay appears during a click. The panel reports that the build is stale as soon as
+the selection changes, and **Build stencil** replaces the shell with one built from the new
+selection.
+**Guide** [Seam panels](help.html#parts) · [Stencil](help.html#stencil)
+**Automated** `test/ui-wiring.test.mjs` — a click that arrives while the cut is running waits for
+the in-flight promise (it used to be handed `null` and dropped), and the work a click starts goes
+through `setWorking` rather than the full-screen `setLoading`. Verified in a headless browser with
+a shell built: a **Part** click with the shell visible selects a panel, the shell is present and
+visible on every frame of the sequence, and the full-screen overlay never appeared.
+**Result** ☐ pass ☐ fail — notes:
+
+#### P15 · Remove selected — and the label that comes back
+
+**Steps**
+1. Load the bundled model and select a single face (**Shift**+**S**, click).
+2. Press **Remove selected** once and wait five seconds without clicking anything.
+3. Press it twice in quick succession.
+4. Select another face and press **Remove selected** once, then change the selection with a click.
+5. Repeat step 2 on a freshly loaded page, within the first few seconds after the load.
+
+**Expected** The first press changes the label to **Click again to remove** and removes nothing;
+after four seconds the label reads **Remove selected** again and nothing has been taken out. Two
+quick presses remove the selected faces, the label reads **Remove selected** immediately after,
+and **Restore removed** brings the geometry back. Changing the selection cancels a pending
+confirmation. On a fresh page the first press still only asks — it never removes without the second
+click (the button's armed timestamp starts at zero, which used to read as “armed long ago”).
+**Guide** [Whole models](help.html#cleanup-models) · [Cleaning up the model](help.html#cleanup)
+**Automated** `test/ui-wiring.test.mjs` — the two-click confirmation, the timer that disarms it and
+the label written from the armed state rather than from the last click. Verified in a headless
+browser: the label reads `Click again to remove`, then `Remove selected` after 4.4 s with nothing
+removed, then two clicks remove exactly one face and the label is `Remove selected` again.
+**Result** ☐ pass ☐ fail — notes:
+
 ---
 
 # C. Tint, windows and the stats line
@@ -574,6 +643,29 @@ for the same reason. Nothing here changes the selection or an export.
 **Automated** `test/ui-wiring.test.mjs` — a chip per layer, both controls through the same
 `setViewLayer()`, the state drawn from the layers rather than from the press, and the shell-off
 coupling applied at the chip, at **Discard stencil** and at a model load.
+**Result** ☐ pass ☐ fail — notes:
+
+#### M8 · The three layer colours
+
+**Steps**
+1. Load the bundled model and build a stencil so all three layers are on screen.
+2. In **Preferences**, set a **Model colour**, a **Selection colour** and a **Stencil colour** that
+differ from each other, one at a time.
+3. Press **Reset colours**.
+4. Set the three again, reload the page and load the model again.
+
+**Expected** Each picker paints its layer as it moves: the model, the tint on the selected faces
+(and the count in the viewport HUD, and the colour written into a saved selection JSON), and the
+shell — a shell already built is repainted in place, and the next build uses the new colour. The
+three are remembered in this browser and come back on a fresh page; **Reset colours** restores
+`#9aa4b2`, `#ffc94d` and `#ffb703` and saves that. Nothing about the geometry, the selection, the
+build or an export changes.
+**Guide** [Colours](help.html#colours) · [Tint & view](help.html#tint)
+**Automated** `test/ui-wiring.test.mjs` — the three inputs, their ids and the wiring, the colours
+living in one place (`applyColors`) and being re-applied when a geometry is installed. Verified in
+a headless browser: `#112233` reaches the base material, `#22cc44` reaches the tint layer and the
+HUD, `#8844ee` repaints a built shell, the three are in local storage, a fresh page reads them
+back, and **Reset colours** restores and saves the defaults.
 **Result** ☐ pass ☐ fail — notes:
 
 ---
@@ -1294,7 +1386,7 @@ the guide. Record them under N3 instead:
 | Machine (CPU / GPU) | |
 | Model(s) used | |
 | Environment setup steps followed | ☐ yes ☐ no — notes: |
-| Items run | ___ of 65 |
+| Items run | ___ of 69 |
 | Passes / failures / blocked | ___ / ___ / ___ |
 | Blocking failures | |
 | Notes | |
