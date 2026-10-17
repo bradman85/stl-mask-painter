@@ -2025,7 +2025,14 @@ function showStencilPreview(res) {
   // sided) the paint came through at ~16% and hiding or clearing paint looked like it did
   // nothing.
   stencil.mesh.renderOrder = -1;
-  stencil.mesh.visible = el('stencilPreview').checked;
+  // A build is a request to see the shell, so it never inherits a hidden one. Reading the
+  // `Preview` switch here meant a build started while the switch was off (the chip, or the box
+  // itself, turned off earlier to look at the model underneath) finished with a panel that said
+  // "472,496 triangles, 6 pieces, 6 windows" and an empty viewport — a build that reads as though
+  // it did nothing. The switch, and the chip that mirrors it, come back on with the new shell;
+  // hiding it again is one click away.
+  el('stencilPreview').checked = true;
+  stencil.mesh.visible = true;
   viewer.modelGroup.add(stencil.mesh);
   updateViewState();
 }

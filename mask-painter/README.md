@@ -390,7 +390,9 @@ with the model hidden under it is the inspection view; a hidden shell with a hid
 viewport, which reads as a broken app rather than a hidden layer. So **Stencil** off — and
 **Discard stencil**, and loading another model — turns the model back on. The face tint is never
 forced: whether it is on or off is the reader's choice, and the next press of the shell chip leaves
-it exactly as it was.
+it exactly as it was. The one place the switch is set for you is a build: a new shell turns
+**Stencil** back on, because a build that finishes with a full report and an empty viewport is
+indistinguishable from a build that did nothing.
 
 ### Colours: the shell, the tint and the model
 

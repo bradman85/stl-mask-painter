@@ -950,12 +950,20 @@ check(
 check(
   'every path that changes whether a shell exists redraws the chips',
   (js.match(/updateViewState\(\);/g) || []).length >= 5 &&
-    /stencil\.mesh\.visible = el\('stencilPreview'\)\.checked;\s*\n\s*viewer\.modelGroup\.add\(stencil\.mesh\);\s*\n\s*updateViewState\(\);/.test(js) &&
+    /stencil\.mesh\.visible = true;\s*\n\s*viewer\.modelGroup\.add\(stencil\.mesh\);\s*\n\s*updateViewState\(\);/.test(js) &&
     /function resetStencil\(\)[\s\S]{0,900}?updateViewState\(\);/.test(js) &&
     // 800 rather than the original 400: applying the colour preferences on every geometry install
     // (a reload, a removal) added a call and a note to `applyDisplayState`, and the point of the
     // pattern is that the function ends by redrawing the chips, not the exact byte count.
     /function applyDisplayState\(\)[\s\S]{0,800}?updateViewState\(\);/.test(js),
+);
+// The report this came from: a build that finishes with a full report and an empty viewport. The
+// shell used to take its visibility from the `Preview` switch, so a build started after that switch
+// was turned off (or its chip, which is the same switch) put nothing on screen at all.
+check(
+  'a build shows the shell it just made, whatever the Preview switch was left at',
+  /el\('stencilPreview'\)\.checked = true;\s*\n\s*stencil\.mesh\.visible = true;/.test(js) &&
+    !/stencil\.mesh\.visible = el\('stencilPreview'\)\.checked;/.test(js),
 );
 check(
   'and the chips are reachable from the console handle, like every other scripted check',

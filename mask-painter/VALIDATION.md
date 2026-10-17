@@ -714,12 +714,19 @@ if you skip the manual build.
 1. Build a stencil, leave **Preview** on.
 2. Select part of the shell and clear another part, keeping the preview on.
 3. Turn **Preview** off.
+4. With **Preview** off, press **Build stencil** again.
 
 **Expected** The shell is semi-transparent and double-sided, and you can orbit around it. It
 draws **under** the selection tint, so selected areas keep their colour and stay fully visible;
-with the preview off you are looking at the mask alone.
+with the preview off you are looking at the mask alone. A **new build turns the preview back on**
+with the shell it just made — the panel reports its triangles and the shell is on screen, rather
+than a finished build with an empty viewport because the switch happened to be off (this was the
+reported fault: a build that reports 472,496 triangles and shows nothing).
 **Guide** [Stencil (STL)](help.html#stencil)
-**Automated** `test/ui-wiring.test.mjs` pins the preview's render order relative to the tint layer.
+**Automated** `test/ui-wiring.test.mjs` pins the preview's render order relative to the tint layer,
+and that a build sets `stencilPreview` on before showing the shell. Verified in a headless browser
+against the deployment: the switch was turned off, the build ran, and the shell came back with the
+mesh visible and the chip reading **on**.
 **Result** ☐ pass ☐ fail — notes:
 
 #### S4 · Reach
